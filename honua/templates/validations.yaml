@@ -1,0 +1,7 @@
+{{- $secretName := trim (default "" .Values.secret.name) -}}
+{{- $hasSecretName := gt (len $secretName) 0 -}}
+{{- $hasExtraEnvFrom := gt (len .Values.extraEnvFrom) 0 -}}
+
+{{- if and (not .Values.secret.create) (not (or $hasSecretName $hasExtraEnvFrom)) -}}
+{{- fail "When secret.create is false, you must provide secret.name or at least one extraEnvFrom source." -}}
+{{- end -}}

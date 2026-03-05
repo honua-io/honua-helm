@@ -1,0 +1,9 @@
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password"
+    HONUA_ADMIN_PASSWORD: "ci-admin-password"
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "ci-redis-password"

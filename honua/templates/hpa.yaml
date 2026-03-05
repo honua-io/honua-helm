@@ -1,4 +1,9 @@
 {{- if .Values.autoscaling.enabled }}
+{{- $hasCPU := gt (int (default 0 .Values.autoscaling.targetCPUUtilizationPercentage)) 0 }}
+{{- $hasMemory := gt (int (default 0 .Values.autoscaling.targetMemoryUtilizationPercentage)) 0 }}
+{{- if not (or $hasCPU $hasMemory) }}
+{{- fail "autoscaling.enabled requires targetCPUUtilizationPercentage and/or targetMemoryUtilizationPercentage greater than 0" }}
+{{- end }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -13,7 +18,7 @@ spec:
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
-    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if $hasCPU }}
     - type: Resource
       resource:
         name: cpu
@@ -21,7 +26,7 @@ spec:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
     {{- end }}
-    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- if $hasMemory }}
     - type: Resource
       resource:
         name: memory

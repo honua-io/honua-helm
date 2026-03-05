@@ -24,6 +24,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "honua.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

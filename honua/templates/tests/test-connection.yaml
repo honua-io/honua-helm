@@ -17,15 +17,18 @@ spec:
         - |
           set -e
           url="http://{{ include "honua.fullname" . }}:{{ .Values.service.port }}/healthz/ready"
-          host_header="{{ (index .Values.ingress.hosts 0).host }}"
+          host_header="{{- if and .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) -}}{{ (index .Values.ingress.hosts 0).host }}{{- end -}}"
           attempts=30
           sleep_seconds=5
           i=1
           while [ "$i" -le "$attempts" ]; do
-            if curl -fsS --max-time 10 -H "Host: ${host_header}" "$url" >/dev/null; then
+            if [ -n "${host_header}" ] && curl -fsS --max-time 10 -H "Host: ${host_header}" "$url" >/dev/null; then
               exit 0
             fi
-            echo "[$i/$attempts] waiting for readiness at $url (Host: ${host_header})"
+            if [ -z "${host_header}" ] && curl -fsS --max-time 10 "$url" >/dev/null; then
+              exit 0
+            fi
+            echo "[$i/$attempts] waiting for readiness at $url"
             i=$((i + 1))
             sleep "$sleep_seconds"
           done

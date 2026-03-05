@@ -6,20 +6,47 @@ on:
   pull_request:
     branches: [trunk]
 
+permissions:
+  contents: read
+
 jobs:
   lint-chart:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
 
       - name: Setup Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a
 
       - name: Update dependencies
         run: helm dependency update honua
 
       - name: Lint chart
-        run: helm lint honua
+        run: helm lint honua -f honua/ci-values/base.yaml
 
-      - name: Render templates
-        run: helm template honua ./honua > /tmp/honua-rendered.yaml
+      - name: Render templates (base)
+        run: helm template honua ./honua -f honua/ci-values/base.yaml > /tmp/honua-rendered-base.yaml
+
+      - name: Render templates (ingress hosts empty)
+        run: helm template honua ./honua -f honua/ci-values/ingress-empty.yaml > /tmp/honua-rendered-ingress-empty.yaml
+
+      - name: Render templates (external secret)
+        run: helm template honua ./honua -f honua/ci-values/external-secret.yaml > /tmp/honua-rendered-external-secret.yaml
+
+      - name: Render templates (autoscaling cpu)
+        run: helm template honua ./honua -f honua/ci-values/autoscaling-cpu.yaml > /tmp/honua-rendered-autoscaling-cpu.yaml
+
+      - name: Render templates (redis auth)
+        run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
+
+      - name: Validate autoscaling guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua -f honua/ci-values/autoscaling-invalid.yaml > /tmp/honua-rendered-autoscaling-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected autoscaling-invalid render to fail."
+            cat /tmp/honua-rendered-autoscaling-invalid.yaml
+            exit 1
+          fi

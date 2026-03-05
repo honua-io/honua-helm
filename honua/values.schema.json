@@ -1,0 +1,192 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "automount": { "type": "boolean" }
+      }
+    },
+    "securityContext": {
+      "type": "object",
+      "properties": {
+        "readOnlyRootFilesystem": { "type": "boolean" }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "targetCPUUtilizationPercentage": { "type": ["integer", "null"], "minimum": 0 },
+        "targetMemoryUtilizationPercentage": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" }
+      }
+    },
+    "extraEnvFrom": {
+      "type": "array"
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "password": { "type": "string" }
+          }
+        }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string" },
+            "password": { "type": "string" },
+            "database": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "autoscaling": {
+            "type": "object",
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "autoscaling": {
+                "type": "object",
+                "properties": { "targetCPUUtilizationPercentage": { "minimum": 1 } },
+                "required": ["targetCPUUtilizationPercentage"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "autoscaling": {
+                "type": "object",
+                "properties": { "targetMemoryUtilizationPercentage": { "minimum": 1 } },
+                "required": ["targetMemoryUtilizationPercentage"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "secret": {
+            "type": "object",
+            "properties": { "create": { "const": false } },
+            "required": ["create"]
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": { "name": { "minLength": 1 } },
+                "required": ["name"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "extraEnvFrom": { "minItems": 1 }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "redis": {
+            "type": "object",
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "redis": {
+            "type": "object",
+            "properties": {
+              "auth": {
+                "type": "object",
+                "properties": { "enabled": { "const": true } },
+                "required": ["enabled"]
+              }
+            },
+            "required": ["auth"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "postgresql": {
+            "type": "object",
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "postgresql": {
+            "type": "object",
+            "properties": {
+              "auth": {
+                "type": "object",
+                "properties": {
+                  "username": { "minLength": 1 },
+                  "password": { "minLength": 1 },
+                  "database": { "minLength": 1 }
+                },
+                "required": ["username", "password", "database"]
+              }
+            },
+            "required": ["auth"]
+          }
+        }
+      }
+    }
+  ]
+}
