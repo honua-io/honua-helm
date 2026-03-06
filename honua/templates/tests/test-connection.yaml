@@ -8,6 +8,7 @@ metadata:
     "helm.sh/hook": test
 spec:
   restartPolicy: Never
+  automountServiceAccountToken: false
   containers:
     - name: curl
       image: curlimages/curl:8.5.0

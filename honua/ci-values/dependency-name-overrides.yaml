@@ -1,0 +1,26 @@
+secret:
+  env:
+    HONUA_ADMIN_PASSWORD: "ci-admin-password"
+
+postgresql:
+  enabled: true
+  nameOverride: pgsvc
+  auth:
+    username: honua
+    password: ci-password
+    database: honua
+  primary:
+    service:
+      ports:
+        postgresql: 55432
+
+redis:
+  enabled: true
+  nameOverride: cache
+  auth:
+    enabled: true
+    password: "ci-redis-password"
+  master:
+    service:
+      ports:
+        redis: 16379

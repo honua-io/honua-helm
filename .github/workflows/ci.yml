@@ -39,6 +39,31 @@ jobs:
       - name: Render templates (redis auth)
         run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
 
+      - name: Render templates (dependency name overrides)
+        run: helm template honua ./honua -f honua/ci-values/dependency-name-overrides.yaml > /tmp/honua-rendered-dependency-name-overrides.yaml
+
+      - name: Render templates (dependency fullname overrides)
+        run: helm template honua ./honua -f honua/ci-values/dependency-fullname-overrides.yaml > /tmp/honua-rendered-dependency-fullname-overrides.yaml
+
+      - name: Assert rendered override behavior
+        run: |
+          set -euo pipefail
+
+          pg_name_override="$(printf '%s' 'Host=honua-pgsvc;Port=55432;Database=honua;Username=honua;Password=ci-password' | base64 | tr -d '\n')"
+          redis_name_override="$(printf '%s' 'honua-cache-master:16379,password=ci-redis-password' | base64 | tr -d '\n')"
+          pg_fullname_override="$(printf '%s' 'Host=custom-postgresql;Port=55433;Database=honua;Username=honua;Password=ci-password' | base64 | tr -d '\n')"
+          redis_fullname_override="$(printf '%s' 'custom-redis-master:26379,password=ci-redis-password' | base64 | tr -d '\n')"
+
+          grep -q "ConnectionStrings__DefaultConnection: ${pg_name_override}" /tmp/honua-rendered-dependency-name-overrides.yaml
+          grep -q "ConnectionStrings__redis: ${redis_name_override}" /tmp/honua-rendered-dependency-name-overrides.yaml
+          grep -q "ConnectionStrings__DefaultConnection: ${pg_fullname_override}" /tmp/honua-rendered-dependency-fullname-overrides.yaml
+          grep -q "ConnectionStrings__redis: ${redis_fullname_override}" /tmp/honua-rendered-dependency-fullname-overrides.yaml
+
+          if ! grep -A80 'name: "honua-honua-test-connection"' /tmp/honua-rendered-base.yaml | grep -q 'automountServiceAccountToken: false'; then
+            echo "Helm test hook pod must set automountServiceAccountToken: false."
+            exit 1
+          fi
+
       - name: Validate autoscaling guard fails invalid config
         run: |
           set +e
