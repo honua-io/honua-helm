@@ -5,8 +5,8 @@ Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis su
 ## Quick start
 
 ```bash
-helm dependency update infrastructure/helm/honua
-helm install honua infrastructure/helm/honua \
+helm dependency update honua
+helm install honua honua \
   --set secret.env.ConnectionStrings__DefaultConnection="Host=postgres;Database=honua;Username=honua;Password=honua" \
   --set secret.env.HONUA_ADMIN_PASSWORD="change-me" \
   --set config.env.HONUA_SERVE_ADMIN_UI="true" \
@@ -88,8 +88,8 @@ secret:
 Deploy with:
 
 ```bash
-helm dependency update infrastructure/helm/honua
-helm upgrade --install honua infrastructure/helm/honua -f values-prod.yaml
+helm dependency update honua
+helm upgrade --install honua honua -f values-prod.yaml
 ```
 
 ## External PostGIS database (recommended for production)
@@ -101,7 +101,7 @@ For production, point `ConnectionStrings__DefaultConnection` at a managed PostGI
 ## PostgreSQL subchart (dev only)
 
 ```bash
-helm upgrade --install honua infrastructure/helm/honua \
+helm upgrade --install honua honua \
   --set postgresql.enabled=true \
   --set postgresql.auth.username=honua \
   --set postgresql.auth.password=honua \
@@ -114,7 +114,7 @@ When `postgresql.enabled=true`, the chart auto-populates `ConnectionStrings__Def
 ## Redis subchart
 
 ```bash
-helm upgrade --install honua infrastructure/helm/honua \
+helm upgrade --install honua honua \
   --set redis.enabled=true \
   --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
 ```
@@ -126,7 +126,7 @@ When `redis.enabled=true`, the chart auto-populates `ConnectionStrings__redis`.
 The chart defaults to AOT (`latest-aot`). AOT images start faster and use less memory. To use JIT instead:
 
 ```bash
-helm upgrade --install honua infrastructure/helm/honua \
+helm upgrade --install honua honua \
   --set image.tag=latest
 ```
 
@@ -186,10 +186,10 @@ For dataset-specific tuning:
 ## Local validation
 
 ```bash
-helm dependency update infrastructure/helm/honua
-helm lint infrastructure/helm/honua
-helm template honua infrastructure/helm/honua
+helm dependency update honua
+helm lint honua
+helm template honua honua
 helm test honua  # After install, runs the test hook
 ```
 
-For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](../../../docs/contributor/development/k3d-helm.md).
+For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](https://github.com/honua-io/honua-server/blob/trunk/docs/contributor/development/k3d-helm.md).
