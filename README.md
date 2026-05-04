@@ -8,3 +8,4 @@ Repository layout is intentionally flat after extraction from the monorepo:
 - license: `LICENSE`
 
 See `honua/README.md` for chart usage details.
+The chart feature map is in [docs/features/README.md](docs/features/README.md).
