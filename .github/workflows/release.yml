@@ -104,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           image_ref="ghcr.io/honua-io/honua-server:${IMAGE_TAG}"
-          if ! image_digest="$(docker buildx imagetools inspect "${image_ref}" --format '{{.Manifest.Digest}}' 2>/tmp/buildx-err.txt)"; then
+          if ! image_digest="$(docker buildx imagetools inspect "${image_ref}" --format '{{printf "%s" .Manifest.Digest}}' 2>/tmp/buildx-err.txt)"; then
             echo "::error::honua-server image not found at ${image_ref}. Chart releases must point at a published honua-server release; bump Chart.yaml appVersion (or workflow_dispatch app_version) only after the server tag's AOT image has been promoted to ghcr.io." >&2
             cat /tmp/buildx-err.txt >&2 || true
             exit 1
@@ -113,7 +113,12 @@ jobs:
             echo "::error::Empty digest from manifest for ${image_ref}." >&2
             exit 1
           fi
-          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+          if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Unexpected digest from manifest for ${image_ref}; expected a single sha256 digest." >&2
+            printf '%s\n' "${image_digest}" >&2
+            exit 1
+          fi
+          printf 'image_digest=%s\n' "${image_digest}" >> "${GITHUB_OUTPUT}"
           echo "Verified ${image_ref} -> ${image_digest}"
 
       - name: Build dependencies from Chart.lock
@@ -171,8 +176,12 @@ jobs:
         run: |
           set -euo pipefail
           push_log="$(helm push "${ARTIFACT}" "${OCI_REGISTRY}" 2>&1 | tee /dev/stderr)"
-          digest="$(echo "${push_log}" | awk '/Digest:/ {print $2}' | head -n1)"
-          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          digest="$(printf '%s\n' "${push_log}" | awk '/Digest:/ {print $2; exit}')"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Unable to parse OCI sha256 digest from helm push output." >&2
+            exit 1
+          fi
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
           {
             echo "## Helm chart published"
             echo ""

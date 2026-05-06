@@ -85,10 +85,12 @@ The workflow fails fast (`set -euo pipefail`) when:
 - The honua-server image at `ghcr.io/honua-io/honua-server:v${app_version}-aot`
   does not exist or is not readable. The workflow runs
   `docker buildx imagetools inspect` against the stamped reference and
-  captures the resolved digest before packaging, so a chart cannot be
-  published pinned to a non-existent server image.
+  captures one resolved `sha256` digest before packaging, so a chart cannot be
+  published pinned to a non-existent server image or ambiguous manifest output.
 - `helm package` does not produce the expected
   `dist/honua-${chart_version}.tgz`.
+- `helm push` succeeds without returning a single `sha256` OCI digest for the
+  published chart.
 
 ## Coupling to honua-server
 
@@ -96,9 +98,10 @@ Every chart release is validated against a concrete `honua-server` image
 digest before publishing. The release workflow runs
 `docker buildx imagetools inspect ghcr.io/honua-io/honua-server:v${app_version}-aot`
 after resolving versions and fails fast if the manifest is missing or
-unreadable. The resolved digest is recorded in the workflow step summary and
-in the GitHub Release notes (under "Server image digest"), so each published
-chart traces back to the exact server image bytes it was packaged against.
+unreadable, or if Docker does not return a single `sha256` digest. The resolved
+digest is recorded in the workflow step summary and in the GitHub Release notes
+(under "Server image digest"), so each published chart traces back to the exact
+server image bytes it was packaged against.
 
 Cluster-validated install/upgrade smoke ([honua-helm-2](https://github.com/honua-io/honua-helm/issues/2))
 is the next layer on top of this existence check. Until honua-helm-2 lands,
