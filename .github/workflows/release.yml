@@ -86,6 +86,36 @@ jobs:
           echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
           echo "Resolved chart_version=${chart_version} app_version=${app_version} image_tag=${image_tag}"
 
+      - name: Login to ghcr.io
+        shell: bash
+        env:
+          GH_USERNAME: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GH_TOKEN}" | helm registry login ghcr.io --username "${GH_USERNAME}" --password-stdin
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GH_USERNAME}" --password-stdin
+
+      - name: Verify honua-server image exists for stamped IMAGE_TAG
+        id: verify-image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          image_ref="ghcr.io/honua-io/honua-server:${IMAGE_TAG}"
+          if ! image_digest="$(docker buildx imagetools inspect "${image_ref}" --format '{{.Manifest.Digest}}' 2>/tmp/buildx-err.txt)"; then
+            echo "::error::honua-server image not found at ${image_ref}. Chart releases must point at a published honua-server release; bump Chart.yaml appVersion (or workflow_dispatch app_version) only after the server tag's AOT image has been promoted to ghcr.io." >&2
+            cat /tmp/buildx-err.txt >&2 || true
+            exit 1
+          fi
+          if [[ -z "${image_digest}" ]]; then
+            echo "::error::Empty digest from manifest for ${image_ref}." >&2
+            exit 1
+          fi
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+          echo "Verified ${image_ref} -> ${image_digest}"
+
       - name: Build dependencies from Chart.lock
         run: helm dependency build honua
 
@@ -129,15 +159,6 @@ jobs:
           echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
           echo "Packaged ${artifact}"
 
-      - name: Login to ghcr.io
-        shell: bash
-        env:
-          GH_USERNAME: ${{ github.actor }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${GH_TOKEN}" | helm registry login ghcr.io --username "${GH_USERNAME}" --password-stdin
-
       - name: Push chart to OCI registry
         id: push
         shell: bash
@@ -146,6 +167,7 @@ jobs:
           CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
           APP_VERSION: ${{ steps.versions.outputs.app_version }}
           IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+          SERVER_IMAGE_DIGEST: ${{ steps.verify-image.outputs.image_digest }}
         run: |
           set -euo pipefail
           push_log="$(helm push "${ARTIFACT}" "${OCI_REGISTRY}" 2>&1 | tee /dev/stderr)"
@@ -158,6 +180,7 @@ jobs:
             echo "- Chart version: \`${CHART_VERSION}\`"
             echo "- App version: \`${APP_VERSION}\`"
             echo "- Image tag stamped: \`${IMAGE_TAG}\`"
+            echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
             echo "- OCI digest: \`${digest}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -168,6 +191,7 @@ jobs:
           CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
           APP_VERSION: ${{ steps.versions.outputs.app_version }}
           IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+          SERVER_IMAGE_DIGEST: ${{ steps.verify-image.outputs.image_digest }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
@@ -185,6 +209,8 @@ jobs:
             echo ""
             echo "- App version: \`${APP_VERSION}\`"
             echo "- Image tag stamped: \`${IMAGE_TAG}\`"
+            echo "- Server image: \`ghcr.io/honua-io/honua-server:${IMAGE_TAG}\`"
+            echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
             echo "- OCI: \`oci://ghcr.io/honua-io/charts/honua\` version \`${CHART_VERSION}\`"
             if [[ -n "${DIGEST}" ]]; then
               echo "- Digest: \`${DIGEST}\`"
