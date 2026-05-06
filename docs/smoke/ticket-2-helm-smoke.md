@@ -17,6 +17,7 @@ for `honua-io/honua-helm#2`.
 ```bash
 helm dependency update honua
 jq empty honua/values.schema.json
+helm lint honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml
@@ -28,8 +29,9 @@ helm template honua-prod ./honua -f honua/values-prod.yaml
 helm template honua-stage ./honua -f honua/values-stage.yaml --is-upgrade
 ```
 
-Result: schema parse passed; all four lint runs reported `0 chart(s) failed`;
-base, dev, stage, prod, and stage upgrade renders completed without errors.
+Result: schema parse passed; all five lint runs reported `0 chart(s) failed`;
+the CI base fixture, dev, stage, prod, and stage upgrade renders completed
+without errors.
 
 ## Install/Upgrade Smoke
 

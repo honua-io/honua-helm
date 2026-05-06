@@ -1,9 +1,10 @@
 # Honua chart default values.
 #
-# These defaults render a secure single-pod workload. A runnable install also
-# needs database credentials and an admin password supplied through secret.env,
-# an existing secret, or extraEnvFrom. See docs/values-contract.md for the
-# required/optional values contract and environment overlay guidance.
+# These defaults define the baseline values contract and restricted pod posture.
+# They intentionally leave required runtime secret values empty, so values.yaml
+# alone is not an installable values file. Supply secret.env, an existing
+# secret, extraEnvFrom, or an environment overlay. See docs/values-contract.md
+# for required/optional values and overlay guidance.
 
 # Used only when autoscaling.enabled is false.
 replicaCount: 1
@@ -184,9 +185,10 @@ postgresql:
     password: ""
     database: ""
 
-# Optional Bitnami Redis dependency. When redis.enabled=true and no explicit
-# ConnectionStrings__redis is supplied, redis.auth.enabled and redis.auth.password
-# must be set so the chart can derive the Redis connection string.
+# Optional Bitnami Redis dependency. When redis.enabled=true, redis.auth.enabled
+# must stay true. With chart-managed secrets, either set
+# secret.env.ConnectionStrings__redis or provide redis.auth.password so the chart
+# can derive the Redis connection string.
 redis:
   enabled: false
   architecture: standalone

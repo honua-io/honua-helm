@@ -15,8 +15,10 @@ helm upgrade --install honua honua -f honua/values-dev.yaml
 
 The operator values contract is documented in:
 
-- `values.yaml` for baseline defaults and inline value comments.
-- `values.schema.json` for Helm validation of required values.
+- `values.yaml` for baseline defaults and inline value comments. It is not an
+  installable values file by itself because required runtime secrets are empty.
+- `values.schema.json` for Helm type checks and conditional validation that can
+  run against the documented baseline.
 - `../docs/values-contract.md` for required vs optional values, overlay usage, and release-lane boundaries.
 - `../docs/MIGRATION.md` for breaking changes policy and install/upgrade smoke commands.
 
@@ -96,7 +98,10 @@ helm upgrade --install honua honua \
   --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
 ```
 
-When `postgresql.enabled=true`, the chart auto-populates `ConnectionStrings__DefaultConnection` if you don't supply one.
+When `postgresql.enabled=true`, `postgresql.auth.username`,
+`postgresql.auth.password`, and `postgresql.auth.database` are required. In
+chart-managed-secret mode, the chart auto-populates
+`ConnectionStrings__DefaultConnection` if you don't supply one.
 
 ## Redis subchart
 
@@ -109,7 +114,11 @@ helm upgrade --install honua honua \
   --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
 ```
 
-When `redis.enabled=true`, the chart auto-populates `ConnectionStrings__redis`.
+When `redis.enabled=true`, `redis.auth.enabled` must remain true. In
+chart-managed-secret mode, the chart auto-populates `ConnectionStrings__redis`
+from `redis.auth.password` unless you set `secret.env.ConnectionStrings__redis`
+yourself. Existing-secret mode must provide the runtime environment key through
+the named Secret or `extraEnvFrom`; the chart does not create it.
 
 ## AOT vs JIT images
 
@@ -132,6 +141,10 @@ secret:
   name: my-honua-secret   # Must contain ConnectionStrings__DefaultConnection and HONUA_ADMIN_PASSWORD
 ```
 
+You may also set `secret.create=false` and provide only `extraEnvFrom` sources.
+In that mode the referenced sources must expose `ConnectionStrings__DefaultConnection`,
+`HONUA_ADMIN_PASSWORD`, and `ConnectionStrings__redis` when Redis is used.
+
 ## Key values
 
 | Value | Default | Description |
@@ -151,7 +164,7 @@ secret:
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional env source refs; also valid for existing-secret mode. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
-| `redis.enabled` | false | Enable Bitnami Redis subchart. |
+| `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 
@@ -179,6 +192,7 @@ For dataset-specific tuning:
 
 ```bash
 helm dependency update honua
+helm lint honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml
@@ -192,5 +206,7 @@ helm test honua  # After install, runs the test hook
 ```
 
 For install/upgrade smoke against a real API server, see `../docs/MIGRATION.md`.
+Running `helm template honua honua` without a values file fails by design because
+the baseline contract leaves required runtime secrets empty.
 
 For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](https://github.com/honua-io/honua-server/blob/trunk/docs/contributor/development/k3d-helm.md).

@@ -2,8 +2,12 @@
 
 This chart keeps the customer-operated surface in these files:
 
-- `honua/values.yaml`: documented baseline defaults.
-- `honua/values.schema.json`: machine-checked required values and type guards.
+- `honua/values.yaml`: documented baseline defaults. It intentionally leaves
+  required runtime secrets empty, so it is not an installable values file by
+  itself.
+- `honua/values.schema.json`: machine-checked type guards and conditional
+  requirements that can be validated while keeping the documented baseline
+  lintable. Runtime secret requirements are enforced by template guards.
 - `honua/values-dev.yaml`: local and ephemeral development overlay.
 - `honua/values-stage.yaml`: staging validation overlay.
 - `honua/values-prod.yaml`: production posture overlay.
@@ -21,18 +25,41 @@ helm upgrade --install honua ./honua \
 
 | Condition | Required values | Evidence |
 | --- | --- | --- |
-| Chart-managed Secret (`secret.create=true`) | `secret.env.HONUA_ADMIN_PASSWORD` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
-| Chart-managed Secret with external PostgreSQL (`postgresql.enabled=false`) | `secret.env.ConnectionStrings__DefaultConnection` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
-| Chart-managed Secret with PostgreSQL subchart (`postgresql.enabled=true`) | `postgresql.auth.username`, `postgresql.auth.password`, `postgresql.auth.database` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
+| Chart-managed Secret (`secret.create=true`) | `secret.env.HONUA_ADMIN_PASSWORD` | `honua/templates/secret.yaml` |
+| Chart-managed Secret with external PostgreSQL (`postgresql.enabled=false`) | `secret.env.ConnectionStrings__DefaultConnection` | `honua/templates/secret.yaml` |
+| PostgreSQL subchart enabled (`postgresql.enabled=true`) | `postgresql.auth.username`, `postgresql.auth.password`, `postgresql.auth.database` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Existing Secret mode (`secret.create=false`) | `secret.name` or at least one `extraEnvFrom` source | `honua/values.schema.json`, `honua/templates/validations.yaml` |
-| Existing Secret runtime contents | `ConnectionStrings__DefaultConnection`, `HONUA_ADMIN_PASSWORD`; optionally `ConnectionStrings__redis` | Runtime contract documented here; Kubernetes cannot validate external Secret keys at Helm render time |
-| Redis subchart without explicit `ConnectionStrings__redis` | `redis.auth.enabled=true`, `redis.auth.password` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
+| External runtime environment source | `ConnectionStrings__DefaultConnection`, `HONUA_ADMIN_PASSWORD`; `ConnectionStrings__redis` when Redis is used | Runtime contract documented here; Kubernetes cannot validate external Secret keys at Helm render time |
+| Redis subchart enabled (`redis.enabled=true`) | `redis.auth.enabled=true` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
+| Chart-managed Secret with Redis subchart and no explicit `secret.env.ConnectionStrings__redis` | `redis.auth.password` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Autoscaling (`autoscaling.enabled=true`) | `autoscaling.targetCPUUtilizationPercentage` or `autoscaling.targetMemoryUtilizationPercentage` greater than `0` | `honua/values.schema.json`, `honua/templates/hpa.yaml` |
 
 The PostgreSQL subchart is development-only. It does not include PostGIS, so
 production deployments must use an external PostGIS-enabled database and provide
 `ConnectionStrings__DefaultConnection` through a Kubernetes Secret or external
 environment source.
+
+When `secret.create=false`, the chart only verifies that `secret.name` or
+`extraEnvFrom` names a source. It cannot inspect external Secret or ConfigMap
+contents during Helm rendering. Redis connection-string derivation from the
+Redis subchart only happens when `secret.create=true`.
+
+## Rendered Environment Sources
+
+The Deployment loads environment data with `envFrom`:
+
+- `config.create=true` creates a ConfigMap from non-empty `config.env` entries.
+- `config.name` references an existing ConfigMap instead of the chart-generated
+  name.
+- `secret.create=true` creates a Secret from non-empty `secret.env` entries plus
+  any derived PostgreSQL or Redis connection strings.
+- `secret.name` references an existing Secret instead of the chart-generated
+  name.
+- `extraEnvFrom` appends additional Kubernetes environment sources and can be
+  the only runtime source when `secret.create=false`.
+
+Empty string and null-like values in `config.env` and `secret.env` are omitted
+from rendered ConfigMap and Secret data before template-required checks run.
 
 ## Optional Values
 
@@ -65,14 +92,17 @@ The values contract is stable across compatible chart releases.
 - Minor releases may add optional values, new overlays, or backward-compatible defaults.
 - Major releases are required for removing values, renaming values, changing required value names, changing required external Secret keys, or changing default behavior in a way that breaks an existing install.
 - Deprecated values must remain accepted for at least one minor release and must be documented in `docs/MIGRATION.md` with the replacement path.
-- Any change to required values must update `honua/values.yaml`, `honua/values.schema.json`, `honua/README.md`, and this document in the same PR.
+- Any change to required values must update `honua/values.yaml`,
+  `honua/values.schema.json` when the requirement is schema-enforceable without
+  invalidating the baseline, `honua/README.md`, and this document in the same
+  PR.
 
 ## Release-Lane Evidence
 
 This repository owns the Helm chart contract and Helm install/upgrade smoke. CI
-lints and renders the base values plus all environment overlays, including the
-staged upgrade render path. The cluster-backed install/upgrade smoke is
-documented in `docs/MIGRATION.md`.
+lints and renders the `honua/ci-values/base.yaml` fixture plus all environment
+overlays, including the staged upgrade render path. The cluster-backed
+install/upgrade smoke is documented in `docs/MIGRATION.md`.
 
 Current ticket smoke evidence is captured in
 `docs/smoke/ticket-2-helm-smoke.md`.

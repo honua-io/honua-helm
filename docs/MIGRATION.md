@@ -10,11 +10,13 @@ Required runtime environment keys:
 
 - `ConnectionStrings__DefaultConnection`
 - `HONUA_ADMIN_PASSWORD`
-- `ConnectionStrings__redis` when Redis is used and not derived from the Redis subchart
+- `ConnectionStrings__redis` when Redis is used and the chart is not creating
+  that key in a chart-managed Secret
 
-For chart-managed secrets, Helm validates required values before rendering. For
-existing-secret mode, Helm validates that a source is named, but the external
-Secret contents must be validated by the operator or release lane.
+For chart-managed secrets, Helm validates required runtime keys through template
+guards during rendering. For existing-secret mode, Helm validates that a source
+is named, but the external Secret contents must be validated by the operator or
+release lane.
 
 ## Breaking Changes
 
@@ -50,7 +52,9 @@ helm template honua-stage ./honua -f honua/values-stage.yaml --is-upgrade
 ```
 
 These commands prove the chart contract renders and the staged install/upgrade
-render paths are syntactically valid.
+render paths are syntactically valid. The baseline `honua/values.yaml` is a
+documented contract with empty required secret placeholders; use
+`honua/ci-values/base.yaml` or an environment overlay for render smoke.
 
 ## Install/Upgrade Smoke
 
