@@ -424,6 +424,48 @@
     {
       "if": {
         "properties": {
+          "strategy": {
+            "type": "object",
+            "properties": {
+              "type": { "const": "RollingUpdate" }
+            },
+            "required": ["type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "strategy": {
+            "type": "object",
+            "properties": {
+              "rollingUpdate": {
+                "type": "object",
+                "not": {
+                  "properties": {
+                    "maxSurge": {
+                      "oneOf": [
+                        { "type": "integer", "const": 0 },
+                        { "type": "string", "pattern": "^0+%?$" }
+                      ]
+                    },
+                    "maxUnavailable": {
+                      "oneOf": [
+                        { "type": "integer", "const": 0 },
+                        { "type": "string", "pattern": "^0+%?$" }
+                      ]
+                    }
+                  },
+                  "required": ["maxSurge", "maxUnavailable"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "autoscaling": {
             "type": "object",
             "properties": {

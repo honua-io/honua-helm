@@ -130,6 +130,45 @@ jobs:
             exit 1
           fi
 
+      - name: Validate rolling update guard fails invalid zero budget
+        run: |
+          for budget_type in int string percent; do
+            set +e
+            case "${budget_type}" in
+              int)
+                helm template honua ./honua \
+                  -f honua/ci-values/base.yaml \
+                  --set strategy.type=RollingUpdate \
+                  --set strategy.rollingUpdate.maxSurge=0 \
+                  --set strategy.rollingUpdate.maxUnavailable=0 \
+                  > "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml" 2>&1
+                ;;
+              string)
+                helm template honua ./honua \
+                  -f honua/ci-values/base.yaml \
+                  --set strategy.type=RollingUpdate \
+                  --set-string strategy.rollingUpdate.maxSurge=0 \
+                  --set-string strategy.rollingUpdate.maxUnavailable=0 \
+                  > "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml" 2>&1
+                ;;
+              percent)
+                helm template honua ./honua \
+                  -f honua/ci-values/base.yaml \
+                  --set strategy.type=RollingUpdate \
+                  --set-string strategy.rollingUpdate.maxSurge='0%' \
+                  --set-string strategy.rollingUpdate.maxUnavailable='0%' \
+                  > "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml" 2>&1
+                ;;
+            esac
+            status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected RollingUpdate zero rollout budget (${budget_type}) render to fail."
+              cat "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml"
+              exit 1
+            fi
+          done
+
       - name: Validate digest guard fails invalid config
         run: |
           set +e

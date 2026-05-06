@@ -56,7 +56,7 @@ release:
   id: "honua-2026-05-preview"
   manifest: "https://example.com/release/honua-2026-05-preview.json"
   digest: "sha256:<64 lowercase hex characters>"
-  appVersion: "2026.05.0"   # Optional evidence override
+  appVersion: "2026.05.0"   # Optional label-safe evidence override
 
 strategy:
   type: Recreate
@@ -194,6 +194,8 @@ If you cannot pin by digest, use an immutable release tag: `v1.2.3-aot` (AOT) or
 
 Honua Server runs database migrations inline during startup behind a PostgreSQL advisory lock. The chart defaults the Deployment strategy to `Recreate` so old pods stop before new pods start during a migrating upgrade.
 
+The chart default keeps `config.env.HONUA_SKIP_MIGRATIONS=false`. If you set it to `true`, the chart does not run an alternate migration job; you own schema convergence before traffic reaches the deployment.
+
 Use `RollingUpdate` only when the migration set is forward and backward compatible across the old and new Honua images:
 
 ```yaml
@@ -210,7 +212,7 @@ Readiness at `/healthz/ready` is the chart signal that startup and migrations co
 
 `preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
 
-For the dev-only PostgreSQL subchart, the initial install preflight validates required secret keys and registry reachability but defers PostgreSQL TCP reachability until upgrade because the subchart is created after pre-install hooks.
+For the dev-only PostgreSQL subchart, the initial install preflight validates required secret keys and registry reachability but defers PostgreSQL TCP reachability only when the chart auto-generates the subchart connection string. Pre-upgrade hooks, and installs with a supplied connection string, check the configured PostgreSQL endpoint.
 
 Disable only when an external controller or restricted network policy prevents the hook from reaching the database or registry:
 
@@ -239,9 +241,9 @@ release:
   appVersion: "2026.05.0"
 ```
 
-`release.id` and `release.appVersion` are used as Kubernetes label values, so keep them 63 characters or less and use only letters, numbers, `_`, `.`, or `-`, starting and ending with a letter or number.
+`release.id` and the effective app version (`release.appVersion`, or `Chart.AppVersion` when the override is empty) are used as Kubernetes label values, so keep them 63 characters or less and use only letters, numbers, `_`, `.`, or `-`, starting and ending with a letter or number. Put free-form build metadata in `release.manifest` and use `release.digest` for the associated SHA-256 evidence.
 
-The chart writes this metadata to Deployment/Pod labels and annotations, the release-info ConfigMap, the container environment, Helm NOTES, and `helm test` output.
+The chart writes this metadata to Deployment/Pod labels and annotations, Pod-template `honua.io/*` annotations, the release-info ConfigMap, the container environment, Helm NOTES, and `helm test` output. Chart/app evidence changes roll pods so `HONUA_CHART_VERSION` and `HONUA_APP_VERSION` in the container environment refresh.
 
 Capture evidence and rollback with:
 
@@ -267,6 +269,18 @@ secret:
 You may also set `secret.create=false` and provide only `extraEnvFrom` sources.
 In that mode the referenced sources must expose `ConnectionStrings__DefaultConnection`,
 `HONUA_ADMIN_PASSWORD`, and `ConnectionStrings__redis` when Redis is used.
+For example, another controller can own the Secret while the chart consumes it
+through `extraEnvFrom`:
+
+```yaml
+secret:
+  create: false
+extraEnvFrom:
+  - secretRef:
+      name: my-honua-secret
+```
+
+With `preflight.enabled=true`, the preflight Job reads the same external secret and `extraEnvFrom` sources and fails if `ConnectionStrings__DefaultConnection` or `HONUA_ADMIN_PASSWORD` are missing.
 
 ## Key values
 
@@ -278,8 +292,8 @@ In that mode the referenced sources must expose `ConnectionStrings__DefaultConne
 | `image.pullPolicy` | `Always` | Pull policy. Must be `IfNotPresent` or `Never` when `image.digest` is set. |
 | `release.id` | `""` | Operator release identifier surfaced in labels, annotations, ConfigMap, NOTES, and tests. |
 | `release.manifest` | `""` | URL, path, or commit for the release manifest. |
-| `release.digest` | `""` | Digest of the release manifest or release bundle. |
-| `release.appVersion` | `""` | Optional evidence override for `app.kubernetes.io/version` and release-info output. |
+| `release.digest` | `""` | `sha256:<64 lowercase hex characters>` digest of the release manifest or bundle. |
+| `release.appVersion` | `""` | Optional label-safe evidence override for `app.kubernetes.io/version`, Pod-template annotations, and release-info output. |
 | `strategy.type` | `Recreate` | Upgrade strategy. `Recreate` is safe for inline migrations. |
 | `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used only when `strategy.type=RollingUpdate`. |
 | `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
@@ -293,11 +307,11 @@ In that mode the referenced sources must expose `ConnectionStrings__DefaultConne
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |
 | `ingress.enabled` | false | Enable ingress. |
 | `config.env.*` | N/A | Non-secret environment variables stored in a ConfigMap. |
-| `secret.create` | true | Create a chart-managed Secret. Set false for customer-managed secrets. |
 | `secret.env.*` | N/A | Secret environment variables stored in a chart-managed Secret. |
-| `secret.name` | `""` | Reference an existing secret instead of chart-managed secret data. |
+| `secret.create` | true | Create the runtime Secret and preflight hook Secret from `secret.env`. |
+| `secret.name` | `""` | Reference an existing secret instead of chart-managed secret data. Required when `secret.create=false` unless `extraEnvFrom` supplies the required variables. |
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
-| `extraEnvFrom` | `[]` | Additional env source refs; also valid for existing-secret mode. |
+| `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
 | `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. |
 
