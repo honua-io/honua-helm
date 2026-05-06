@@ -14,6 +14,11 @@ on:
         description: 'honua-server release semver (no v prefix, no -aot suffix), e.g. 1.2.3'
         required: true
         type: string
+      publish:
+        description: 'Push the packaged chart to oci://ghcr.io/honua-io/charts. Leave off for a dry run that validates and packages without publishing.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -166,6 +171,7 @@ jobs:
 
       - name: Push chart to OCI registry
         id: push
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         shell: bash
         env:
           ARTIFACT: ${{ steps.package.outputs.artifact }}
@@ -192,6 +198,30 @@ jobs:
             echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
             echo "- OCI digest: \`${digest}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Summarize dry-run (no publish)
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
+        shell: bash
+        env:
+          CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+          APP_VERSION: ${{ steps.versions.outputs.app_version }}
+          IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+          SERVER_IMAGE_DIGEST: ${{ steps.verify-image.outputs.image_digest }}
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Helm chart dry run (no publish)"
+            echo ""
+            echo "- Chart version: \`${CHART_VERSION}\`"
+            echo "- App version: \`${APP_VERSION}\`"
+            echo "- Image tag stamped: \`${IMAGE_TAG}\`"
+            echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
+            echo "- Packaged artifact: \`${ARTIFACT}\` (not pushed)"
+            echo ""
+            echo "Re-run with \`publish: true\` to push to \`${OCI_REGISTRY}\`, or push tag \`chart-v${CHART_VERSION}\` to publish and create a GitHub Release."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "Dry run complete; chart packaged but not pushed to ${OCI_REGISTRY}."
 
       - name: Generate release notes
         id: notes

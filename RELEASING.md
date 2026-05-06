@@ -29,9 +29,16 @@ install time.
 
 ## Cut procedure
 
-The recommended path is `workflow_dispatch` because it forces an explicit
-`app_version` input and produces an OCI publish without a GitHub Release. Use
-the tag path once you are ready to make the cut public.
+The canonical public release path is the tag-triggered run, which publishes to
+OCI and creates the matching GitHub Release. `workflow_dispatch` is the
+dry-run lane: by default it validates inputs, verifies the honua-server
+image, builds dependencies from `Chart.lock`, stamps the chart, lints,
+renders, and packages — but does not publish. An explicit `publish: true`
+dispatch input flips it to a publish-without-Release path; reserve that for
+unusual flows (for example, a manual republish) and do not pair it with the
+tag path for the same `chart_version` — re-pushing the same OCI artifact tag
+overwrites the existing manifest and changes its digest, breaking the
+chart-version → digest contract.
 
 ### 1. Prepare on `trunk`
 
@@ -42,16 +49,25 @@ the tag path once you are ready to make the cut public.
    `honua/ci-values/*.yaml`.
 4. Merge to `trunk`.
 
-### 2. Dry run via `workflow_dispatch` (optional but recommended)
+### 2. Dry run via `workflow_dispatch` (recommended)
 
 `Actions → Helm Release → Run workflow` with:
 
 - `chart_version`: e.g. `0.2.0`
 - `app_version`: e.g. `1.2.3`
+- `publish`: leave **off** for a dry run (default)
 
-The workflow stamps `Chart.yaml` and `values.yaml`, lints and renders the
-chart, packages it, and pushes to `oci://ghcr.io/honua-io/charts`. No GitHub
-Release is created on `workflow_dispatch`.
+The workflow resolves the inputs, verifies that
+`ghcr.io/honua-io/honua-server:v${app_version}-aot` exists and resolves to a
+single `sha256` digest, builds dependencies, stamps `Chart.yaml` and
+`values.yaml`, lints, renders, and packages the `.tgz`. With `publish: false`
+the run stops there and emits a "dry run (no publish)" step summary — no
+chart is pushed to OCI and no GitHub Release is created. Use this to
+validate inputs without consuming a chart version.
+
+Setting `publish: true` performs every step above and additionally pushes to
+`oci://ghcr.io/honua-io/charts`. This path does not create a GitHub Release;
+prefer the tag path (Step 3) for the canonical public cut.
 
 ### 3. Tag the cut
 
@@ -61,9 +77,10 @@ git push origin chart-vX.Y.Z
 ```
 
 The tag-triggered run derives `chart_version` from the tag and reads
-`app_version` from `Chart.yaml`. Both are stamped into the package. The
-workflow also creates a GitHub Release named `chart-vX.Y.Z` with the
-`.tgz` attached and auto-generated notes.
+`app_version` from `Chart.yaml`. Both are stamped into the package, the
+chart is pushed to `oci://ghcr.io/honua-io/charts`, and a GitHub Release
+named `chart-vX.Y.Z` is created with the `.tgz` attached and auto-generated
+notes.
 
 ### Rejection rules
 
