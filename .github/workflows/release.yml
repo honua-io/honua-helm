@@ -37,6 +37,9 @@ jobs:
       - name: Setup Helm
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a
 
+      - name: Add Bitnami chart repository
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
       - name: Resolve chart_version and app_version
         id: versions
         shell: bash
@@ -258,7 +261,9 @@ jobs:
             echo "### Install"
             echo ""
             echo "\`\`\`bash"
-            echo "helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version ${CHART_VERSION}"
+            echo "helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version ${CHART_VERSION} \\"
+            echo "  --set secret.env.ConnectionStrings__DefaultConnection=\"Host=postgres;Database=honua;Username=honua;Password=honua\" \\"
+            echo "  --set secret.env.HONUA_ADMIN_PASSWORD=\"change-me\""
             echo "\`\`\`"
             echo ""
             echo "### Changes (${range_label})"

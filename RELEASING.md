@@ -1,8 +1,8 @@
 # Releasing the Honua Helm Chart
 
 This page is the operator runbook for cutting a chart release. The release pipeline lives in
-[`.github/workflows/release.yml`](.github/workflows/release.yml) and publishes to
-`oci://ghcr.io/honua-io/charts`.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) and publishes public tag-triggered
+cuts to `oci://ghcr.io/honua-io/charts`.
 
 ## Versioning model
 
@@ -138,9 +138,11 @@ the next render.
 
 ## OCI vs. classic chart repository
 
-MVP publishes to OCI only. `helm install oci://ghcr.io/honua-io/charts/honua`
-works on Helm 3.8 and later. A classic GitHub Pages chart repository will be
-considered as a follow-up if marketplace or sales workstreams surface a
+MVP publishes to OCI only. Helm 3.8 and later can install the OCI reference
+directly with the complete `helm upgrade --install honua
+oci://ghcr.io/honua-io/charts/honua --version X.Y.Z ...` form documented in
+[`honua/README.md`](honua/README.md). A classic GitHub Pages chart repository
+will be considered as a follow-up if marketplace or sales workstreams surface a
 customer requirement for `helm repo add`.
 
 ## Verification after a cut

@@ -15,7 +15,8 @@ for `honua-io/honua-helm#2`.
 ## Targeted Checks
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 jq empty honua/values.schema.json
 helm lint honua
 helm lint honua -f honua/ci-values/base.yaml

@@ -46,13 +46,16 @@ in [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.
 For local development and Helm smoke testing, use the development overlay:
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
 ```
 
 For direct installs with external data services, the default preflight hook
 checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment
 is applied.
+
+`helm dependency build` uses the committed `Chart.lock`, matching CI and release packaging.
 
 ## Values contract and overlays
 
@@ -164,7 +167,8 @@ The `honua-prod-runtime` Secret must contain:
 - `ConnectionStrings__redis` for non-development deployments
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 helm upgrade --install honua honua -f honua/values-prod.yaml -f customer-prod.yaml
 ```
 
@@ -345,7 +349,7 @@ characters. For non-development deployments, it also fails if
 | Value | Default | Description |
 |-------|---------|-------------|
 | `replicaCount` | 1 | Number of pods. Use 3+ for production. |
-| `image.tag` | `latest-aot` | Image tag. AOT recommended. Leave empty when `image.digest` is set. |
+| `image.tag` | `latest-aot` | Image tag. AOT recommended. Pin to `vX.Y.Z-aot` for production; leave empty when `image.digest` is set. |
 | `image.digest` | `""` | Immutable image digest. Preferred for production and rollback evidence. |
 | `image.pullPolicy` | `Always` | Pull policy. Must be `IfNotPresent` or `Never` when `image.digest` is set. |
 | `release.id` | `""` | Operator release identifier surfaced in labels, annotations, ConfigMap, NOTES, and tests. |
@@ -400,7 +404,9 @@ For dataset-specific tuning:
 ## Local validation
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
+helm lint honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml
