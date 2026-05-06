@@ -31,6 +31,8 @@ strategy:
 `Recreate` is the safe default for inline migrations because it scales old
 pods down before new pods start. This prevents old and new Honua versions from
 serving against the same database while a migration is in progress.
+When desired replicas are greater than one, this safety property causes planned
+upgrade downtime while old pods are stopped and replacement pods start.
 
 Operators may opt into `RollingUpdate` only when the target migration set is
 forward and backward compatible across the old and new images:
@@ -80,13 +82,21 @@ The preflight Job validates:
 - `ConnectionStrings__DefaultConnection` is present.
 - `HONUA_ADMIN_PASSWORD` is present.
 - The PostgreSQL host and port parsed from the connection string accept TCP
-  connections.
+  connections. During the initial install only, this reachability check is
+  skipped when the chart auto-generates the connection string for its own
+  PostgreSQL subchart because Helm pre-install hooks run before subchart
+  Services and Pods are created; pre-upgrade hooks check the existing database.
 - The target image registry `/v2/` endpoint is reachable when
   `preflight.registryCheck.enabled=true`.
 
 For chart-managed Secrets, a temporary hook Secret is rendered from the same
 helper as the runtime Secret. For externally managed Secrets, the Job reads
 from `secret.name` and `extraEnvFrom`.
+
+The default hook image is `curlimages/curl:8.5.0`, and the default reachability
+timeout is `preflight.timeoutSeconds=5`. Operators can set
+`preflight.registryCheck.enabled=false` to keep secret and database checks while
+skipping the registry `/v2/` check.
 
 The preflight registry check does not authenticate to the registry or replace
 the kubelet's image pull. The kubelet remains authoritative for full image
@@ -131,6 +141,10 @@ release:
   digest: sha256:<64 lowercase hex characters>
   appVersion: ""
 ```
+
+`release.id` and `release.appVersion` are rendered as Kubernetes label values.
+The schema limits them to 63 characters and permits letters, numbers, `_`, `.`,
+and `-`, with a letter or number at both ends.
 
 The chart surfaces release evidence in:
 

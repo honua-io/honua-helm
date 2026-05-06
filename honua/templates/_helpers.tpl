@@ -54,6 +54,8 @@ registry-1.docker.io
 
 {{- define "honua.releaseAnnotations" -}}
 honua.io/image-reference: {{ include "honua.imageReference" . | quote }}
+honua.io/chart-version: {{ .Chart.Version | quote }}
+honua.io/app-version: {{ include "honua.appVersion" . | quote }}
 {{- with .Values.image.digest }}
 honua.io/image-digest: {{ . | quote }}
 {{- end }}
@@ -99,6 +101,25 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "honua.preflightSecretName" -}}
 {{- printf "%s-preflight" (include "honua.fullname" .) -}}
+{{- end -}}
+
+{{- define "honua.usesChartManagedPostgresqlConnection" -}}
+{{- $secretValues := .Values.secret | default dict -}}
+{{- $secretEnv := get $secretValues "env" | default dict -}}
+{{- $conn := trim (default "" (get $secretEnv "ConnectionStrings__DefaultConnection")) -}}
+{{- if and .Values.postgresql.enabled .Values.secret.create (not $conn) -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.preflightDatabaseCheck" -}}
+{{- if and .Release.IsInstall (eq (include "honua.usesChartManagedPostgresqlConnection" .) "true") -}}
+false
+{{- else -}}
+true
+{{- end -}}
 {{- end -}}
 
 {{- define "honua.releaseInfoConfigMapName" -}}

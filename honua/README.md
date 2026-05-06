@@ -11,6 +11,9 @@ helm dependency update honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
 ```
 
+For direct installs with an external database, the default preflight hook checks
+the configured PostgreSQL/PostGIS host before the Deployment is applied.
+
 ## Values contract and overlays
 
 The operator values contract is documented in:
@@ -53,6 +56,7 @@ release:
   id: "honua-2026-05-preview"
   manifest: "https://example.com/release/honua-2026-05-preview.json"
   digest: "sha256:<64 lowercase hex characters>"
+  appVersion: "2026.05.0"   # Optional evidence override
 
 strategy:
   type: Recreate
@@ -143,6 +147,10 @@ When `postgresql.enabled=true`, `postgresql.auth.username`,
 `postgresql.auth.password`, and `postgresql.auth.database` are required. In
 chart-managed-secret mode, the chart auto-populates
 `ConnectionStrings__DefaultConnection` if you don't supply one.
+During the initial install with that auto-generated connection string, preflight
+skips PostgreSQL TCP reachability because Helm pre-install hooks run before
+subchart Services and Pods are created. Pre-upgrade hooks check the existing
+PostgreSQL endpoint.
 
 ## Redis subchart
 
@@ -200,13 +208,23 @@ Readiness at `/healthz/ready` is the chart signal that startup and migrations co
 
 ## Preflight hook
 
-`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, and target image registry reachability before the Deployment is applied. The kubelet remains authoritative for full image pull success, especially for private registries.
+`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
+
+For the dev-only PostgreSQL subchart, the initial install preflight validates required secret keys and registry reachability but defers PostgreSQL TCP reachability until upgrade because the subchart is created after pre-install hooks.
 
 Disable only when an external controller or restricted network policy prevents the hook from reaching the database or registry:
 
 ```yaml
 preflight:
   enabled: false
+```
+
+To keep secret and database checks but skip the registry `/v2/` check:
+
+```yaml
+preflight:
+  registryCheck:
+    enabled: false
 ```
 
 ## Release evidence and rollback
@@ -218,7 +236,10 @@ release:
   id: "honua-2026-05-preview"
   manifest: "https://example.com/release/honua-2026-05-preview.json"
   digest: "sha256:<64 lowercase hex characters>"
+  appVersion: "2026.05.0"
 ```
+
+`release.id` and `release.appVersion` are used as Kubernetes label values, so keep them 63 characters or less and use only letters, numbers, `_`, `.`, or `-`, starting and ending with a letter or number.
 
 The chart writes this metadata to Deployment/Pod labels and annotations, the release-info ConfigMap, the container environment, Helm NOTES, and `helm test` output.
 
@@ -254,13 +275,18 @@ In that mode the referenced sources must expose `ConnectionStrings__DefaultConne
 | `replicaCount` | 1 | Number of pods. Use 3+ for production. |
 | `image.tag` | `latest-aot` | Image tag. AOT recommended. Leave empty when `image.digest` is set. |
 | `image.digest` | `""` | Immutable image digest. Preferred for production and rollback evidence. |
+| `image.pullPolicy` | `Always` | Pull policy. Must be `IfNotPresent` or `Never` when `image.digest` is set. |
 | `release.id` | `""` | Operator release identifier surfaced in labels, annotations, ConfigMap, NOTES, and tests. |
 | `release.manifest` | `""` | URL, path, or commit for the release manifest. |
 | `release.digest` | `""` | Digest of the release manifest or release bundle. |
+| `release.appVersion` | `""` | Optional evidence override for `app.kubernetes.io/version` and release-info output. |
 | `strategy.type` | `Recreate` | Upgrade strategy. `Recreate` is safe for inline migrations. |
+| `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used only when `strategy.type=RollingUpdate`. |
 | `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
+| `preflight.timeoutSeconds` | 5 | Timeout for database and registry reachability checks. |
+| `preflight.registryCheck.enabled` | true | Check the target image registry `/v2/` endpoint before apply. |
 | `terminationGracePeriodSeconds` | 60 | Pod shutdown grace period for lock release and clean termination. |
-| `resources` | 250m/512Mi request, 2 CPU/2Gi limit | CPU/memory requests and limits. Tune for production. |
+| `resources` | requests `250m`/`512Mi`, limits `2`/`2Gi` | CPU/memory requests and limits. Tune for production workloads. |
 | `autoscaling.enabled` | false | Enable HPA. |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
 | `autoscaling.targetMemoryUtilizationPercentage` | `80` | Memory utilization threshold for scale decisions. |

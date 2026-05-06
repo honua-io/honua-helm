@@ -1,0 +1,10 @@
+postgresql:
+  enabled: true
+  auth:
+    username: honua
+    password: ci-password
+    database: honua
+
+secret:
+  env:
+    HONUA_ADMIN_PASSWORD: ci-admin-password

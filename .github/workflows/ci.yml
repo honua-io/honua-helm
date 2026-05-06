@@ -61,6 +61,12 @@ jobs:
       - name: Render templates (rolling update)
         run: helm template honua ./honua -f honua/ci-values/rolling-update.yaml > /tmp/honua-rendered-rolling-update.yaml
 
+      - name: Render templates (chart-managed postgresql install)
+        run: helm template honua ./honua -f honua/ci-values/postgresql.yaml > /tmp/honua-rendered-postgresql-install.yaml
+
+      - name: Render templates (chart-managed postgresql upgrade)
+        run: helm template honua ./honua --is-upgrade -f honua/ci-values/postgresql.yaml > /tmp/honua-rendered-postgresql-upgrade.yaml
+
       - name: Render templates (dependency name overrides)
         run: helm template honua ./honua -f honua/ci-values/dependency-name-overrides.yaml > /tmp/honua-rendered-dependency-name-overrides.yaml
 
@@ -95,6 +101,8 @@ jobs:
           grep -q 'type: Recreate' /tmp/honua-rendered-base.yaml
           grep -q 'failureThreshold: 60' /tmp/honua-rendered-base.yaml
           grep -q 'honua.io/image-reference:' /tmp/honua-rendered-base.yaml
+          grep -q 'honua.io/chart-version:' /tmp/honua-rendered-base.yaml
+          grep -q 'honua.io/app-version:' /tmp/honua-rendered-base.yaml
           grep -q 'HONUA_IMAGE_REFERENCE:' /tmp/honua-rendered-base.yaml
           grep -q 'readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete' /tmp/honua-rendered-base.yaml
 
@@ -105,6 +113,10 @@ jobs:
           grep -q 'type: RollingUpdate' /tmp/honua-rendered-rolling-update.yaml
           grep -q 'maxSurge: 0' /tmp/honua-rendered-rolling-update.yaml
           grep -q 'maxUnavailable: 1' /tmp/honua-rendered-rolling-update.yaml
+
+          grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-base.yaml | grep -q 'value: "true"'
+          grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-install.yaml | grep -q 'value: "false"'
+          grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-upgrade.yaml | grep -q 'value: "true"'
 
       - name: Validate autoscaling guard fails invalid config
         run: |
@@ -151,10 +163,25 @@ jobs:
             exit 1
           fi
 
+      - name: Validate release appVersion label guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set release.appVersion=1.0.0+build \
+            > /tmp/honua-rendered-app-version-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected invalid release.appVersion render to fail."
+            cat /tmp/honua-rendered-app-version-invalid.yaml
+            exit 1
+          fi
+
   install-upgrade-rollback-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2c504acf0a
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
 
       - name: Setup Helm
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a

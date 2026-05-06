@@ -3,6 +3,9 @@
 {{- $hasExtraEnvFrom := gt (len .Values.extraEnvFrom) 0 -}}
 {{- $imageTag := trim (default "" .Values.image.tag) -}}
 {{- $imageDigest := trim (default "" .Values.image.digest) -}}
+{{- $releaseID := trim (default "" .Values.release.id) -}}
+{{- $appVersion := trim (include "honua.appVersion" .) -}}
+{{- $labelValuePattern := "^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$" -}}
 
 {{- if and (not .Values.secret.create) (not (or $hasSecretName $hasExtraEnvFrom)) -}}
 {{- fail "When secret.create is false, you must provide secret.name or at least one extraEnvFrom source." -}}
@@ -22,4 +25,12 @@
 
 {{- if and $imageDigest (eq .Values.image.pullPolicy "Always") -}}
 {{- fail "image.pullPolicy must be IfNotPresent or Never when image.digest is set." -}}
+{{- end -}}
+
+{{- if and $releaseID (not (regexMatch $labelValuePattern $releaseID)) -}}
+{{- fail "release.id must be a valid Kubernetes label value: 63 characters or less, using letters, numbers, '_', '.', or '-', and starting and ending with a letter or number." -}}
+{{- end -}}
+
+{{- if and $appVersion (not (regexMatch $labelValuePattern $appVersion)) -}}
+{{- fail "release.appVersion, or Chart.AppVersion when release.appVersion is empty, must be a valid Kubernetes label value: 63 characters or less, using letters, numbers, '_', '.', or '-', and starting and ending with a letter or number." -}}
 {{- end -}}

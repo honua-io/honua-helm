@@ -48,7 +48,9 @@
           "pattern": "^$|^sha256:[0-9a-f]{64}$"
         },
         "appVersion": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
         }
       }
     },

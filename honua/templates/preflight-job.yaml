@@ -40,6 +40,8 @@ spec:
               value: {{ .Values.preflight.timeoutSeconds | quote }}
             - name: HONUA_PREFLIGHT_REGISTRY_CHECK
               value: {{ ternary "true" "false" .Values.preflight.registryCheck.enabled | quote }}
+            - name: HONUA_PREFLIGHT_DATABASE_CHECK
+              value: {{ include "honua.preflightDatabaseCheck" . | quote }}
             - name: HONUA_PREFLIGHT_REGISTRY_HOST
               value: {{ include "honua.imageRegistryHost" . | quote }}
             - name: HONUA_IMAGE_REFERENCE
@@ -73,43 +75,47 @@ spec:
                 fi
               done
 
-              conn="${ConnectionStrings__DefaultConnection}"
-              db_host=""
-              db_port="5432"
-              old_ifs="${IFS}"
-              IFS=';'
-              for part in $conn; do
-                key="${part%%=*}"
-                value="${part#*=}"
-                normalized_key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-                normalized_value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-                case "$normalized_key" in
-                  host|server|datasource)
-                    db_host="$normalized_value"
+              if [ "${HONUA_PREFLIGHT_DATABASE_CHECK}" = "true" ]; then
+                conn="${ConnectionStrings__DefaultConnection}"
+                db_host=""
+                db_port="5432"
+                old_ifs="${IFS}"
+                IFS=';'
+                for part in $conn; do
+                  key="${part%%=*}"
+                  value="${part#*=}"
+                  normalized_key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+                  normalized_value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                  case "$normalized_key" in
+                    host|server|datasource)
+                      db_host="$normalized_value"
+                      ;;
+                    port)
+                      db_port="$normalized_value"
+                      ;;
+                  esac
+                done
+                IFS="${old_ifs}"
+
+                if [ -z "$db_host" ]; then
+                  fail "could not parse database host from ConnectionStrings__DefaultConnection"
+                fi
+
+                echo "Checking PostgreSQL TCP reachability at ${db_host}:${db_port}"
+                set +e
+                curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://${db_host}:${db_port}/" >/dev/null
+                db_status=$?
+                set -e
+                case "$db_status" in
+                  0|1|52|56)
                     ;;
-                  port)
-                    db_port="$normalized_value"
+                  *)
+                    fail "database endpoint ${db_host}:${db_port} is not reachable (curl exit ${db_status})"
                     ;;
                 esac
-              done
-              IFS="${old_ifs}"
-
-              if [ -z "$db_host" ]; then
-                fail "could not parse database host from ConnectionStrings__DefaultConnection"
+              else
+                echo "Skipping PostgreSQL TCP reachability check during initial chart-managed PostgreSQL install; pre-upgrade checks run after PostgreSQL exists."
               fi
-
-              echo "Checking PostgreSQL TCP reachability at ${db_host}:${db_port}"
-              set +e
-              curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://${db_host}:${db_port}/" >/dev/null
-              db_status=$?
-              set -e
-              case "$db_status" in
-                0|1|52|56)
-                  ;;
-                *)
-                  fail "database endpoint ${db_host}:${db_port} is not reachable (curl exit ${db_status})"
-                  ;;
-              esac
 
               if [ "${HONUA_PREFLIGHT_REGISTRY_CHECK}" = "true" ]; then
                 echo "Checking image registry reachability at ${HONUA_PREFLIGHT_REGISTRY_HOST} for ${HONUA_IMAGE_REFERENCE}"
