@@ -40,8 +40,10 @@ jobs:
           DISPATCH_APP_VERSION: ${{ inputs.app_version }}
         run: |
           set -euo pipefail
-          # SemVer (no `v` prefix). Optional pre-release/build metadata allowed via the trailing group.
-          semver_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          # SemVer (no `v` prefix). Optional pre-release allowed; build metadata ('+...') is
+          # rejected because Docker image tags and OCI references do not allow '+'. The image tag
+          # is stamped as v${app_version}-aot, and the chart is published to an OCI registry.
+          semver_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             chart_version="${DISPATCH_CHART_VERSION}"
             app_version="${DISPATCH_APP_VERSION}"
@@ -59,7 +61,7 @@ jobs:
             exit 1
           fi
           if [[ ! "${chart_version}" =~ ${semver_re} ]]; then
-            echo "::error::chart_version '${chart_version}' is not SemVer (X.Y.Z, no 'v' prefix). Example: 0.2.0" >&2
+            echo "::error::chart_version '${chart_version}' is not SemVer (X.Y.Z[-prerelease], no 'v' prefix, no '+' build metadata). Example: 0.2.0 or 0.2.0-rc.1" >&2
             exit 1
           fi
           if [[ -z "${app_version}" || "${app_version}" == "null" || "${app_version}" == "0.0.0" ]]; then
@@ -75,7 +77,7 @@ jobs:
             exit 1
           fi
           if [[ ! "${app_version}" =~ ${semver_re} ]]; then
-            echo "::error::app_version '${app_version}' is not SemVer (X.Y.Z[-prerelease][+build], no 'v' prefix, no '-aot' suffix). Example: 1.2.3 or 1.2.3-rc.1" >&2
+            echo "::error::app_version '${app_version}' is not SemVer (X.Y.Z[-prerelease], no 'v' prefix, no '-aot' suffix, no '+' build metadata). Example: 1.2.3 or 1.2.3-rc.1" >&2
             exit 1
           fi
           image_tag="v${app_version}-aot"

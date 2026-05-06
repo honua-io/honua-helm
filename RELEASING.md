@@ -70,16 +70,18 @@ workflow also creates a GitHub Release named `chart-vX.Y.Z` with the
 The workflow fails fast (`set -euo pipefail`) when:
 
 - Tag does not match `chart-vX.Y.Z[-suffix]`.
-- `chart_version` is not bare SemVer (`X.Y.Z`, optional pre-release/build
-  metadata; no `v` prefix).
+- `chart_version` is not bare SemVer (`X.Y.Z`, optional pre-release; no `v`
+  prefix and no `+` build metadata).
 - `app_version` is empty, `null`, or the placeholder `0.0.0` — operators must
   pin to a real honua-server release before tagging, or supply the value via
   dispatch.
 - `app_version` starts with `v` (e.g. `v1.2.3`) or ends with `-aot` (e.g.
   `1.2.3-aot`). Supply the bare server SemVer; the workflow stamps the image
   tag as `v${app_version}-aot`.
-- `app_version` is not bare SemVer (`X.Y.Z`, optional pre-release/build
-  metadata).
+- `app_version` is not bare SemVer (`X.Y.Z`, optional pre-release; no `+`
+  build metadata). Build metadata is rejected because the workflow stamps the
+  image tag as `v${app_version}-aot`, and Docker/OCI references do not allow
+  `+`.
 - `helm package` does not produce the expected
   `dist/honua-${chart_version}.tgz`.
 
@@ -90,6 +92,16 @@ Every chart release is intended to be validated against a concrete
 lands install/upgrade smoke against a real cluster, the smoke evidence
 captured in the GitHub Release notes is manual. After honua-helm-2 lands, the
 release notes will record the digest exercised in smoke.
+
+## Subchart pinning
+
+Release packaging runs `helm dependency build honua`, which consumes the
+committed `honua/Chart.lock` rather than re-resolving the version ranges in
+`honua/Chart.yaml`. The published `.tgz` therefore embeds exactly the Bitnami
+`postgresql` and `redis` subchart versions recorded in the lock. Bumping a
+subchart is a deliberate PR that runs `helm dependency update` and updates
+`Chart.lock`; CI then validates the new lock via `helm dependency build` on
+the next render.
 
 ## OCI vs. classic chart repository
 
