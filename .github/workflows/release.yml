@@ -40,6 +40,8 @@ jobs:
           DISPATCH_APP_VERSION: ${{ inputs.app_version }}
         run: |
           set -euo pipefail
+          # SemVer (no `v` prefix). Optional pre-release/build metadata allowed via the trailing group.
+          semver_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             chart_version="${DISPATCH_CHART_VERSION}"
             app_version="${DISPATCH_APP_VERSION}"
@@ -56,8 +58,24 @@ jobs:
             echo "::error::chart_version is empty" >&2
             exit 1
           fi
+          if [[ ! "${chart_version}" =~ ${semver_re} ]]; then
+            echo "::error::chart_version '${chart_version}' is not SemVer (X.Y.Z, no 'v' prefix). Example: 0.2.0" >&2
+            exit 1
+          fi
           if [[ -z "${app_version}" || "${app_version}" == "null" || "${app_version}" == "0.0.0" ]]; then
             echo "::error::app_version must be a real honua-server release (got: '${app_version}'). For tag-triggered runs, commit Chart.yaml appVersion to the target server tag before tagging, or trigger via workflow_dispatch." >&2
+            exit 1
+          fi
+          if [[ "${app_version}" == v* ]]; then
+            echo "::error::app_version '${app_version}' must not start with 'v' — supply the bare server SemVer (e.g. 1.2.3, not v1.2.3). The image tag is stamped as v\${app_version}-aot." >&2
+            exit 1
+          fi
+          if [[ "${app_version}" == *-aot ]]; then
+            echo "::error::app_version '${app_version}' must not end with '-aot' — supply the bare server SemVer (e.g. 1.2.3, not 1.2.3-aot). The image tag is stamped as v\${app_version}-aot." >&2
+            exit 1
+          fi
+          if [[ ! "${app_version}" =~ ${semver_re} ]]; then
+            echo "::error::app_version '${app_version}' is not SemVer (X.Y.Z[-prerelease][+build], no 'v' prefix, no '-aot' suffix). Example: 1.2.3 or 1.2.3-rc.1" >&2
             exit 1
           fi
           image_tag="v${app_version}-aot"
@@ -66,8 +84,8 @@ jobs:
           echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
           echo "Resolved chart_version=${chart_version} app_version=${app_version} image_tag=${image_tag}"
 
-      - name: Update dependencies
-        run: helm dependency update honua
+      - name: Build dependencies from Chart.lock
+        run: helm dependency build honua
 
       - name: Stamp Chart.yaml and values.yaml
         shell: bash

@@ -70,9 +70,16 @@ workflow also creates a GitHub Release named `chart-vX.Y.Z` with the
 The workflow fails fast (`set -euo pipefail`) when:
 
 - Tag does not match `chart-vX.Y.Z[-suffix]`.
+- `chart_version` is not bare SemVer (`X.Y.Z`, optional pre-release/build
+  metadata; no `v` prefix).
 - `app_version` is empty, `null`, or the placeholder `0.0.0` — operators must
   pin to a real honua-server release before tagging, or supply the value via
   dispatch.
+- `app_version` starts with `v` (e.g. `v1.2.3`) or ends with `-aot` (e.g.
+  `1.2.3-aot`). Supply the bare server SemVer; the workflow stamps the image
+  tag as `v${app_version}-aot`.
+- `app_version` is not bare SemVer (`X.Y.Z`, optional pre-release/build
+  metadata).
 - `helm package` does not produce the expected
   `dist/honua-${chart_version}.tgz`.
 

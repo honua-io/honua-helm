@@ -4,7 +4,7 @@ Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis su
 
 - Source of truth: `oci://ghcr.io/honua-io/charts/honua`
 - GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
-- Versioning and cut procedure: see [`../RELEASING.md`](../RELEASING.md).
+- Versioning and cut procedure: see [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
 
 ## Install (published chart)
 
@@ -30,7 +30,7 @@ helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z
 Value keys under `image`, `service`, `ingress`, `config.env`, `secret.env`,
 `postgresql`, and `redis` are stable within a chart major version. Operators
 upgrading from in-monorepo deployments do not need value migrations within
-chart 0.x — see [`../docs/MIGRATION.md`](../docs/MIGRATION.md). The
+chart 0.x — see [`docs/MIGRATION.md`](https://github.com/honua-io/honua-helm/blob/trunk/docs/MIGRATION.md). The
 operator-ready values contract that formalizes this guarantee is tracked in
 [honua-helm#6](https://github.com/honua-io/honua-helm/issues/6).
 
@@ -39,7 +39,7 @@ operator-ready values contract that formalizes this guarantee is tracked in
 Chart `version` (semver) bumps independently of honua-server. Chart
 `appVersion` mirrors the honua-server release the chart is validated against.
 Tag scheme: `chart-vX.Y.Z` here, `vX.Y.Z` in honua-server. Full procedure
-in [`../RELEASING.md`](../RELEASING.md).
+in [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
 
 ## Quick start (from a checkout)
 
