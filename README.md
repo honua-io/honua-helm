@@ -12,3 +12,4 @@ See `honua/README.md` for chart usage details.
 The chart feature map is in [docs/features/README.md](docs/features/README.md).
 The baseline values contract intentionally leaves runtime secrets empty; use an
 environment overlay or site-specific values file for installs and render smoke.
+The operator-ready chart contract is in [docs/contract.md](docs/contract.md).

@@ -1,6 +1,7 @@
 # Staging overlay for release-candidate validation.
 # Pair this file with a site-specific override for ingress class, DNS, TLS, image
-# tag, and the pre-created runtime secret name when defaults do not match.
+# tag, and the pre-created runtime secret name when defaults do not match. The
+# runtime secret must include ConnectionStrings__redis for durable event storage.
 
 replicaCount: 2
 

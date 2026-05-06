@@ -1,0 +1,12 @@
+postgresql:
+  enabled: true
+  auth:
+    username: honua
+    password: ci-password
+    database: honua
+
+secret:
+  env:
+    HONUA_ADMIN_PASSWORD: CiAdminPassword1!
+    Security__ConnectionEncryption__MasterKey: ci-connection-encryption-master-key-00000001
+    ConnectionStrings__redis: redis:6379,password=ci-redis-password

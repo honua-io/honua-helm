@@ -55,6 +55,18 @@ jobs:
       - name: Render templates (redis auth)
         run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
 
+      - name: Render templates (digest image)
+        run: helm template honua ./honua -f honua/ci-values/digest.yaml > /tmp/honua-rendered-digest.yaml
+
+      - name: Render templates (rolling update)
+        run: helm template honua ./honua -f honua/ci-values/rolling-update.yaml > /tmp/honua-rendered-rolling-update.yaml
+
+      - name: Render templates (chart-managed postgresql install)
+        run: helm template honua ./honua -f honua/ci-values/postgresql.yaml > /tmp/honua-rendered-postgresql-install.yaml
+
+      - name: Render templates (chart-managed postgresql upgrade)
+        run: helm template honua ./honua --is-upgrade -f honua/ci-values/postgresql.yaml > /tmp/honua-rendered-postgresql-upgrade.yaml
+
       - name: Render templates (dependency name overrides)
         run: helm template honua ./honua -f honua/ci-values/dependency-name-overrides.yaml > /tmp/honua-rendered-dependency-name-overrides.yaml
 
@@ -80,6 +92,33 @@ jobs:
             exit 1
           fi
 
+      - name: Assert operator contract rendering
+        run: |
+          set -euo pipefail
+
+          grep -q 'name: honua-honua-release-info' /tmp/honua-rendered-base.yaml
+          grep -q 'name: honua-honua-preflight' /tmp/honua-rendered-base.yaml
+          grep -q 'type: Recreate' /tmp/honua-rendered-base.yaml
+          grep -q 'failureThreshold: 60' /tmp/honua-rendered-base.yaml
+          grep -q 'honua.io/image-reference:' /tmp/honua-rendered-base.yaml
+          grep -q 'honua.io/chart-version:' /tmp/honua-rendered-base.yaml
+          grep -q 'honua.io/app-version:' /tmp/honua-rendered-base.yaml
+          grep -q 'HONUA_IMAGE_REFERENCE:' /tmp/honua-rendered-base.yaml
+          grep -q 'Security__ConnectionEncryption__MasterKey:' /tmp/honua-rendered-base.yaml
+          grep -q 'readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete' /tmp/honua-rendered-base.yaml
+
+          grep -q 'image: "ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' /tmp/honua-rendered-digest.yaml
+          grep -q 'honua.io/image-digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' /tmp/honua-rendered-digest.yaml
+          grep -q 'honua.io/release-id: "honua-ci-digest"' /tmp/honua-rendered-digest.yaml
+
+          grep -q 'type: RollingUpdate' /tmp/honua-rendered-rolling-update.yaml
+          grep -q 'maxSurge: 0' /tmp/honua-rendered-rolling-update.yaml
+          grep -q 'maxUnavailable: 1' /tmp/honua-rendered-rolling-update.yaml
+
+          grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-base.yaml | grep -q 'value: "true"'
+          grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-install.yaml | grep -q 'value: "false"'
+          grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-upgrade.yaml | grep -q 'value: "true"'
+
       - name: Validate autoscaling guard fails invalid config
         run: |
           set +e
@@ -91,3 +130,299 @@ jobs:
             cat /tmp/honua-rendered-autoscaling-invalid.yaml
             exit 1
           fi
+
+      - name: Validate rolling update guard fails invalid zero budget
+        run: |
+          for budget_type in int string percent; do
+            set +e
+            case "${budget_type}" in
+              int)
+                helm template honua ./honua \
+                  -f honua/ci-values/base.yaml \
+                  --set strategy.type=RollingUpdate \
+                  --set strategy.rollingUpdate.maxSurge=0 \
+                  --set strategy.rollingUpdate.maxUnavailable=0 \
+                  > "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml" 2>&1
+                ;;
+              string)
+                helm template honua ./honua \
+                  -f honua/ci-values/base.yaml \
+                  --set strategy.type=RollingUpdate \
+                  --set-string strategy.rollingUpdate.maxSurge=0 \
+                  --set-string strategy.rollingUpdate.maxUnavailable=0 \
+                  > "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml" 2>&1
+                ;;
+              percent)
+                helm template honua ./honua \
+                  -f honua/ci-values/base.yaml \
+                  --set strategy.type=RollingUpdate \
+                  --set-string strategy.rollingUpdate.maxSurge='0%' \
+                  --set-string strategy.rollingUpdate.maxUnavailable='0%' \
+                  > "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml" 2>&1
+                ;;
+            esac
+            status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected RollingUpdate zero rollout budget (${budget_type}) render to fail."
+              cat "/tmp/honua-rendered-rolling-update-zero-budget-${budget_type}.yaml"
+              exit 1
+            fi
+          done
+
+      - name: Validate digest guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set image.tag="" \
+            --set image.digest=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+            --set image.pullPolicy=Always \
+            > /tmp/honua-rendered-digest-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected digest + pullPolicy Always render to fail."
+            cat /tmp/honua-rendered-digest-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate image identity guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set image.tag="" \
+            --set image.digest="" \
+            > /tmp/honua-rendered-image-empty.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected empty image.tag and image.digest render to fail."
+            cat /tmp/honua-rendered-image-empty.yaml
+            exit 1
+          fi
+
+      - name: Validate release appVersion label guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set release.appVersion=1.0.0+build \
+            > /tmp/honua-rendered-app-version-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected invalid release.appVersion render to fail."
+            cat /tmp/honua-rendered-app-version-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate connection encryption master key guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set secret.env.Security__ConnectionEncryption__MasterKey=short \
+            > /tmp/honua-rendered-master-key-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected short Security__ConnectionEncryption__MasterKey render to fail."
+            cat /tmp/honua-rendered-master-key-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate admin password guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set secret.env.HONUA_ADMIN_PASSWORD=weakpassword \
+            > /tmp/honua-rendered-admin-password-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected weak HONUA_ADMIN_PASSWORD render to fail."
+            cat /tmp/honua-rendered-admin-password-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate Redis connection guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set secret.env.ConnectionStrings__redis= \
+            > /tmp/honua-rendered-redis-missing.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected missing ConnectionStrings__redis render to fail."
+            cat /tmp/honua-rendered-redis-missing.yaml
+            exit 1
+          fi
+
+  install-upgrade-rollback-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+
+      - name: Setup Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a
+
+      - name: Create kind cluster
+        uses: helm/kind-action@0025e74a8c7512023d06dc019c617aa3cf561fde
+        with:
+          cluster_name: honua-smoke
+
+      - name: Update dependencies
+        run: helm dependency update honua
+
+      - name: Start PostGIS
+        run: |
+          set -euo pipefail
+
+          kubectl create namespace honua-smoke
+          cat <<'YAML' | kubectl apply -n honua-smoke -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: honua-postgis
+            labels:
+              app.kubernetes.io/name: honua-postgis
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: honua-postgis
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: honua-postgis
+              spec:
+                containers:
+                  - name: postgis
+                    image: postgis/postgis:16-3.4-alpine
+                    ports:
+                      - containerPort: 5432
+                    env:
+                      - name: POSTGRES_USER
+                        value: honua
+                      - name: POSTGRES_PASSWORD
+                        value: ci-password
+                      - name: POSTGRES_DB
+                        value: honua
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: honua-postgis
+          spec:
+            selector:
+              app.kubernetes.io/name: honua-postgis
+            ports:
+              - name: postgresql
+                port: 5432
+                targetPort: 5432
+          YAML
+
+          kubectl rollout status deployment/honua-postgis -n honua-smoke --timeout=180s
+          for i in {1..60}; do
+            if kubectl exec deployment/honua-postgis -n honua-smoke -- pg_isready -h 127.0.0.1 -U honua -d honua; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PostGIS did not become ready."
+          exit 1
+
+      - name: Start Redis
+        run: |
+          set -euo pipefail
+
+          cat <<'YAML' | kubectl apply -n honua-smoke -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: honua-redis
+            labels:
+              app.kubernetes.io/name: honua-redis
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: honua-redis
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: honua-redis
+              spec:
+                containers:
+                  - name: redis
+                    image: redis:7-alpine
+                    args:
+                      - redis-server
+                      - --appendonly
+                      - "no"
+                      - --save
+                      - ""
+                      - --requirepass
+                      - ci-redis-password
+                    ports:
+                      - containerPort: 6379
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: honua-redis
+          spec:
+            selector:
+              app.kubernetes.io/name: honua-redis
+            ports:
+              - name: redis
+                port: 6379
+                targetPort: 6379
+          YAML
+
+          kubectl rollout status deployment/honua-redis -n honua-smoke --timeout=180s
+          for i in {1..60}; do
+            if kubectl exec deployment/honua-redis -n honua-smoke -- redis-cli -h 127.0.0.1 --no-auth-warning -a ci-redis-password ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Redis did not become ready."
+          exit 1
+
+      - name: Install, upgrade, test, and rollback
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/honua-smoke
+
+          helm install honua ./honua -n honua-smoke -f honua/ci-values/upgrade-base.yaml --wait --timeout 10m
+          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-install.log
+
+          helm upgrade honua ./honua -n honua-smoke -f honua/ci-values/upgrade-target.yaml --wait --timeout 10m
+          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-upgrade.log
+
+          helm rollback honua 1 -n honua-smoke --wait --timeout 10m
+          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-rollback.log
+
+      - name: Capture smoke evidence
+        if: always()
+        run: |
+          set +e
+          mkdir -p /tmp/honua-smoke
+          helm history honua -n honua-smoke > /tmp/honua-smoke/helm-history.txt
+          helm get notes honua -n honua-smoke > /tmp/honua-smoke/helm-notes.txt
+          kubectl get configmap honua-honua-release-info -n honua-smoke -o yaml > /tmp/honua-smoke/release-info.yaml
+          kubectl get events -n honua-smoke --sort-by=.lastTimestamp > /tmp/honua-smoke/events.txt
+          kubectl get pods -n honua-smoke -o wide > /tmp/honua-smoke/pods.txt
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: honua-smoke-evidence
+          path: /tmp/honua-smoke

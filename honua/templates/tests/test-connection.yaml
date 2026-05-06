@@ -4,8 +4,11 @@ metadata:
   name: "{{ include "honua.fullname" . }}-test-connection"
   labels:
     {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
   annotations:
     "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
 spec:
   restartPolicy: Never
   automountServiceAccountToken: false
@@ -19,14 +22,23 @@ spec:
           set -e
           url="http://{{ include "honua.fullname" . }}:{{ .Values.service.port }}/healthz/ready"
           host_header="{{- if and .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) -}}{{ (index .Values.ingress.hosts 0).host }}{{- end -}}"
+          echo "release.id={{ default "<unset>" .Values.release.id }}"
+          echo "release.manifest={{ default "<unset>" .Values.release.manifest }}"
+          echo "release.digest={{ default "<unset>" .Values.release.digest }}"
+          echo "image.reference={{ include "honua.imageReference" . }}"
+          echo "chart.version={{ .Chart.Version }}"
+          echo "app.version={{ include "honua.appVersion" . }}"
+          echo "readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete"
           attempts=30
           sleep_seconds=5
           i=1
           while [ "$i" -le "$attempts" ]; do
             if [ -n "${host_header}" ] && curl -fsS --max-time 10 -H "Host: ${host_header}" "$url" >/dev/null; then
+              echo "readiness check passed: $url"
               exit 0
             fi
             if [ -z "${host_header}" ] && curl -fsS --max-time 10 "$url" >/dev/null; then
+              echo "readiness check passed: $url"
               exit 0
             fi
             echo "[$i/$attempts] waiting for readiness at $url"

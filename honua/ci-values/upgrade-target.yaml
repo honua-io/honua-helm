@@ -1,0 +1,17 @@
+replicaCount: 2
+image:
+  pullPolicy: IfNotPresent
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+release:
+  id: honua-ci-upgrade-target
+  manifest: "ci://honua-helm/upgrade-target"
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "Host=honua-postgis;Port=5432;Database=honua;Username=honua;Password=ci-password"
+    HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
+    ConnectionStrings__redis: "honua-redis:6379,password=ci-redis-password"

@@ -4,10 +4,19 @@ metadata:
   name: {{ include "honua.fullname" . }}
   labels:
     {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  strategy:
+    type: {{ default "Recreate" .Values.strategy.type }}
+    {{- if eq (default "Recreate" .Values.strategy.type) "RollingUpdate" }}
+    rollingUpdate:
+      {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "honua.selectorLabels" . | nindent 6 }}
@@ -15,13 +24,15 @@ spec:
     metadata:
       labels:
         {{- include "honua.selectorLabels" . | nindent 8 }}
+        {{- include "honua.releaseLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
       annotations:
+        {{- include "honua.releaseAnnotations" . | nindent 8 }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "honua.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
@@ -31,9 +42,10 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       containers:
         - name: honua
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "honua.imageReference" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
@@ -41,9 +53,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
-          {{- $hasEnvFrom := or (or .Values.config.create .Values.config.name) (or .Values.secret.create .Values.secret.name) (gt (len .Values.extraEnvFrom) 0) }}
-          {{- if $hasEnvFrom }}
           envFrom:
+            - configMapRef:
+                name: {{ include "honua.releaseInfoConfigMapName" . }}
             {{- if or .Values.config.create .Values.config.name }}
             - configMapRef:
                 name: {{ include "honua.configmapName" . }}
@@ -55,7 +67,6 @@ spec:
             {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- end }}
           {{- with .Values.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}

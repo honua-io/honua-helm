@@ -17,8 +17,11 @@
           "minLength": 1
         },
         "tag": {
+          "type": "string"
+        },
+        "digest": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^$|^sha256:[0-9a-f]{64}$"
         },
         "pullPolicy": {
           "type": "string",
@@ -26,6 +29,92 @@
         },
         "pullSecrets": {
           "type": "array"
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+        },
+        "manifest": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$"
+        },
+        "appVersion": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^$|^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["Recreate", "RollingUpdate"]
+        },
+        "rollingUpdate": {
+          "type": "object",
+          "properties": {
+            "maxSurge": {
+              "oneOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "string", "pattern": "^[0-9]+%?$" }
+              ]
+            },
+            "maxUnavailable": {
+              "oneOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "string", "pattern": "^[0-9]+%?$" }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "preflight": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "registryCheck": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
         }
       }
     },
@@ -216,6 +305,9 @@
             "HONUA_ADMIN_PASSWORD": {
               "type": "string"
             },
+            "Security__ConnectionEncryption__MasterKey": {
+              "type": "string"
+            },
             "ConnectionStrings__redis": {
               "type": "string"
             }
@@ -280,6 +372,100 @@
     }
   },
   "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "tag": { "minLength": 1 },
+                "digest": { "maxLength": 0 }
+              },
+              "required": ["tag"]
+            }
+          }
+        },
+        {
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "tag": { "maxLength": 0 },
+                "digest": { "minLength": 1 }
+              },
+              "required": ["digest"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "image": {
+            "type": "object",
+            "properties": { "digest": { "minLength": 1 } },
+            "required": ["digest"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "image": {
+            "type": "object",
+            "properties": {
+              "pullPolicy": {
+                "enum": ["IfNotPresent", "Never"]
+              }
+            },
+            "required": ["pullPolicy"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "strategy": {
+            "type": "object",
+            "properties": {
+              "type": { "const": "RollingUpdate" }
+            },
+            "required": ["type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "strategy": {
+            "type": "object",
+            "properties": {
+              "rollingUpdate": {
+                "type": "object",
+                "not": {
+                  "properties": {
+                    "maxSurge": {
+                      "oneOf": [
+                        { "type": "integer", "const": 0 },
+                        { "type": "string", "pattern": "^0+%?$" }
+                      ]
+                    },
+                    "maxUnavailable": {
+                      "oneOf": [
+                        { "type": "integer", "const": 0 },
+                        { "type": "string", "pattern": "^0+%?$" }
+                      ]
+                    }
+                  },
+                  "required": ["maxSurge", "maxUnavailable"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
