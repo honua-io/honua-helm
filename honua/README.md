@@ -4,57 +4,48 @@ Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis su
 
 ## Quick start
 
+For local development and Helm smoke testing, use the development overlay:
+
 ```bash
 helm dependency update honua
-helm install honua honua \
-  --set secret.env.ConnectionStrings__DefaultConnection="Host=postgres;Database=honua;Username=honua;Password=honua" \
-  --set secret.env.HONUA_ADMIN_PASSWORD="change-me" \
-  --set config.env.HONUA_SERVE_ADMIN_UI="true" \
-  --set config.env.HONUA_ADMIN_UI="true"
+helm upgrade --install honua honua -f honua/values-dev.yaml
+```
+
+## Values contract and overlays
+
+The operator values contract is documented in:
+
+- `values.yaml` for baseline defaults and inline value comments.
+- `values.schema.json` for Helm validation of required values.
+- `../docs/values-contract.md` for required vs optional values, overlay usage, and release-lane boundaries.
+- `../docs/MIGRATION.md` for breaking changes policy and install/upgrade smoke commands.
+
+Environment overlays are provided for common release lanes:
+
+| Overlay | Purpose |
+|---------|---------|
+| `values-dev.yaml` | Local and ephemeral development installs with bundled PostgreSQL and Redis dependencies. |
+| `values-stage.yaml` | Staging validation with existing-secret mode, ingress, HPA, observability, and OpenTelemetry. |
+| `values-prod.yaml` | Customer-operated production posture with existing-secret mode, ingress, HPA, observability, and OpenTelemetry. |
+
+Layer a site-specific file after the environment overlay:
+
+```bash
+helm upgrade --install honua honua \
+  -f honua/values-prod.yaml \
+  -f customer-prod.yaml
 ```
 
 ## Production example
 
-Create a `values-prod.yaml`:
+Start from `honua/values-prod.yaml`, then create a customer-specific override:
 
 ```yaml
-replicaCount: 3
-
 image:
-  repository: ghcr.io/honua-io/honua-server
   tag: "v1.2.3-aot"   # Pin to a release AOT tag
   pullPolicy: IfNotPresent
 
-resources:
-  requests:
-    cpu: 500m
-    memory: 512Mi
-  limits:
-    cpu: "2"
-    memory: 2Gi
-
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-        - type: Percent
-          value: 50
-          periodSeconds: 60
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-        - type: Percent
-          value: 10
-          periodSeconds: 60
-
 ingress:
-  enabled: true
   className: nginx   # or alb, traefik, etc.
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
@@ -70,26 +61,22 @@ ingress:
 
 config:
   env:
-    HONUA_SERVE_ADMIN_UI: "true"
-    HONUA_ADMIN_UI: "true"
-    HONUA_OBSERVABILITY: "true"
-    HONUA_OPENTELEMETRY: "true"
-    ASPNETCORE_ENVIRONMENT: "Production"
-    ASPNETCORE_URLS: "http://+:8080"
     Public__BaseUrl: "https://gis.example.com"
 
 secret:
-  env:
-    ConnectionStrings__DefaultConnection: "Host=postgis.internal;Database=honua;Username=honua;Password=<secret>;SSL Mode=Require"
-    HONUA_ADMIN_PASSWORD: "<strong-secret>"
-    ConnectionStrings__redis: "redis.internal:6379"
+  create: false
+  name: honua-prod-runtime
 ```
 
-Deploy with:
+The `honua-prod-runtime` Secret must contain:
+
+- `ConnectionStrings__DefaultConnection`
+- `HONUA_ADMIN_PASSWORD`
+- `ConnectionStrings__redis` when Redis is used
 
 ```bash
 helm dependency update honua
-helm upgrade --install honua honua -f values-prod.yaml
+helm upgrade --install honua honua -f honua/values-prod.yaml -f customer-prod.yaml
 ```
 
 ## External PostGIS database (recommended for production)
@@ -116,6 +103,9 @@ When `postgresql.enabled=true`, the chart auto-populates `ConnectionStrings__Def
 ```bash
 helm upgrade --install honua honua \
   --set redis.enabled=true \
+  --set redis.auth.enabled=true \
+  --set redis.auth.password="change-me-redis" \
+  --set secret.env.ConnectionStrings__DefaultConnection="Host=postgis.internal;Database=honua;Username=honua;Password=<secret>;SSL Mode=Require" \
   --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
 ```
 
@@ -148,20 +138,22 @@ secret:
 |-------|---------|-------------|
 | `replicaCount` | 1 | Number of pods. Use 3+ for production. |
 | `image.tag` | `latest-aot` | Image tag. AOT recommended. Pin to `vX.Y.Z-aot` for production. |
-| `resources` | `{}` | CPU/memory requests and limits. **Set for production.** |
+| `resources` | 250m/512Mi request, 2 CPU/2Gi limit | CPU/memory requests and limits. Tune for production. |
 | `autoscaling.enabled` | false | Enable HPA. |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
 | `autoscaling.targetMemoryUtilizationPercentage` | `80` | Memory utilization threshold for scale decisions. |
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |
 | `ingress.enabled` | false | Enable ingress. |
-| `config.env.*` | — | Non-secret environment variables (stored in ConfigMap). |
-| `secret.env.*` | — | Secret environment variables (stored in Secret). |
-| `secret.name` | `""` | Reference an existing secret instead of chart-managed. |
+| `config.env.*` | N/A | Non-secret environment variables stored in a ConfigMap. |
+| `secret.create` | true | Create a chart-managed Secret. Set false for customer-managed secrets. |
+| `secret.env.*` | N/A | Secret environment variables stored in a chart-managed Secret. |
+| `secret.name` | `""` | Reference an existing secret instead of chart-managed secret data. |
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
+| `extraEnvFrom` | `[]` | Additional env source refs; also valid for existing-secret mode. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
 | `redis.enabled` | false | Enable Bitnami Redis subchart. |
 
-See `values.yaml` for the complete reference.
+See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 
 ## Health checks
 
@@ -187,9 +179,18 @@ For dataset-specific tuning:
 
 ```bash
 helm dependency update honua
-helm lint honua
-helm template honua honua
+helm lint honua -f honua/ci-values/base.yaml
+helm lint honua -f honua/values-dev.yaml
+helm lint honua -f honua/values-stage.yaml
+helm lint honua -f honua/values-prod.yaml
+helm template honua honua -f honua/ci-values/base.yaml
+helm template honua-dev honua -f honua/values-dev.yaml
+helm template honua-stage honua -f honua/values-stage.yaml
+helm template honua-prod honua -f honua/values-prod.yaml
+helm template honua-stage honua -f honua/values-stage.yaml --is-upgrade
 helm test honua  # After install, runs the test hook
 ```
+
+For install/upgrade smoke against a real API server, see `../docs/MIGRATION.md`.
 
 For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](https://github.com/honua-io/honua-server/blob/trunk/docs/contributor/development/k3d-helm.md).
