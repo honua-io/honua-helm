@@ -1,0 +1,197 @@
+name: Helm Release
+
+on:
+  push:
+    tags:
+      - 'chart-v*'
+  workflow_dispatch:
+    inputs:
+      chart_version:
+        description: 'Chart semver (no v prefix), e.g. 0.2.0'
+        required: true
+        type: string
+      app_version:
+        description: 'honua-server release semver (no v prefix, no -aot suffix), e.g. 1.2.3'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  package-and-publish:
+    runs-on: ubuntu-latest
+    env:
+      OCI_REGISTRY: oci://ghcr.io/honua-io/charts
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          fetch-depth: 0
+
+      - name: Setup Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a
+
+      - name: Resolve chart_version and app_version
+        id: versions
+        shell: bash
+        env:
+          DISPATCH_CHART_VERSION: ${{ inputs.chart_version }}
+          DISPATCH_APP_VERSION: ${{ inputs.app_version }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            chart_version="${DISPATCH_CHART_VERSION}"
+            app_version="${DISPATCH_APP_VERSION}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            if [[ ! "${tag}" =~ ^chart-v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?$ ]]; then
+              echo "::error::Tag '${tag}' does not match chart-vX.Y.Z[-suffix]" >&2
+              exit 1
+            fi
+            chart_version="${tag#chart-v}"
+            app_version="$(yq -r '.appVersion' honua/Chart.yaml)"
+          fi
+          if [[ -z "${chart_version}" ]]; then
+            echo "::error::chart_version is empty" >&2
+            exit 1
+          fi
+          if [[ -z "${app_version}" || "${app_version}" == "null" || "${app_version}" == "0.0.0" ]]; then
+            echo "::error::app_version must be a real honua-server release (got: '${app_version}'). For tag-triggered runs, commit Chart.yaml appVersion to the target server tag before tagging, or trigger via workflow_dispatch." >&2
+            exit 1
+          fi
+          image_tag="v${app_version}-aot"
+          echo "chart_version=${chart_version}" >> "${GITHUB_OUTPUT}"
+          echo "app_version=${app_version}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved chart_version=${chart_version} app_version=${app_version} image_tag=${image_tag}"
+
+      - name: Update dependencies
+        run: helm dependency update honua
+
+      - name: Stamp Chart.yaml and values.yaml
+        shell: bash
+        env:
+          CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+          APP_VERSION: ${{ steps.versions.outputs.app_version }}
+          IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          yq -i '.version = strenv(CHART_VERSION)' honua/Chart.yaml
+          yq -i '.appVersion = strenv(APP_VERSION)' honua/Chart.yaml
+          yq -i '.image.tag = strenv(IMAGE_TAG)' honua/values.yaml
+          echo "--- Chart.yaml after stamp ---"
+          yq '.' honua/Chart.yaml
+          echo "--- values.yaml image block after stamp ---"
+          yq '.image' honua/values.yaml
+
+      - name: Lint chart (publish-time guard)
+        run: helm lint honua -f honua/ci-values/base.yaml
+
+      - name: Render templates (publish-time guard)
+        run: helm template honua ./honua -f honua/ci-values/base.yaml > /tmp/honua-rendered-base.yaml
+
+      - name: Package chart
+        id: package
+        shell: bash
+        env:
+          CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          helm package honua --destination dist/
+          artifact="dist/honua-${CHART_VERSION}.tgz"
+          if [[ ! -f "${artifact}" ]]; then
+            echo "::error::Expected packaged artifact ${artifact} was not produced." >&2
+            ls -la dist/ >&2 || true
+            exit 1
+          fi
+          echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
+          echo "Packaged ${artifact}"
+
+      - name: Login to ghcr.io
+        shell: bash
+        env:
+          GH_USERNAME: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GH_TOKEN}" | helm registry login ghcr.io --username "${GH_USERNAME}" --password-stdin
+
+      - name: Push chart to OCI registry
+        id: push
+        shell: bash
+        env:
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+          CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+          APP_VERSION: ${{ steps.versions.outputs.app_version }}
+          IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          push_log="$(helm push "${ARTIFACT}" "${OCI_REGISTRY}" 2>&1 | tee /dev/stderr)"
+          digest="$(echo "${push_log}" | awk '/Digest:/ {print $2}' | head -n1)"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Helm chart published"
+            echo ""
+            echo "- Registry: \`${OCI_REGISTRY}/honua\`"
+            echo "- Chart version: \`${CHART_VERSION}\`"
+            echo "- App version: \`${APP_VERSION}\`"
+            echo "- Image tag stamped: \`${IMAGE_TAG}\`"
+            echo "- OCI digest: \`${digest}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        env:
+          CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+          APP_VERSION: ${{ steps.versions.outputs.app_version }}
+          IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          tag="chart-v${CHART_VERSION}"
+          prev_tag="$(git tag --list 'chart-v*' --sort=-version:refname | grep -v "^${tag}\$" | head -n1 || true)"
+          if [[ -n "${prev_tag}" ]]; then
+            range="${prev_tag}..HEAD"
+            range_label="since ${prev_tag}"
+          else
+            range="HEAD"
+            range_label="initial release"
+          fi
+          {
+            echo "## Honua Helm chart ${tag}"
+            echo ""
+            echo "- App version: \`${APP_VERSION}\`"
+            echo "- Image tag stamped: \`${IMAGE_TAG}\`"
+            echo "- OCI: \`oci://ghcr.io/honua-io/charts/honua\` version \`${CHART_VERSION}\`"
+            if [[ -n "${DIGEST}" ]]; then
+              echo "- Digest: \`${DIGEST}\`"
+            fi
+            echo ""
+            echo "### Install"
+            echo ""
+            echo "\`\`\`bash"
+            echo "helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version ${CHART_VERSION}"
+            echo "\`\`\`"
+            echo ""
+            echo "### Changes (${range_label})"
+            echo ""
+            git log --pretty=format:'- %s (%h)' "${range}" -- honua docs .github/workflows 2>/dev/null || echo "- (no commits in range)"
+            echo ""
+          } > release-notes.md
+          echo "--- release-notes.md ---"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+        run: |
+          set -euo pipefail
+          tag="chart-v${CHART_VERSION}"
+          gh release create "${tag}" "${ARTIFACT}" --title "${tag}" --notes-file release-notes.md

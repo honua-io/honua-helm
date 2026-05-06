@@ -2,7 +2,46 @@
 
 Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
 
-## Quick start
+- Source of truth: `oci://ghcr.io/honua-io/charts/honua`
+- GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
+- Versioning and cut procedure: see [`../RELEASING.md`](../RELEASING.md).
+
+## Install (published chart)
+
+```bash
+helm registry login ghcr.io
+helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+  --set secret.env.ConnectionStrings__DefaultConnection="Host=postgres;Database=honua;Username=honua;Password=honua" \
+  --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
+```
+
+Published chart cuts pin `image.tag` to a concrete `vX.Y.Z-aot` server release;
+the local repo default `latest-aot` is dev-only.
+
+## Upgrade
+
+```bash
+helm registry login ghcr.io
+helm pull oci://ghcr.io/honua-io/charts/honua --version X.Y.Z   # optional, to inspect
+helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+  -f values-prod.yaml
+```
+
+Value keys under `image`, `service`, `ingress`, `config.env`, `secret.env`,
+`postgresql`, and `redis` are stable within a chart major version. Operators
+upgrading from in-monorepo deployments do not need value migrations within
+chart 0.x — see [`../docs/MIGRATION.md`](../docs/MIGRATION.md). The
+operator-ready values contract that formalizes this guarantee is tracked in
+[honua-helm#6](https://github.com/honua-io/honua-helm/issues/6).
+
+## Versioning
+
+Chart `version` (semver) bumps independently of honua-server. Chart
+`appVersion` mirrors the honua-server release the chart is validated against.
+Tag scheme: `chart-vX.Y.Z` here, `vX.Y.Z` in honua-server. Full procedure
+in [`../RELEASING.md`](../RELEASING.md).
+
+## Quick start (from a checkout)
 
 For local development and Helm smoke testing, use the development overlay:
 
