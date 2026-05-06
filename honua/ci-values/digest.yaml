@@ -9,4 +9,6 @@ release:
 secret:
   env:
     ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password"
-    HONUA_ADMIN_PASSWORD: "ci-admin-password"
+    HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
+    ConnectionStrings__redis: "redis:6379,password=ci-redis-password"

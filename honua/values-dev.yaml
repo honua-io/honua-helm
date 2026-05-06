@@ -31,7 +31,8 @@ config:
 
 secret:
   env:
-    HONUA_ADMIN_PASSWORD: "change-me-dev"
+    HONUA_ADMIN_PASSWORD: "DevAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "dev-connection-encryption-master-key-00000001"
 
 postgresql:
   enabled: true

@@ -103,6 +103,21 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-preflight" (include "honua.fullname" .) -}}
 {{- end -}}
 
+{{- define "honua.runtimeEnvironment" -}}
+{{- $configValues := .Values.config | default dict -}}
+{{- $configEnv := get $configValues "env" | default dict -}}
+{{- default "Production" (get $configEnv "ASPNETCORE_ENVIRONMENT") -}}
+{{- end -}}
+
+{{- define "honua.requiresRedisConnection" -}}
+{{- $environment := lower (trim (include "honua.runtimeEnvironment" .)) -}}
+{{- if or (eq $environment "development") (eq $environment "test") -}}
+false
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.usesChartManagedPostgresqlConnection" -}}
 {{- $secretValues := .Values.secret | default dict -}}
 {{- $secretEnv := get $secretValues "env" | default dict -}}
@@ -114,8 +129,31 @@ false
 {{- end -}}
 {{- end -}}
 
+{{- define "honua.usesChartManagedRedisConnection" -}}
+{{- $secretValues := .Values.secret | default dict -}}
+{{- $secretEnv := get $secretValues "env" | default dict -}}
+{{- $conn := trim (default "" (get $secretEnv "ConnectionStrings__redis")) -}}
+{{- if and .Values.redis.enabled .Values.secret.create (not $conn) -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.preflightDatabaseCheck" -}}
 {{- if and .Release.IsInstall (eq (include "honua.usesChartManagedPostgresqlConnection" .) "true") -}}
+false
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.preflightRedisRequired" -}}
+{{- include "honua.requiresRedisConnection" . -}}
+{{- end -}}
+
+{{- define "honua.preflightRedisCheck" -}}
+{{- if and .Release.IsInstall (eq (include "honua.usesChartManagedRedisConnection" .) "true") -}}
 false
 {{- else -}}
 true
@@ -152,9 +190,33 @@ true
 {{- end }}
 {{- $redisPassword := required "redis.auth.password is required when redis.enabled and redis.auth.enabled are true and secret.env.ConnectionStrings__redis is not set." .Values.redis.auth.password }}
 {{- $_ := set $data "ConnectionStrings__redis" (printf "%s:%s,password=%s" $redisHost $redisPort $redisPassword) }}
+{{- else if and (not (hasKey $data "ConnectionStrings__redis")) (eq (include "honua.requiresRedisConnection" .) "true") }}
+{{- required "secret.env.ConnectionStrings__redis is required for non-development Honua deployments unless redis.enabled derives the connection string." .Values.secret.env.ConnectionStrings__redis }}
 {{- end }}
 {{- if not (hasKey $data "HONUA_ADMIN_PASSWORD") }}
 {{- required "secret.env.HONUA_ADMIN_PASSWORD is required. Set it to a strong admin password." .Values.secret.env.HONUA_ADMIN_PASSWORD }}
+{{- else -}}
+{{- $adminPassword := get $data "HONUA_ADMIN_PASSWORD" | toString -}}
+{{- if lt (len $adminPassword) 16 }}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must be at least 16 characters long." }}
+{{- end }}
+{{- if not (regexMatch "[A-Z]" $adminPassword) }}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one uppercase letter." }}
+{{- end }}
+{{- if not (regexMatch "[a-z]" $adminPassword) }}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one lowercase letter." }}
+{{- end }}
+{{- if not (regexMatch "[0-9]" $adminPassword) }}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one digit." }}
+{{- end }}
+{{- if not (regexMatch "[^A-Za-z0-9]" $adminPassword) }}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one special character." }}
+{{- end }}
+{{- end }}
+{{- if not (hasKey $data "Security__ConnectionEncryption__MasterKey") }}
+{{- required "secret.env.Security__ConnectionEncryption__MasterKey is required. Set it to a secure random string of at least 32 characters." .Values.secret.env.Security__ConnectionEncryption__MasterKey }}
+{{- else if lt (len (get $data "Security__ConnectionEncryption__MasterKey" | toString)) 32 }}
+{{- fail "secret.env.Security__ConnectionEncryption__MasterKey must be at least 32 characters long." }}
 {{- end }}
 {{- range $key := keys $data | sortAlpha }}
 {{ $key }}: {{ get $data $key | toString | b64enc }}

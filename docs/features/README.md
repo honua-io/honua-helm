@@ -10,7 +10,7 @@ This repository packages Honua Server for Kubernetes.
 - AOT and JIT image tag selection, with AOT as the default chart posture.
 - Digest-pinned image rendering for immutable production releases.
 - Explicit Deployment strategy defaults for inline migration safety.
-- Pre-install/pre-upgrade preflight hook for required credentials, database reachability, and registry reachability.
+- Pre-install/pre-upgrade preflight hook for required credentials, database reachability, Redis reachability, and registry reachability.
 - Release-info ConfigMap, labels, Pod-template annotations, NOTES, and helm-test output for evidence capture.
 - CI install/upgrade/rollback smoke workflow with captured release-info and helm-test evidence.
 - HorizontalPodAutoscaler support with CPU/memory targets and scale-up/scale-down behavior.

@@ -1,6 +1,7 @@
 secret:
   env:
-    HONUA_ADMIN_PASSWORD: "ci-admin-password"
+    HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
 
 postgresql:
   enabled: true

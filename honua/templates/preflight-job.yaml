@@ -42,6 +42,10 @@ spec:
               value: {{ ternary "true" "false" .Values.preflight.registryCheck.enabled | quote }}
             - name: HONUA_PREFLIGHT_DATABASE_CHECK
               value: {{ include "honua.preflightDatabaseCheck" . | quote }}
+            - name: HONUA_PREFLIGHT_REDIS_REQUIRED
+              value: {{ include "honua.preflightRedisRequired" . | quote }}
+            - name: HONUA_PREFLIGHT_REDIS_CHECK
+              value: {{ include "honua.preflightRedisCheck" . | quote }}
             - name: HONUA_PREFLIGHT_REGISTRY_HOST
               value: {{ include "honua.imageRegistryHost" . | quote }}
             - name: HONUA_IMAGE_REFERENCE
@@ -68,12 +72,48 @@ spec:
                 exit 1
               }
 
-              for var in ConnectionStrings__DefaultConnection HONUA_ADMIN_PASSWORD; do
+              for var in ConnectionStrings__DefaultConnection HONUA_ADMIN_PASSWORD Security__ConnectionEncryption__MasterKey; do
                 eval "value=\${$var:-}"
                 if [ -z "$value" ]; then
                   fail "missing required environment variable ${var}"
                 fi
               done
+
+              if [ "${#HONUA_ADMIN_PASSWORD}" -lt 16 ]; then
+                fail "HONUA_ADMIN_PASSWORD must be at least 16 characters long"
+              fi
+              case "${HONUA_ADMIN_PASSWORD}" in
+                *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]*)
+                  ;;
+                *)
+                  fail "HONUA_ADMIN_PASSWORD must contain at least one uppercase letter"
+                  ;;
+              esac
+              case "${HONUA_ADMIN_PASSWORD}" in
+                *[abcdefghijklmnopqrstuvwxyz]*)
+                  ;;
+                *)
+                  fail "HONUA_ADMIN_PASSWORD must contain at least one lowercase letter"
+                  ;;
+              esac
+              case "${HONUA_ADMIN_PASSWORD}" in
+                *[0123456789]*)
+                  ;;
+                *)
+                  fail "HONUA_ADMIN_PASSWORD must contain at least one digit"
+                  ;;
+              esac
+              case "${HONUA_ADMIN_PASSWORD}" in
+                *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]*)
+                  ;;
+                *)
+                  fail "HONUA_ADMIN_PASSWORD must contain at least one special character"
+                  ;;
+              esac
+
+              if [ "${#Security__ConnectionEncryption__MasterKey}" -lt 32 ]; then
+                fail "Security__ConnectionEncryption__MasterKey must be at least 32 characters long"
+              fi
 
               if [ "${HONUA_PREFLIGHT_DATABASE_CHECK}" = "true" ]; then
                 conn="${ConnectionStrings__DefaultConnection}"
@@ -115,6 +155,46 @@ spec:
                 esac
               else
                 echo "Skipping PostgreSQL TCP reachability check during initial chart-managed PostgreSQL install; pre-upgrade checks run after PostgreSQL exists."
+              fi
+
+              if [ "${HONUA_PREFLIGHT_REDIS_REQUIRED}" = "true" ]; then
+                redis_conn="${ConnectionStrings__redis:-}"
+                if [ -z "$redis_conn" ]; then
+                  fail "missing required environment variable ConnectionStrings__redis"
+                fi
+
+                if [ "${HONUA_PREFLIGHT_REDIS_CHECK}" = "true" ]; then
+                  redis_endpoint="${redis_conn%%,*}"
+                  redis_endpoint="${redis_endpoint#redis://}"
+                  redis_endpoint="${redis_endpoint#rediss://}"
+                  redis_endpoint="${redis_endpoint##*@}"
+                  redis_host="${redis_endpoint%%:*}"
+                  redis_port="6379"
+                  if [ "$redis_endpoint" != "$redis_host" ]; then
+                    redis_port="${redis_endpoint#*:}"
+                    redis_port="${redis_port%%/*}"
+                  fi
+                  redis_host="${redis_host%%/*}"
+
+                  if [ -z "$redis_host" ]; then
+                    fail "could not parse Redis host from ConnectionStrings__redis"
+                  fi
+
+                  echo "Checking Redis TCP reachability at ${redis_host}:${redis_port}"
+                  set +e
+                  curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://${redis_host}:${redis_port}/" >/dev/null
+                  redis_status=$?
+                  set -e
+                  case "$redis_status" in
+                    0|1|52|56)
+                      ;;
+                    *)
+                      fail "Redis endpoint ${redis_host}:${redis_port} is not reachable (curl exit ${redis_status})"
+                      ;;
+                  esac
+                else
+                  echo "Skipping Redis TCP reachability check during initial chart-managed Redis install; pre-upgrade checks run after Redis exists."
+                fi
               fi
 
               if [ "${HONUA_PREFLIGHT_REGISTRY_CHECK}" = "true" ]; then

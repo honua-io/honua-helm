@@ -11,8 +11,9 @@ helm dependency update honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
 ```
 
-For direct installs with an external database, the default preflight hook checks
-the configured PostgreSQL/PostGIS host before the Deployment is applied.
+For direct installs with external data services, the default preflight hook
+checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment
+is applied.
 
 ## Values contract and overlays
 
@@ -118,8 +119,10 @@ preflight:
 The `honua-prod-runtime` Secret must contain:
 
 - `ConnectionStrings__DefaultConnection`
-- `HONUA_ADMIN_PASSWORD`
-- `ConnectionStrings__redis` when Redis is used
+- `HONUA_ADMIN_PASSWORD` with at least 16 characters, including uppercase,
+  lowercase, digit, and special characters
+- `Security__ConnectionEncryption__MasterKey` with at least 32 characters
+- `ConnectionStrings__redis` for non-development deployments
 
 ```bash
 helm dependency update honua
@@ -140,7 +143,8 @@ helm upgrade --install honua honua \
   --set postgresql.auth.username=honua \
   --set postgresql.auth.password=honua \
   --set postgresql.auth.database=honua \
-  --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
+  --set secret.env.HONUA_ADMIN_PASSWORD="ExampleAdminPassword1!" \
+  --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
 
 When `postgresql.enabled=true`, `postgresql.auth.username`,
@@ -160,14 +164,17 @@ helm upgrade --install honua honua \
   --set redis.auth.enabled=true \
   --set redis.auth.password="change-me-redis" \
   --set secret.env.ConnectionStrings__DefaultConnection="Host=postgis.internal;Database=honua;Username=honua;Password=<secret>;SSL Mode=Require" \
-  --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
+  --set secret.env.HONUA_ADMIN_PASSWORD="ExampleAdminPassword1!" \
+  --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
 
 When `redis.enabled=true`, `redis.auth.enabled` must remain true. In
 chart-managed-secret mode, the chart auto-populates `ConnectionStrings__redis`
 from `redis.auth.password` unless you set `secret.env.ConnectionStrings__redis`
-yourself. Existing-secret mode must provide the runtime environment key through
-the named Secret or `extraEnvFrom`; the chart does not create it.
+yourself. Non-development deployments require Redis-backed durable
+feature-change event storage, so existing-secret mode must provide the runtime
+environment key through the named Secret or `extraEnvFrom`; the chart does not
+create it.
 
 ## AOT vs JIT images
 
@@ -206,13 +213,17 @@ strategy:
     maxUnavailable: 1
 ```
 
+The values schema rejects `RollingUpdate` when both `maxSurge` and
+`maxUnavailable` are zero, including string and percent forms such as `"0"` and
+`"0%"`.
+
 Readiness at `/healthz/ready` is the chart signal that startup and migrations completed.
 
 ## Preflight hook
 
-`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
+`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, Redis TCP reachability for non-development deployments, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
 
-For the dev-only PostgreSQL subchart, the initial install preflight validates required secret keys and registry reachability but defers PostgreSQL TCP reachability only when the chart auto-generates the subchart connection string. Pre-upgrade hooks, and installs with a supplied connection string, check the configured PostgreSQL endpoint.
+For the dev-only PostgreSQL subchart or chart-managed Redis, the initial install preflight validates required secret keys and registry reachability but defers TCP reachability only when the chart auto-generates the subchart connection string. Pre-upgrade hooks, and installs with a supplied connection string, check the configured endpoint.
 
 Disable only when an external controller or restricted network policy prevents the hook from reaching the database or registry:
 
@@ -263,12 +274,14 @@ Instead of chart-managed secrets, reference a pre-existing Kubernetes secret:
 ```yaml
 secret:
   create: false
-  name: my-honua-secret   # Must contain ConnectionStrings__DefaultConnection and HONUA_ADMIN_PASSWORD
+  name: my-honua-secret   # Must contain ConnectionStrings__DefaultConnection, HONUA_ADMIN_PASSWORD, and Security__ConnectionEncryption__MasterKey
 ```
 
 You may also set `secret.create=false` and provide only `extraEnvFrom` sources.
 In that mode the referenced sources must expose `ConnectionStrings__DefaultConnection`,
-`HONUA_ADMIN_PASSWORD`, and `ConnectionStrings__redis` when Redis is used.
+`HONUA_ADMIN_PASSWORD`, `Security__ConnectionEncryption__MasterKey`, and
+`ConnectionStrings__redis` for non-development deployments.
+
 For example, another controller can own the Secret while the chart consumes it
 through `extraEnvFrom`:
 
@@ -280,7 +293,13 @@ extraEnvFrom:
       name: my-honua-secret
 ```
 
-With `preflight.enabled=true`, the preflight Job reads the same external secret and `extraEnvFrom` sources and fails if `ConnectionStrings__DefaultConnection` or `HONUA_ADMIN_PASSWORD` are missing.
+With `preflight.enabled=true`, the preflight Job reads the same external Secret
+and `extraEnvFrom` sources and fails if `ConnectionStrings__DefaultConnection`
+or `HONUA_ADMIN_PASSWORD` are missing, if `HONUA_ADMIN_PASSWORD` does not meet
+production strength rules, or if
+`Security__ConnectionEncryption__MasterKey` is missing or shorter than 32
+characters. For non-development deployments, it also fails if
+`ConnectionStrings__redis` is missing or the Redis endpoint is unreachable.
 
 ## Key values
 
@@ -295,7 +314,7 @@ With `preflight.enabled=true`, the preflight Job reads the same external secret 
 | `release.digest` | `""` | `sha256:<64 lowercase hex characters>` digest of the release manifest or bundle. |
 | `release.appVersion` | `""` | Optional label-safe evidence override for `app.kubernetes.io/version`, Pod-template annotations, and release-info output. |
 | `strategy.type` | `Recreate` | Upgrade strategy. `Recreate` is safe for inline migrations. |
-| `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used only when `strategy.type=RollingUpdate`. |
+| `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used only when `strategy.type=RollingUpdate`; both values cannot be zero. |
 | `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
 | `preflight.timeoutSeconds` | 5 | Timeout for database and registry reachability checks. |
 | `preflight.registryCheck.enabled` | true | Check the target image registry `/v2/` endpoint before apply. |
@@ -313,7 +332,7 @@ With `preflight.enabled=true`, the preflight Job reads the same external secret 
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
-| `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. |
+| `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 
@@ -343,12 +362,15 @@ For dataset-specific tuning:
 
 ```bash
 helm dependency update honua
-helm lint honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml
 helm lint honua -f honua/values-prod.yaml
 helm template honua honua -f honua/ci-values/base.yaml
+helm template honua honua -f honua/ci-values/digest.yaml
+helm template honua honua -f honua/ci-values/rolling-update.yaml
+helm template honua honua -f honua/ci-values/postgresql.yaml
+helm template honua honua --is-upgrade -f honua/ci-values/postgresql.yaml
 helm template honua-dev honua -f honua/values-dev.yaml
 helm template honua-stage honua -f honua/values-stage.yaml
 helm template honua-prod honua -f honua/values-prod.yaml

@@ -305,6 +305,9 @@
             "HONUA_ADMIN_PASSWORD": {
               "type": "string"
             },
+            "Security__ConnectionEncryption__MasterKey": {
+              "type": "string"
+            },
             "ConnectionStrings__redis": {
               "type": "string"
             }

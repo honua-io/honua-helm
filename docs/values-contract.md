@@ -25,14 +25,17 @@ helm upgrade --install honua ./honua \
 
 | Condition | Required values | Evidence |
 | --- | --- | --- |
-| Chart-managed Secret (`secret.create=true`) | `secret.env.HONUA_ADMIN_PASSWORD` | `honua/templates/secret.yaml` |
+| Image identity | Exactly one of `image.tag` or `image.digest`; when `image.digest` is set, `image.pullPolicy` must be `IfNotPresent` or `Never` | `honua/values.schema.json`, `honua/templates/validations.yaml` |
+| Chart-managed Secret (`secret.create=true`) | `secret.env.HONUA_ADMIN_PASSWORD` at least 16 characters with uppercase, lowercase, digit, and special characters; `secret.env.Security__ConnectionEncryption__MasterKey` at least 32 characters long | `honua/templates/secret.yaml` |
 | Chart-managed Secret with external PostgreSQL (`postgresql.enabled=false`) | `secret.env.ConnectionStrings__DefaultConnection` | `honua/templates/secret.yaml` |
+| Non-development chart-managed Secret without Redis subchart (`config.env.ASPNETCORE_ENVIRONMENT` not `Development` or `Test`, `redis.enabled=false`) | `secret.env.ConnectionStrings__redis` | `honua/templates/secret.yaml` |
 | PostgreSQL subchart enabled (`postgresql.enabled=true`) | `postgresql.auth.username`, `postgresql.auth.password`, `postgresql.auth.database` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Existing Secret mode (`secret.create=false`) | `secret.name` or at least one `extraEnvFrom` source | `honua/values.schema.json`, `honua/templates/validations.yaml` |
-| External runtime environment source | `ConnectionStrings__DefaultConnection`, `HONUA_ADMIN_PASSWORD`; `ConnectionStrings__redis` when Redis is used | Runtime contract documented here; Kubernetes cannot validate external Secret keys at Helm render time |
+| External runtime environment source | `ConnectionStrings__DefaultConnection`, `HONUA_ADMIN_PASSWORD`, `Security__ConnectionEncryption__MasterKey`; `ConnectionStrings__redis` for non-development deployments | Runtime contract documented here; Kubernetes cannot validate external Secret keys at Helm render time |
 | Redis subchart enabled (`redis.enabled=true`) | `redis.auth.enabled=true` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Chart-managed Secret with Redis subchart and no explicit `secret.env.ConnectionStrings__redis` | `redis.auth.password` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Autoscaling (`autoscaling.enabled=true`) | `autoscaling.targetCPUUtilizationPercentage` or `autoscaling.targetMemoryUtilizationPercentage` greater than `0` | `honua/values.schema.json`, `honua/templates/hpa.yaml` |
+| RollingUpdate (`strategy.type=RollingUpdate`) | At least one of `strategy.rollingUpdate.maxSurge` or `strategy.rollingUpdate.maxUnavailable` must be non-zero | `honua/values.schema.json` |
 
 The PostgreSQL subchart is development-only. It does not include PostGIS, so
 production deployments must use an external PostGIS-enabled database and provide
@@ -48,6 +51,9 @@ Redis subchart only happens when `secret.create=true`.
 
 The Deployment loads environment data with `envFrom`:
 
+- A release-info ConfigMap is always loaded first and exposes
+  `HONUA_RELEASE_*`, `HONUA_IMAGE_*`, `HONUA_CHART_VERSION`,
+  `HONUA_APP_VERSION`, and Helm release identity.
 - `config.create=true` creates a ConfigMap from non-empty `config.env` entries.
 - `config.name` references an existing ConfigMap instead of the chart-generated
   name.
@@ -65,24 +71,26 @@ from rendered ConfigMap and Secret data before template-required checks run.
 
 | Area | Values | Notes |
 | --- | --- | --- |
-| Image | `image.repository`, `image.tag`, `image.pullPolicy`, `image.pullSecrets` | Production release lanes should pin `image.tag` to a published release tag. |
+| Image | `image.repository`, `image.tag`, `image.digest`, `image.pullPolicy`, `image.pullSecrets` | Production release lanes should prefer `image.digest` with `image.tag=""`; immutable tags are the fallback. |
+| Release evidence | `release.id`, `release.manifest`, `release.digest`, `release.appVersion` | `release.id` and the effective app version must be label-safe; use `release.manifest` for free-form build metadata and `release.digest` for SHA-256 evidence. |
+| Upgrade contract | `strategy.*`, `terminationGracePeriodSeconds`, `preflight.*` | Default `Recreate` is migration-safe for inline migrations; preflight validates required keys, database and Redis reachability, and optional registry reachability. |
 | Naming | `nameOverride`, `fullnameOverride` | Use only for DNS length constraints or platform naming standards. |
 | ServiceAccount | `serviceAccount.*` | Token automount stays disabled by default. |
 | Routing | `service.*`, `ingress.*` | Ingress class, DNS, TLS, and annotations are platform-specific. |
 | Runtime config | `config.create`, `config.name`, `config.env.*` | Non-secret application settings are stored in a ConfigMap unless an external ConfigMap is named. |
 | Scheduling | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | Platform placement and metadata hooks. |
 | Security | `podSecurityContext`, `securityContext` | Defaults are restricted and should remain the baseline. |
-| Resources and probes | `resources`, `livenessProbe`, `readinessProbe`, `startupProbe` | Tune after observing workload behavior. |
+| Resources and probes | `resources`, `livenessProbe`, `readinessProbe`, `startupProbe`, `terminationGracePeriodSeconds` | Tune after observing workload behavior and migration duration. |
 | Extensions | `extraEnv`, `extraEnvFrom`, `extraVolumes`, `extraVolumeMounts` | Use for External Secrets Operator, CSI Secret Store, trust bundles, or Downward API. |
-| Dependencies | `postgresql.*`, `redis.*` | PostgreSQL subchart is dev-only; Redis subchart is optional. |
+| Dependencies | `postgresql.*`, `redis.*` | PostgreSQL subchart is dev-only; Redis can be chart-managed for smoke/dev or supplied externally for non-development durable event storage. |
 
 ## Environment Overlays
 
 | Overlay | Purpose | Runtime secret posture | Notes |
 | --- | --- | --- | --- |
-| `honua/values-dev.yaml` | Local clusters and ephemeral preview namespaces | Chart-managed Secret with development password; PostgreSQL and Redis subcharts enabled | Self-contained for Helm rendering and development smoke. Not for production data because the PostgreSQL subchart is not PostGIS-enabled. |
-| `honua/values-stage.yaml` | Release-candidate validation | Existing Secret named `honua-stage-runtime` | Enables ingress, HPA, observability, and OpenTelemetry with staging-sized resources. Override DNS, TLS, image tag, and secret name per environment. |
-| `honua/values-prod.yaml` | Customer-operated production posture | Existing Secret named `honua-prod-runtime` | Enables ingress, HPA, observability, and OpenTelemetry with production-sized resources. Override DNS, TLS, image tag, provider annotations, and secret name per customer. |
+| `honua/values-dev.yaml` | Local clusters and ephemeral preview namespaces | Chart-managed Secret with development-only strong password and connection-encryption key; PostgreSQL and Redis subcharts enabled | Self-contained for Helm rendering and development smoke. Not for production data because the PostgreSQL subchart is not PostGIS-enabled. |
+| `honua/values-stage.yaml` | Release-candidate validation | Existing Secret named `honua-stage-runtime` | Enables ingress, HPA, observability, and OpenTelemetry with staging-sized resources. Override DNS, TLS, image identity, and secret name per environment. |
+| `honua/values-prod.yaml` | Customer-operated production posture | Existing Secret named `honua-prod-runtime` | Enables ingress, HPA, observability, and OpenTelemetry with production-sized resources. Override DNS, TLS, image identity, provider annotations, and secret name per customer. |
 
 ## Breaking Changes Policy
 
@@ -99,13 +107,16 @@ The values contract is stable across compatible chart releases.
 
 ## Release-Lane Evidence
 
-This repository owns the Helm chart contract and Helm install/upgrade smoke. CI
-lints and renders the `honua/ci-values/base.yaml` fixture plus all environment
-overlays, including the staged upgrade render path. The cluster-backed
-install/upgrade smoke is documented in `docs/MIGRATION.md`.
+This repository owns the Helm chart contract and Helm install/upgrade/rollback
+smoke. CI lints and renders the `honua/ci-values/base.yaml` fixture, digest
+identity, RollingUpdate, chart-managed PostgreSQL preflight install/upgrade,
+and all environment overlays, including the staged upgrade render path. The
+cluster-backed install/upgrade/rollback smoke is documented in
+`docs/MIGRATION.md`.
 
-Current ticket smoke evidence is captured in
-`docs/smoke/ticket-2-helm-smoke.md`.
+Historical ticket #2 smoke evidence is captured in
+`docs/smoke/ticket-2-helm-smoke.md`. Ticket #6 evidence is produced by the
+current CI workflow's `honua-smoke-evidence` artifact.
 
 Cross-repository release-lane work remains bounded to the owning repos:
 

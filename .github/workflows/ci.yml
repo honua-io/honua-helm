@@ -104,6 +104,7 @@ jobs:
           grep -q 'honua.io/chart-version:' /tmp/honua-rendered-base.yaml
           grep -q 'honua.io/app-version:' /tmp/honua-rendered-base.yaml
           grep -q 'HONUA_IMAGE_REFERENCE:' /tmp/honua-rendered-base.yaml
+          grep -q 'Security__ConnectionEncryption__MasterKey:' /tmp/honua-rendered-base.yaml
           grep -q 'readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete' /tmp/honua-rendered-base.yaml
 
           grep -q 'image: "ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' /tmp/honua-rendered-digest.yaml
@@ -217,6 +218,51 @@ jobs:
             exit 1
           fi
 
+      - name: Validate connection encryption master key guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set secret.env.Security__ConnectionEncryption__MasterKey=short \
+            > /tmp/honua-rendered-master-key-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected short Security__ConnectionEncryption__MasterKey render to fail."
+            cat /tmp/honua-rendered-master-key-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate admin password guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set secret.env.HONUA_ADMIN_PASSWORD=weakpassword \
+            > /tmp/honua-rendered-admin-password-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected weak HONUA_ADMIN_PASSWORD render to fail."
+            cat /tmp/honua-rendered-admin-password-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate Redis connection guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set secret.env.ConnectionStrings__redis= \
+            > /tmp/honua-rendered-redis-missing.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected missing ConnectionStrings__redis render to fail."
+            cat /tmp/honua-rendered-redis-missing.yaml
+            exit 1
+          fi
+
   install-upgrade-rollback-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -283,12 +329,70 @@ jobs:
 
           kubectl rollout status deployment/honua-postgis -n honua-smoke --timeout=180s
           for i in {1..60}; do
-            if kubectl exec deployment/honua-postgis -n honua-smoke -- pg_isready -U honua -d honua; then
+            if kubectl exec deployment/honua-postgis -n honua-smoke -- pg_isready -h 127.0.0.1 -U honua -d honua; then
               exit 0
             fi
             sleep 2
           done
           echo "PostGIS did not become ready."
+          exit 1
+
+      - name: Start Redis
+        run: |
+          set -euo pipefail
+
+          cat <<'YAML' | kubectl apply -n honua-smoke -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: honua-redis
+            labels:
+              app.kubernetes.io/name: honua-redis
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: honua-redis
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: honua-redis
+              spec:
+                containers:
+                  - name: redis
+                    image: redis:7-alpine
+                    args:
+                      - redis-server
+                      - --appendonly
+                      - "no"
+                      - --save
+                      - ""
+                      - --requirepass
+                      - ci-redis-password
+                    ports:
+                      - containerPort: 6379
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: honua-redis
+          spec:
+            selector:
+              app.kubernetes.io/name: honua-redis
+            ports:
+              - name: redis
+                port: 6379
+                targetPort: 6379
+          YAML
+
+          kubectl rollout status deployment/honua-redis -n honua-smoke --timeout=180s
+          for i in {1..60}; do
+            if kubectl exec deployment/honua-redis -n honua-smoke -- redis-cli -h 127.0.0.1 --no-auth-warning -a ci-redis-password ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Redis did not become ready."
           exit 1
 
       - name: Install, upgrade, test, and rollback

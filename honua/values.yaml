@@ -178,9 +178,11 @@ config:
     ASPNETCORE_ENVIRONMENT: "Production"
     ASPNETCORE_URLS: "http://+:8080"
 
-# Chart-managed Secret. When secret.create=true, ConnectionStrings__DefaultConnection
-# and HONUA_ADMIN_PASSWORD are required unless the PostgreSQL subchart supplies
-# the database connection string. Empty strings are omitted before validation.
+# Chart-managed Secret. When secret.create=true, HONUA_ADMIN_PASSWORD and
+# Security__ConnectionEncryption__MasterKey are required. Non-development
+# deployments also require ConnectionStrings__DefaultConnection and
+# ConnectionStrings__redis unless the PostgreSQL or Redis subcharts derive those
+# connection strings. Empty strings are omitted before validation.
 # When secret.create=false, provide secret.name or at least one extraEnvFrom
 # source that supplies the required runtime variables.
 secret:
@@ -189,6 +191,7 @@ secret:
   env:
     ConnectionStrings__DefaultConnection: ""
     HONUA_ADMIN_PASSWORD: ""
+    Security__ConnectionEncryption__MasterKey: ""
     ConnectionStrings__redis: ""
 
 # Additional container environment and source references for platform-managed
@@ -211,10 +214,10 @@ postgresql:
     password: ""
     database: ""
 
-# Optional Bitnami Redis dependency. When redis.enabled=true, redis.auth.enabled
-# must stay true. With chart-managed secrets, either set
-# secret.env.ConnectionStrings__redis or provide redis.auth.password so the chart
-# can derive the Redis connection string.
+# Optional chart-managed Bitnami Redis dependency. Non-development deployments
+# require Redis for durable feature-change event storage. With chart-managed
+# secrets, either set secret.env.ConnectionStrings__redis or provide
+# redis.auth.password so the chart can derive the Redis connection string.
 redis:
   enabled: false
   architecture: standalone
