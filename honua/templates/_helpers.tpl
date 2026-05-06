@@ -2,6 +2,11 @@
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "honua.appVersion" -}}
+{{- $releaseValues := .Values.release | default dict -}}
+{{- default .Chart.AppVersion (get $releaseValues "appVersion") -}}
+{{- end -}}
+
 {{- define "honua.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
@@ -15,8 +20,52 @@
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 app.kubernetes.io/name: {{ include "honua.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ include "honua.appVersion" . | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "honua.releaseLabels" -}}
+{{- with .Values.release.id }}
+honua.io/release-id: {{ . | quote }}
+{{- end }}
+{{- end -}}
+
+{{- define "honua.imageReference" -}}
+{{- $imageValues := .Values.image | default dict -}}
+{{- $repository := required "image.repository is required." (get $imageValues "repository") -}}
+{{- $digest := trim (default "" (get $imageValues "digest")) -}}
+{{- $tag := trim (default "" (get $imageValues "tag")) -}}
+{{- if $digest -}}
+{{- printf "%s@%s" $repository $digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repository (required "image.tag is required when image.digest is empty." $tag) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.imageRegistryHost" -}}
+{{- $repository := required "image.repository is required." .Values.image.repository -}}
+{{- $firstPart := first (splitList "/" $repository) -}}
+{{- if or (contains "." $firstPart) (contains ":" $firstPart) (eq $firstPart "localhost") -}}
+{{- $firstPart -}}
+{{- else -}}
+registry-1.docker.io
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.releaseAnnotations" -}}
+honua.io/image-reference: {{ include "honua.imageReference" . | quote }}
+{{- with .Values.image.digest }}
+honua.io/image-digest: {{ . | quote }}
+{{- end }}
+{{- with .Values.release.id }}
+honua.io/release-id: {{ . | quote }}
+{{- end }}
+{{- with .Values.release.manifest }}
+honua.io/release-manifest: {{ . | quote }}
+{{- end }}
+{{- with .Values.release.digest }}
+honua.io/release-digest: {{ . | quote }}
+{{- end }}
 {{- end -}}
 
 {{- define "honua.selectorLabels" -}}
@@ -46,6 +95,49 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- else -}}
 {{- printf "%s-secret" (include "honua.fullname" .) -}}
 {{- end -}}
+{{- end -}}
+
+{{- define "honua.preflightSecretName" -}}
+{{- printf "%s-preflight" (include "honua.fullname" .) -}}
+{{- end -}}
+
+{{- define "honua.releaseInfoConfigMapName" -}}
+{{- printf "%s-release-info" (include "honua.fullname" .) -}}
+{{- end -}}
+
+{{- define "honua.secretData" -}}
+{{- $data := dict -}}
+{{- range $key, $value := .Values.secret.env }}
+{{- if and (ne (toString $value) "") (ne (toString $value) "<nil>") }}
+{{- $_ := set $data $key (toString $value) }}
+{{- end }}
+{{- end }}
+{{- if and (not (hasKey $data "ConnectionStrings__DefaultConnection")) .Values.postgresql.enabled }}
+{{- $pgHost := include "honua.postgresqlHost" . }}
+{{- $pgPort := include "honua.postgresqlPort" . }}
+{{- $pgUser := required "postgresql.auth.username is required when postgresql.enabled is true and secret.env.ConnectionStrings__DefaultConnection is not set." .Values.postgresql.auth.username }}
+{{- $pgPassword := required "postgresql.auth.password is required when postgresql.enabled is true and secret.env.ConnectionStrings__DefaultConnection is not set." .Values.postgresql.auth.password }}
+{{- $pgDatabase := required "postgresql.auth.database is required when postgresql.enabled is true and secret.env.ConnectionStrings__DefaultConnection is not set." .Values.postgresql.auth.database }}
+{{- $pgConn := printf "Host=%s;Port=%s;Database=%s;Username=%s;Password=%s" $pgHost $pgPort $pgDatabase $pgUser $pgPassword }}
+{{- $_ := set $data "ConnectionStrings__DefaultConnection" $pgConn }}
+{{- else if not (hasKey $data "ConnectionStrings__DefaultConnection") }}
+{{- required "secret.env.ConnectionStrings__DefaultConnection is required when postgresql.enabled is false. Set it to your PostgreSQL connection string." .Values.secret.env.ConnectionStrings__DefaultConnection }}
+{{- end }}
+{{- if and (not (hasKey $data "ConnectionStrings__redis")) .Values.redis.enabled }}
+{{- $redisHost := include "honua.redisHost" . }}
+{{- $redisPort := include "honua.redisPort" . }}
+{{- if not .Values.redis.auth.enabled }}
+{{- fail "redis.auth.enabled must be true when redis.enabled is true unless secret.env.ConnectionStrings__redis is explicitly provided." }}
+{{- end }}
+{{- $redisPassword := required "redis.auth.password is required when redis.enabled and redis.auth.enabled are true and secret.env.ConnectionStrings__redis is not set." .Values.redis.auth.password }}
+{{- $_ := set $data "ConnectionStrings__redis" (printf "%s:%s,password=%s" $redisHost $redisPort $redisPassword) }}
+{{- end }}
+{{- if not (hasKey $data "HONUA_ADMIN_PASSWORD") }}
+{{- required "secret.env.HONUA_ADMIN_PASSWORD is required. Set it to a strong admin password." .Values.secret.env.HONUA_ADMIN_PASSWORD }}
+{{- end }}
+{{- range $key := keys $data | sortAlpha }}
+{{ $key }}: {{ get $data $key | toString | b64enc }}
+{{- end }}
 {{- end -}}
 
 {{- define "honua.dependencyFullname" -}}

@@ -1,0 +1,9 @@
+image:
+  pullPolicy: IfNotPresent
+release:
+  id: honua-ci-upgrade-base
+  manifest: "ci://honua-helm/upgrade-base"
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "Host=honua-postgis;Port=5432;Database=honua;Username=honua;Password=ci-password"
+    HONUA_ADMIN_PASSWORD: "ci-admin-password"

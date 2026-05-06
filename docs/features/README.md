@@ -8,6 +8,10 @@ This repository packages Honua Server for Kubernetes.
 - Optional Bitnami PostgreSQL and Redis subcharts for development or simple environments.
 - External PostGIS and Redis support through secret/config environment values.
 - AOT and JIT image tag selection, with AOT as the default chart posture.
+- Digest-pinned image rendering for immutable production releases.
+- Explicit Deployment strategy defaults for inline migration safety.
+- Pre-install/pre-upgrade preflight hook for required credentials, database reachability, and registry reachability.
+- Release-info ConfigMap, labels, annotations, NOTES, and helm-test output for evidence capture.
 - HorizontalPodAutoscaler support with CPU/memory targets and scale-up/scale-down behavior.
 - Production-oriented resource, ingress, TLS, public base URL, observability, and OpenTelemetry values.
 - Existing-secret mode for customer-managed credentials.
@@ -19,6 +23,7 @@ This repository packages Honua Server for Kubernetes.
 
 - Chart source: `honua/`
 - Usage and production examples: `honua/README.md`
+- Operator chart contract: `docs/contract.md`
 - Defaults and tunables: `honua/values.yaml`
 - Values contract and migration policy: `docs/values-contract.md`, `docs/MIGRATION.md`
 - Ticket 2 smoke evidence: `docs/smoke/ticket-2-helm-smoke.md`

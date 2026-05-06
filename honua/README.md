@@ -44,8 +44,46 @@ Start from `honua/values-prod.yaml`, then create a customer-specific override:
 
 ```yaml
 image:
-  tag: "v1.2.3-aot"   # Pin to a release AOT tag
+  repository: ghcr.io/honua-io/honua-server
+  tag: ""   # Leave empty when digest is set
+  digest: "sha256:<64 lowercase hex characters>"
   pullPolicy: IfNotPresent
+
+release:
+  id: "honua-2026-05-preview"
+  manifest: "https://example.com/release/honua-2026-05-preview.json"
+  digest: "sha256:<64 lowercase hex characters>"
+
+strategy:
+  type: Recreate
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
 
 ingress:
   className: nginx   # or alb, traefik, etc.
@@ -68,6 +106,9 @@ config:
 secret:
   create: false
   name: honua-prod-runtime
+
+preflight:
+  enabled: true
 ```
 
 The `honua-prod-runtime` Secret must contain:
@@ -129,7 +170,68 @@ helm upgrade --install honua honua \
   --set image.tag=latest
 ```
 
-For production, pin to a release tag: `v1.2.3-aot` (AOT) or `v1.2.3` (JIT).
+For production, pin by digest when possible:
+
+```yaml
+image:
+  repository: ghcr.io/honua-io/honua-server
+  tag: ""
+  digest: "sha256:<64 lowercase hex characters>"
+  pullPolicy: IfNotPresent
+```
+
+If you cannot pin by digest, use an immutable release tag: `v1.2.3-aot` (AOT) or `v1.2.3` (JIT).
+
+## Upgrade and migration contract
+
+Honua Server runs database migrations inline during startup behind a PostgreSQL advisory lock. The chart defaults the Deployment strategy to `Recreate` so old pods stop before new pods start during a migrating upgrade.
+
+Use `RollingUpdate` only when the migration set is forward and backward compatible across the old and new Honua images:
+
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+```
+
+Readiness at `/healthz/ready` is the chart signal that startup and migrations completed.
+
+## Preflight hook
+
+`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, and target image registry reachability before the Deployment is applied. The kubelet remains authoritative for full image pull success, especially for private registries.
+
+Disable only when an external controller or restricted network policy prevents the hook from reaching the database or registry:
+
+```yaml
+preflight:
+  enabled: false
+```
+
+## Release evidence and rollback
+
+Set release metadata so operators can capture what is running:
+
+```yaml
+release:
+  id: "honua-2026-05-preview"
+  manifest: "https://example.com/release/honua-2026-05-preview.json"
+  digest: "sha256:<64 lowercase hex characters>"
+```
+
+The chart writes this metadata to Deployment/Pod labels and annotations, the release-info ConfigMap, the container environment, Helm NOTES, and `helm test` output.
+
+Capture evidence and rollback with:
+
+```bash
+kubectl get configmap honua-honua-release-info -o yaml
+helm test honua
+helm history honua
+helm rollback honua <revision>
+```
+
+Rollback redeploys the prior Helm revision. The chart cannot downgrade database schema; restore from backup or roll forward if the prior app image is not compatible with the migrated schema.
 
 ## Using an existing secret
 
@@ -150,7 +252,14 @@ In that mode the referenced sources must expose `ConnectionStrings__DefaultConne
 | Value | Default | Description |
 |-------|---------|-------------|
 | `replicaCount` | 1 | Number of pods. Use 3+ for production. |
-| `image.tag` | `latest-aot` | Image tag. AOT recommended. Pin to `vX.Y.Z-aot` for production. |
+| `image.tag` | `latest-aot` | Image tag. AOT recommended. Leave empty when `image.digest` is set. |
+| `image.digest` | `""` | Immutable image digest. Preferred for production and rollback evidence. |
+| `release.id` | `""` | Operator release identifier surfaced in labels, annotations, ConfigMap, NOTES, and tests. |
+| `release.manifest` | `""` | URL, path, or commit for the release manifest. |
+| `release.digest` | `""` | Digest of the release manifest or release bundle. |
+| `strategy.type` | `Recreate` | Upgrade strategy. `Recreate` is safe for inline migrations. |
+| `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
+| `terminationGracePeriodSeconds` | 60 | Pod shutdown grace period for lock release and clean termination. |
 | `resources` | 250m/512Mi request, 2 CPU/2Gi limit | CPU/memory requests and limits. Tune for production. |
 | `autoscaling.enabled` | false | Enable HPA. |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
@@ -172,8 +281,10 @@ See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 
 The chart configures probes on:
 - **Liveness**: `/healthz/live` (is the process alive?)
-- **Readiness**: `/healthz/ready` (is the database connected?)
-- **Startup**: `/healthz/live` with 30 retries (initial boot tolerance)
+- **Readiness**: `/healthz/ready` (startup, dependencies, and migrations are complete)
+- **Startup**: `/healthz/live` with 60 retries (migration and cold-start tolerance)
+
+The full operator contract is documented in [`docs/contract.md`](../docs/contract.md).
 
 ## Geospatial HPA tuning guidance
 

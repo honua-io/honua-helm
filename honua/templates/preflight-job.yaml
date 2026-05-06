@@ -1,0 +1,128 @@
+{{- if .Values.preflight.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "honua.fullname" . }}-preflight
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "honua.selectorLabels" . | nindent 8 }}
+        {{- include "honua.releaseLabels" . | nindent 8 }}
+      annotations:
+        {{- include "honua.releaseAnnotations" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: preflight
+          image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
+          imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: HONUA_PREFLIGHT_TIMEOUT_SECONDS
+              value: {{ .Values.preflight.timeoutSeconds | quote }}
+            - name: HONUA_PREFLIGHT_REGISTRY_CHECK
+              value: {{ ternary "true" "false" .Values.preflight.registryCheck.enabled | quote }}
+            - name: HONUA_PREFLIGHT_REGISTRY_HOST
+              value: {{ include "honua.imageRegistryHost" . | quote }}
+            - name: HONUA_IMAGE_REFERENCE
+              value: {{ include "honua.imageReference" . | quote }}
+          envFrom:
+            {{- if .Values.secret.create }}
+            - secretRef:
+                name: {{ include "honua.preflightSecretName" . }}
+            {{- else if .Values.secret.name }}
+            - secretRef:
+                name: {{ include "honua.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+
+              fail() {
+                echo "preflight failed: $*" >&2
+                exit 1
+              }
+
+              for var in ConnectionStrings__DefaultConnection HONUA_ADMIN_PASSWORD; do
+                eval "value=\${$var:-}"
+                if [ -z "$value" ]; then
+                  fail "missing required environment variable ${var}"
+                fi
+              done
+
+              conn="${ConnectionStrings__DefaultConnection}"
+              db_host=""
+              db_port="5432"
+              old_ifs="${IFS}"
+              IFS=';'
+              for part in $conn; do
+                key="${part%%=*}"
+                value="${part#*=}"
+                normalized_key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+                normalized_value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                case "$normalized_key" in
+                  host|server|datasource)
+                    db_host="$normalized_value"
+                    ;;
+                  port)
+                    db_port="$normalized_value"
+                    ;;
+                esac
+              done
+              IFS="${old_ifs}"
+
+              if [ -z "$db_host" ]; then
+                fail "could not parse database host from ConnectionStrings__DefaultConnection"
+              fi
+
+              echo "Checking PostgreSQL TCP reachability at ${db_host}:${db_port}"
+              set +e
+              curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://${db_host}:${db_port}/" >/dev/null
+              db_status=$?
+              set -e
+              case "$db_status" in
+                0|1|52|56)
+                  ;;
+                *)
+                  fail "database endpoint ${db_host}:${db_port} is not reachable (curl exit ${db_status})"
+                  ;;
+              esac
+
+              if [ "${HONUA_PREFLIGHT_REGISTRY_CHECK}" = "true" ]; then
+                echo "Checking image registry reachability at ${HONUA_PREFLIGHT_REGISTRY_HOST} for ${HONUA_IMAGE_REFERENCE}"
+                set +e
+                curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" -o /dev/null "https://${HONUA_PREFLIGHT_REGISTRY_HOST}/v2/"
+                registry_status=$?
+                set -e
+                if [ "$registry_status" -ne 0 ]; then
+                  fail "image registry ${HONUA_PREFLIGHT_REGISTRY_HOST} is not reachable (curl exit ${registry_status})"
+                fi
+              else
+                echo "Skipping image registry reachability check; kubelet image pull remains authoritative."
+              fi
+
+              echo "Preflight passed for ${HONUA_IMAGE_REFERENCE}"
+{{- end }}

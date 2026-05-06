@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.releaseInfoConfigMapName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+data:
+  HONUA_RELEASE_ID: {{ default "" .Values.release.id | quote }}
+  HONUA_RELEASE_MANIFEST: {{ default "" .Values.release.manifest | quote }}
+  HONUA_RELEASE_DIGEST: {{ default "" .Values.release.digest | quote }}
+  HONUA_IMAGE_REFERENCE: {{ include "honua.imageReference" . | quote }}
+  HONUA_IMAGE_DIGEST: {{ default "" .Values.image.digest | quote }}
+  HONUA_CHART_VERSION: {{ .Chart.Version | quote }}
+  HONUA_APP_VERSION: {{ include "honua.appVersion" . | quote }}
+  HONUA_HELM_RELEASE: {{ .Release.Name | quote }}
+  HONUA_HELM_NAMESPACE: {{ .Release.Namespace | quote }}

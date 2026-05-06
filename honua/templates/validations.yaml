@@ -1,7 +1,25 @@
 {{- $secretName := trim (default "" .Values.secret.name) -}}
 {{- $hasSecretName := gt (len $secretName) 0 -}}
 {{- $hasExtraEnvFrom := gt (len .Values.extraEnvFrom) 0 -}}
+{{- $imageTag := trim (default "" .Values.image.tag) -}}
+{{- $imageDigest := trim (default "" .Values.image.digest) -}}
 
 {{- if and (not .Values.secret.create) (not (or $hasSecretName $hasExtraEnvFrom)) -}}
 {{- fail "When secret.create is false, you must provide secret.name or at least one extraEnvFrom source." -}}
+{{- end -}}
+
+{{- if and (not $imageTag) (not $imageDigest) -}}
+{{- fail "Set exactly one of image.tag or image.digest." -}}
+{{- end -}}
+
+{{- if and $imageTag $imageDigest -}}
+{{- fail "Set exactly one of image.tag or image.digest, not both. When using image.digest, set image.tag to an empty string." -}}
+{{- end -}}
+
+{{- if and $imageDigest (not (regexMatch "^sha256:[0-9a-f]{64}$" $imageDigest)) -}}
+{{- fail "image.digest must match sha256:<64 lowercase hex characters>." -}}
+{{- end -}}
+
+{{- if and $imageDigest (eq .Values.image.pullPolicy "Always") -}}
+{{- fail "image.pullPolicy must be IfNotPresent or Never when image.digest is set." -}}
 {{- end -}}

@@ -9,13 +9,21 @@
 # Used only when autoscaling.enabled is false.
 replicaCount: 1
 
-# Honua Server image. For production, override image.tag with a published
-# release tag instead of relying on the moving latest-aot tag.
+# Honua Server image. For production, prefer image.digest with image.tag left
+# empty. If digest pinning is not available, override image.tag with an
+# immutable release tag instead of relying on the moving latest-aot tag.
 image:
   repository: ghcr.io/honua-io/honua-server
   tag: "latest-aot"
+  digest: ""
   pullPolicy: Always
   pullSecrets: []
+
+release:
+  id: ""
+  manifest: ""
+  digest: ""
+  appVersion: ""
 
 # Optional name overrides for Kubernetes resources. Leave empty unless the
 # release name would exceed DNS label limits or a platform naming standard
@@ -88,7 +96,7 @@ livenessProbe:
   initialDelaySeconds: 10
   periodSeconds: 15
   timeoutSeconds: 5
-  failureThreshold: 3
+  failureThreshold: 6
 
 readinessProbe:
   httpGet:
@@ -106,7 +114,25 @@ startupProbe:
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 5
-  failureThreshold: 30
+  failureThreshold: 60
+
+strategy:
+  type: Recreate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+terminationGracePeriodSeconds: 60
+
+preflight:
+  enabled: true
+  image:
+    repository: curlimages/curl
+    tag: "8.5.0"
+    pullPolicy: IfNotPresent
+  timeoutSeconds: 5
+  registryCheck:
+    enabled: true
 
 # HorizontalPodAutoscaler. When enabled, at least one target utilization value
 # must be greater than 0; the chart validates this at render time.

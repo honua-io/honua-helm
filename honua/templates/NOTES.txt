@@ -1,0 +1,43 @@
+{{- $desiredReplicas := int .Values.replicaCount -}}
+{{- if .Values.autoscaling.enabled -}}
+{{- $desiredReplicas = int .Values.autoscaling.minReplicas -}}
+{{- end -}}
+Honua chart contract
+
+Image: {{ include "honua.imageReference" . }}
+Release ID: {{ default "<unset>" .Values.release.id }}
+Release manifest: {{ default "<unset>" .Values.release.manifest }}
+Release digest: {{ default "<unset>" .Values.release.digest }}
+Upgrade strategy: {{ default "Recreate" .Values.strategy.type }}
+
+Evidence:
+  kubectl get configmap {{ include "honua.releaseInfoConfigMapName" . }} -n {{ .Release.Namespace }} -o yaml
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+Rollback:
+  helm history {{ .Release.Name }} -n {{ .Release.Namespace }}
+  helm rollback {{ .Release.Name }} <revision> -n {{ .Release.Namespace }}
+
+Migrations run inline during Honua startup. The readiness endpoint
+/healthz/ready is the chart's signal that startup and migrations completed.
+The default strategy is Recreate so old and new server versions do not run
+against the same database during a migrating upgrade.
+
+{{- if eq (default "Recreate" .Values.strategy.type) "RollingUpdate" }}
+WARNING: RollingUpdate is enabled. Use it only when the target migration set is
+forward and backward compatible across the old and new Honua images.
+{{- end }}
+
+{{- if or (eq (default "" .Values.image.tag) "latest") (eq (default "" .Values.image.tag) "latest-aot") }}
+WARNING: A mutable image tag is in use. Production and rollback evidence should
+pin image.digest, or at minimum use an immutable release tag.
+{{- end }}
+
+{{- if and (eq (default "Recreate" .Values.strategy.type) "Recreate") (gt $desiredReplicas 1) }}
+WARNING: Recreate with more than one desired replica scales all old pods down
+before new pods start. This is migration-safe but causes upgrade downtime.
+{{- end }}
+
+See docs/contract.md in this chart repository for the durable operator-facing
+contract, including probe tuning, image identity, preflight scope, and rollback
+semantics.
