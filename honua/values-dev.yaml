@@ -1,0 +1,48 @@
+# Development overlay for local clusters and ephemeral preview namespaces.
+# This overlay is self-contained for Helm rendering and development smoke tests.
+# The bundled PostgreSQL dependency is not PostGIS-enabled and is not intended
+# for production data.
+
+replicaCount: 1
+
+image:
+  tag: "latest-aot"
+  pullPolicy: Always
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+config:
+  env:
+    HONUA_ADMIN_UI: "true"
+    HONUA_SERVE_ADMIN_UI: "true"
+    HONUA_OBSERVABILITY: "false"
+    HONUA_OPENTELEMETRY: "false"
+    HONUA_SKIP_MIGRATIONS: "false"
+    Deployment__Mode: "SingleInstance"
+    Public__BaseUrl: "http://honua.local"
+    ASPNETCORE_ENVIRONMENT: "Development"
+    ASPNETCORE_URLS: "http://+:8080"
+
+secret:
+  env:
+    HONUA_ADMIN_PASSWORD: "change-me-dev"
+
+postgresql:
+  enabled: true
+  auth:
+    username: honua
+    password: honua-dev-password
+    database: honua
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: honua-dev-redis

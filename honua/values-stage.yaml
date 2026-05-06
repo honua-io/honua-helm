@@ -1,0 +1,60 @@
+# Staging overlay for release-candidate validation.
+# Pair this file with a site-specific override for ingress class, DNS, TLS, image
+# tag, and the pre-created runtime secret name when defaults do not match.
+
+replicaCount: 2
+
+image:
+  tag: "latest-aot"
+  pullPolicy: Always
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: honua-stage.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: honua-stage-tls
+      hosts:
+        - honua-stage.example.com
+
+config:
+  env:
+    HONUA_ADMIN_UI: "true"
+    HONUA_SERVE_ADMIN_UI: "true"
+    HONUA_OBSERVABILITY: "true"
+    HONUA_OPENTELEMETRY: "true"
+    HONUA_SKIP_MIGRATIONS: "false"
+    Deployment__Mode: "SingleInstance"
+    Public__BaseUrl: "https://honua-stage.example.com"
+    ASPNETCORE_ENVIRONMENT: "Staging"
+    ASPNETCORE_URLS: "http://+:8080"
+
+secret:
+  create: false
+  name: honua-stage-runtime
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false

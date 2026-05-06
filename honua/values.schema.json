@@ -1,69 +1,279 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
+  "description": "Values contract for the Honua Server Helm chart.",
   "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of pods when autoscaling.enabled is false."
+    },
     "image": {
       "type": "object",
+      "description": "Honua Server container image settings.",
       "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
         "pullPolicy": {
           "type": "string",
           "enum": ["Always", "IfNotPresent", "Never"]
+        },
+        "pullSecrets": {
+          "type": "array"
         }
       }
     },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
     "serviceAccount": {
       "type": "object",
+      "description": "ServiceAccount creation and token automount settings.",
       "properties": {
-        "automount": { "type": "boolean" }
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "automount": {
+          "type": "boolean"
+        }
       }
     },
+    "podAnnotations": {
+      "type": "object"
+    },
+    "podLabels": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
     "securityContext": {
+      "type": "object"
+    },
+    "service": {
       "type": "object",
+      "description": "Kubernetes Service settings.",
       "properties": {
-        "readOnlyRootFilesystem": { "type": "boolean" }
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "targetPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "annotations": {
+          "type": "object"
+        }
       }
+    },
+    "ingress": {
+      "type": "object",
+      "description": "Ingress settings for platform-specific routing.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "pathType": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "array"
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "livenessProbe": {
+      "type": "object"
+    },
+    "readinessProbe": {
+      "type": "object"
+    },
+    "startupProbe": {
+      "type": "object"
     },
     "autoscaling": {
       "type": "object",
+      "description": "HorizontalPodAutoscaler settings.",
       "properties": {
-        "enabled": { "type": "boolean" },
-        "targetCPUUtilizationPercentage": { "type": ["integer", "null"], "minimum": 0 },
-        "targetMemoryUtilizationPercentage": { "type": ["integer", "null"], "minimum": 0 }
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "behavior": {
+          "type": "object"
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "config": {
+      "type": "object",
+      "description": "Chart-managed or externally managed ConfigMap settings.",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object"
+        }
       }
     },
     "secret": {
       "type": "object",
+      "description": "Chart-managed or externally managed Secret settings.",
       "properties": {
-        "create": { "type": "boolean" },
-        "name": { "type": "string" }
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "ConnectionStrings__DefaultConnection": {
+              "type": "string"
+            },
+            "HONUA_ADMIN_PASSWORD": {
+              "type": "string"
+            },
+            "ConnectionStrings__redis": {
+              "type": "string"
+            }
+          }
+        }
       }
+    },
+    "extraEnv": {
+      "type": "array"
     },
     "extraEnvFrom": {
       "type": "array"
     },
+    "extraVolumes": {
+      "type": "array"
+    },
+    "extraVolumeMounts": {
+      "type": "array"
+    },
     "redis": {
       "type": "object",
+      "description": "Optional Bitnami Redis dependency settings.",
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "auth": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" },
-            "password": { "type": "string" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "password": {
+              "type": "string"
+            }
           }
         }
       }
     },
     "postgresql": {
       "type": "object",
+      "description": "Optional Bitnami PostgreSQL dependency settings for development-only installs.",
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "auth": {
           "type": "object",
           "properties": {
-            "username": { "type": "string" },
-            "password": { "type": "string" },
-            "database": { "type": "string" }
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "database": {
+              "type": "string"
+            }
           }
         }
       }
@@ -75,7 +285,11 @@
         "properties": {
           "autoscaling": {
             "type": "object",
-            "properties": { "enabled": { "const": true } },
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
             "required": ["enabled"]
           }
         }
@@ -86,7 +300,11 @@
             "properties": {
               "autoscaling": {
                 "type": "object",
-                "properties": { "targetCPUUtilizationPercentage": { "minimum": 1 } },
+                "properties": {
+                  "targetCPUUtilizationPercentage": {
+                    "minimum": 1
+                  }
+                },
                 "required": ["targetCPUUtilizationPercentage"]
               }
             }
@@ -95,7 +313,11 @@
             "properties": {
               "autoscaling": {
                 "type": "object",
-                "properties": { "targetMemoryUtilizationPercentage": { "minimum": 1 } },
+                "properties": {
+                  "targetMemoryUtilizationPercentage": {
+                    "minimum": 1
+                  }
+                },
                 "required": ["targetMemoryUtilizationPercentage"]
               }
             }
@@ -108,7 +330,11 @@
         "properties": {
           "secret": {
             "type": "object",
-            "properties": { "create": { "const": false } },
+            "properties": {
+              "create": {
+                "const": false
+              }
+            },
             "required": ["create"]
           }
         }
@@ -119,14 +345,20 @@
             "properties": {
               "secret": {
                 "type": "object",
-                "properties": { "name": { "minLength": 1 } },
+                "properties": {
+                  "name": {
+                    "minLength": 1
+                  }
+                },
                 "required": ["name"]
               }
             }
           },
           {
             "properties": {
-              "extraEnvFrom": { "minItems": 1 }
+              "extraEnvFrom": {
+                "minItems": 1
+              }
             }
           }
         ]
@@ -137,7 +369,11 @@
         "properties": {
           "redis": {
             "type": "object",
-            "properties": { "enabled": { "const": true } },
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
             "required": ["enabled"]
           }
         }
@@ -149,7 +385,11 @@
             "properties": {
               "auth": {
                 "type": "object",
-                "properties": { "enabled": { "const": true } },
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
                 "required": ["enabled"]
               }
             },
@@ -160,10 +400,91 @@
     },
     {
       "if": {
+        "allOf": [
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": {
+                  "create": {
+                    "const": true
+                  }
+                },
+                "required": ["create"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "redis": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": ["enabled"]
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": {
+                  "env": {
+                    "type": "object",
+                    "properties": {
+                      "ConnectionStrings__redis": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["ConnectionStrings__redis"]
+                  }
+                },
+                "required": ["env"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "redis": {
+                "type": "object",
+                "properties": {
+                  "auth": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      },
+                      "password": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["enabled", "password"]
+                  }
+                },
+                "required": ["auth"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
         "properties": {
           "postgresql": {
             "type": "object",
-            "properties": { "enabled": { "const": true } },
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
             "required": ["enabled"]
           }
         }
@@ -176,9 +497,15 @@
               "auth": {
                 "type": "object",
                 "properties": {
-                  "username": { "minLength": 1 },
-                  "password": { "minLength": 1 },
-                  "database": { "minLength": 1 }
+                  "username": {
+                    "minLength": 1
+                  },
+                  "password": {
+                    "minLength": 1
+                  },
+                  "database": {
+                    "minLength": 1
+                  }
                 },
                 "required": ["username", "password", "database"]
               }

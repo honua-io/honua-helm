@@ -24,8 +24,24 @@ jobs:
       - name: Lint chart
         run: helm lint honua -f honua/ci-values/base.yaml
 
+      - name: Lint environment overlays
+        run: |
+          helm lint honua -f honua/values-dev.yaml
+          helm lint honua -f honua/values-stage.yaml
+          helm lint honua -f honua/values-prod.yaml
+
       - name: Render templates (base)
         run: helm template honua ./honua -f honua/ci-values/base.yaml > /tmp/honua-rendered-base.yaml
+
+      - name: Render templates (environment overlays)
+        run: |
+          helm template honua-dev ./honua -f honua/values-dev.yaml > /tmp/honua-rendered-dev.yaml
+          helm template honua-stage ./honua -f honua/values-stage.yaml > /tmp/honua-rendered-stage.yaml
+          helm template honua-prod ./honua -f honua/values-prod.yaml > /tmp/honua-rendered-prod.yaml
+
+      - name: Render staged upgrade path
+        run: |
+          helm template honua-stage ./honua -f honua/values-stage.yaml --is-upgrade > /tmp/honua-rendered-stage-upgrade.yaml
 
       - name: Render templates (ingress hosts empty)
         run: helm template honua ./honua -f honua/ci-values/ingress-empty.yaml > /tmp/honua-rendered-ingress-empty.yaml

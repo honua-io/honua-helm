@@ -1,23 +1,42 @@
+# Honua chart default values.
+#
+# These defaults define the baseline values contract and restricted pod posture.
+# They intentionally leave required runtime secret values empty, so values.yaml
+# alone is not an installable values file. Supply secret.env, an existing
+# secret, extraEnvFrom, or an environment overlay. See docs/values-contract.md
+# for required/optional values and overlay guidance.
+
+# Used only when autoscaling.enabled is false.
 replicaCount: 1
 
+# Honua Server image. For production, override image.tag with a published
+# release tag instead of relying on the moving latest-aot tag.
 image:
   repository: ghcr.io/honua-io/honua-server
   tag: "latest-aot"
   pullPolicy: Always
   pullSecrets: []
 
+# Optional name overrides for Kubernetes resources. Leave empty unless the
+# release name would exceed DNS label limits or a platform naming standard
+# requires an override.
 nameOverride: ""
 fullnameOverride: ""
 
+# ServiceAccount for the workload. Token automount is disabled by default
+# because the server does not need Kubernetes API access.
 serviceAccount:
   create: true
   name: ""
   annotations: {}
   automount: false
 
+# Pod-level extension points for scheduling, observability, and platform labels.
 podAnnotations: {}
 podLabels: {}
 
+# Baseline pod and container security settings. Keep these restrictive unless
+# an image or platform requirement proves a specific relaxation is needed.
 podSecurityContext:
   fsGroup: 1001
 
@@ -30,12 +49,15 @@ securityContext:
     drop:
       - ALL
 
+# Cluster Service exposed to other Kubernetes resources.
 service:
   type: ClusterIP
   port: 80
   targetPort: 8080
   annotations: {}
 
+# Ingress is disabled by default because class, host, TLS, and annotations are
+# platform-specific. Environment overlays provide stage/prod examples.
 ingress:
   enabled: false
   className: ""
@@ -47,6 +69,8 @@ ingress:
           pathType: Prefix
   tls: []
 
+# Default requests and limits are sized for a small preview install. Increase
+# them for production geospatial workloads after measuring workload behavior.
 resources:
   requests:
     cpu: 250m
@@ -55,6 +79,8 @@ resources:
     cpu: "2"
     memory: 2Gi
 
+# Health probes use Honua Server's HTTP health endpoints. Readiness checks the
+# application path that depends on backend availability.
 livenessProbe:
   httpGet:
     path: /healthz/live
@@ -82,6 +108,8 @@ startupProbe:
   timeoutSeconds: 5
   failureThreshold: 30
 
+# HorizontalPodAutoscaler. When enabled, at least one target utilization value
+# must be greater than 0; the chart validates this at render time.
 autoscaling:
   enabled: false
   minReplicas: 2
@@ -108,6 +136,8 @@ tolerations: []
 
 affinity: {}
 
+# Chart-managed ConfigMap. Set config.create=false and config.name to reference
+# an externally managed ConfigMap instead.
 config:
   create: true
   name: ""
@@ -122,6 +152,11 @@ config:
     ASPNETCORE_ENVIRONMENT: "Production"
     ASPNETCORE_URLS: "http://+:8080"
 
+# Chart-managed Secret. When secret.create=true, ConnectionStrings__DefaultConnection
+# and HONUA_ADMIN_PASSWORD are required unless the PostgreSQL subchart supplies
+# the database connection string. Empty strings are omitted before validation.
+# When secret.create=false, provide secret.name or at least one extraEnvFrom
+# source that supplies the required runtime variables.
 secret:
   create: true
   name: ""
@@ -130,11 +165,19 @@ secret:
     HONUA_ADMIN_PASSWORD: ""
     ConnectionStrings__redis: ""
 
+# Additional container environment and source references for platform-managed
+# values such as CSI Secret Store, External Secrets Operator, or Downward API.
 extraEnv: []
 extraEnvFrom: []
+
+# Additional volumes and mounts for platform integrations such as trust bundles
+# or mounted secret providers.
 extraVolumes: []
 extraVolumeMounts: []
 
+# Optional Bitnami PostgreSQL dependency. This is development-only because the
+# subchart does not include PostGIS; production should use an external
+# PostGIS-enabled database and provide ConnectionStrings__DefaultConnection.
 postgresql:
   enabled: false
   auth:
@@ -142,6 +185,10 @@ postgresql:
     password: ""
     database: ""
 
+# Optional Bitnami Redis dependency. When redis.enabled=true, redis.auth.enabled
+# must stay true. With chart-managed secrets, either set
+# secret.env.ConnectionStrings__redis or provide redis.auth.password so the chart
+# can derive the Redis connection string.
 redis:
   enabled: false
   architecture: standalone
