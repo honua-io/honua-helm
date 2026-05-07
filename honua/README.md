@@ -2,18 +2,60 @@
 
 Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
 
-## Quick start
+- Source of truth: `oci://ghcr.io/honua-io/charts/honua`
+- GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
+- Versioning and cut procedure: see [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
+
+## Install (published chart)
+
+```bash
+helm registry login ghcr.io
+helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+  --set secret.env.ConnectionStrings__DefaultConnection="Host=postgres;Database=honua;Username=honua;Password=honua" \
+  --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
+```
+
+Published chart cuts pin `image.tag` to a concrete `vX.Y.Z-aot` server release;
+the local repo default `latest-aot` is dev-only.
+
+## Upgrade
+
+```bash
+helm registry login ghcr.io
+helm pull oci://ghcr.io/honua-io/charts/honua --version X.Y.Z   # optional, to inspect
+helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+  -f values-prod.yaml
+```
+
+Value keys under `image`, `service`, `ingress`, `config.env`, `secret.env`,
+`postgresql`, and `redis` are stable within a chart major version. Operators
+upgrading from in-monorepo deployments do not need value migrations within
+chart 0.x — see [`docs/MIGRATION.md`](https://github.com/honua-io/honua-helm/blob/trunk/docs/MIGRATION.md). The
+operator-ready values contract that formalizes this guarantee is tracked in
+[honua-helm#6](https://github.com/honua-io/honua-helm/issues/6).
+
+## Versioning
+
+Chart `version` (semver) bumps independently of honua-server. Chart
+`appVersion` mirrors the honua-server release the chart is validated against.
+Tag scheme: `chart-vX.Y.Z` here, `vX.Y.Z` in honua-server. Full procedure
+in [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
+
+## Quick start (from a checkout)
 
 For local development and Helm smoke testing, use the development overlay:
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
 ```
 
 For direct installs with external data services, the default preflight hook
 checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment
 is applied.
+
+`helm dependency build` uses the committed `Chart.lock`, matching CI and release packaging.
 
 ## Values contract and overlays
 
@@ -125,7 +167,8 @@ The `honua-prod-runtime` Secret must contain:
 - `ConnectionStrings__redis` for non-development deployments
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 helm upgrade --install honua honua -f honua/values-prod.yaml -f customer-prod.yaml
 ```
 
@@ -306,7 +349,7 @@ characters. For non-development deployments, it also fails if
 | Value | Default | Description |
 |-------|---------|-------------|
 | `replicaCount` | 1 | Number of pods. Use 3+ for production. |
-| `image.tag` | `latest-aot` | Image tag. AOT recommended. Leave empty when `image.digest` is set. |
+| `image.tag` | `latest-aot` | Image tag. AOT recommended. Pin to `vX.Y.Z-aot` for production; leave empty when `image.digest` is set. |
 | `image.digest` | `""` | Immutable image digest. Preferred for production and rollback evidence. |
 | `image.pullPolicy` | `Always` | Pull policy. Must be `IfNotPresent` or `Never` when `image.digest` is set. |
 | `release.id` | `""` | Operator release identifier surfaced in labels, annotations, ConfigMap, NOTES, and tests. |
@@ -361,7 +404,9 @@ For dataset-specific tuning:
 ## Local validation
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
+helm lint honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml

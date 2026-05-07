@@ -1,10 +1,53 @@
-# Honua Helm Migration Notes
+# Migration: from `honua-server/infrastructure/helm/honua` to `honua-io/honua-helm`
 
-## Values Contract
+This page captures where the chart came from, the value-contract continuity
+operators can rely on after the split, and the smoke commands used for chart
+contract changes.
 
-The chart values contract is documented in `docs/values-contract.md` and enforced
-where Helm can validate it through `honua/values.schema.json` and template
-guards.
+## Origin
+
+The Honua chart was previously vendored inside the server repository at
+`honua-server/infrastructure/helm/honua/`. It moved to `honua-io/honua-helm`
+under [honua-server PR #336](https://github.com/honua-io/honua-server/pull/336),
+which is also the import reference for this repo's first two commits:
+
+- `2e68ac3` - `chore: initial import from honua-server (#336)`
+- `c9c92c2` - `ci: add initial workflows after monorepo split (#336)`
+
+The `infrastructure/helm/` tree in `honua-server` is no longer the source of
+truth. It was retired in the `docs: remove stale and migrated artifacts after
+repo split` change on the server side.
+
+## Where to file chart issues
+
+File chart issues, RFCs, and discussion in **`honua-io/honua-helm`**:
+
+- Issues: <https://github.com/honua-io/honua-helm/issues>
+- Discussions: <https://github.com/honua-io/honua-helm/discussions>
+
+Issues filed against `honua-server` for chart concerns will be redirected here.
+Server image, runtime, and migration concerns continue to belong in
+`honua-server`.
+
+## Value-contract continuity
+
+The values surface was preserved across the split. Operators upgrading from an
+in-monorepo deployment do **not** need value migrations within chart `0.x`.
+The stable keys are:
+
+- `image.*`
+- `service.*`
+- `ingress.*`
+- `config.env.*`
+- `secret.env.*`
+- `extraEnv`
+- `extraEnvFrom`
+- `postgresql.*` (Bitnami subchart, dev only)
+- `redis.*` (Bitnami subchart)
+
+The chart values contract is documented in `docs/values-contract.md` and
+enforced where Helm can validate it through `honua/values.schema.json` and
+template guards.
 
 Required runtime environment keys:
 
@@ -15,10 +58,25 @@ Required runtime environment keys:
 - `ConnectionStrings__redis` for non-development deployments when the chart is
   not creating that key from `redis.enabled=true`
 
-For chart-managed secrets, Helm validates required runtime keys through template
-guards during rendering. For existing-secret mode, Helm validates that a source
-is named, but the external Secret contents must be validated by the operator or
-release lane.
+For chart-managed secrets, Helm validates required runtime keys through
+template guards during rendering. For existing-secret mode, Helm validates that
+a source is named, but the external Secret contents must be validated by the
+operator or release lane.
+
+## Upgrade path from a monorepo install
+
+If your existing release was installed from
+`honua-server/infrastructure/helm/honua`, switch to the published chart with:
+
+```bash
+helm registry login ghcr.io
+helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+  -f your-existing-values.yaml
+```
+
+No value-key changes are required within chart `0.x`. Pin `image.tag` to a
+concrete `vX.Y.Z-aot` server release. Published chart packages stamp
+`image.tag` at package time; see [`../RELEASING.md`](../RELEASING.md).
 
 ## Chart 0.2.0 Upgrade Notes
 
@@ -47,18 +105,19 @@ Future breaking changes must follow this policy:
 
 - Keep deprecated values accepted for at least one minor release when possible.
 - Document old value, new value, impact, and removal target in this file.
-- Update `honua/values.yaml`, `honua/values.schema.json`, `honua/README.md`, and
-  `docs/values-contract.md` in the same PR.
+- Update `honua/values.yaml`, `honua/values.schema.json`, `honua/README.md`,
+  and `docs/values-contract.md` in the same PR.
 - Use a major chart version for removing values, renaming values, changing
   required external Secret keys, or changing install defaults in a way that
   breaks existing releases.
 
-## Render Smoke
+## Render smoke
 
 Run these targeted client-side checks after values-contract changes:
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
@@ -120,3 +179,12 @@ readiness, test, and rollback evidence path for this chart. Terraform
 provisioning, marketplace package validation, and sales-offer alignment remain
 release-lane items owned by their respective repositories and tracked in
 `docs/values-contract.md`.
+
+## Cross-references
+
+- Server repo: <https://github.com/honua-io/honua-server>
+- Chart split PR: <https://github.com/honua-io/honua-server/pull/336>
+- Chart feature map: [`features/README.md`](features/README.md)
+- Release runbook: [`../RELEASING.md`](../RELEASING.md)
+- Install/upgrade smoke evidence: [`smoke/ticket-2-helm-smoke.md`](smoke/ticket-2-helm-smoke.md)
+- Operator-ready chart contract: [`values-contract.md`](values-contract.md)

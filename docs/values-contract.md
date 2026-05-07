@@ -15,7 +15,8 @@ This chart keeps the customer-operated surface in these files:
 Apply an environment overlay first, then layer site-specific values after it:
 
 ```bash
-helm dependency update honua
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency build honua
 helm upgrade --install honua ./honua \
   -f honua/values-prod.yaml \
   -f customer-prod.yaml
