@@ -116,8 +116,10 @@ cluster-backed install/upgrade/rollback smoke is documented in
 `docs/MIGRATION.md`.
 
 Historical ticket #2 smoke evidence is captured in
-`docs/smoke/ticket-2-helm-smoke.md`. Ticket #6 evidence is produced by the
-current CI workflow's `honua-smoke-evidence` artifact.
+`docs/smoke/ticket-2-helm-smoke.md`. Ticket #6 operator-ready chart contract
+evidence is captured in `docs/smoke/ticket-6-helm-smoke.md` and is produced
+on every install/upgrade/rollback smoke run by the CI workflow's
+`honua-smoke-evidence` artifact.
 
 Cross-repository release-lane work remains bounded to the owning repos:
 

@@ -187,4 +187,5 @@ release-lane items owned by their respective repositories and tracked in
 - Chart feature map: [`features/README.md`](features/README.md)
 - Release runbook: [`../RELEASING.md`](../RELEASING.md)
 - Install/upgrade smoke evidence: [`smoke/ticket-2-helm-smoke.md`](smoke/ticket-2-helm-smoke.md)
+- Install/upgrade/rollback smoke evidence (chart 0.2.0): [`smoke/ticket-6-helm-smoke.md`](smoke/ticket-6-helm-smoke.md)
 - Operator-ready chart contract: [`values-contract.md`](values-contract.md)

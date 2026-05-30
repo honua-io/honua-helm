@@ -29,6 +29,7 @@ This repository packages Honua Server for Kubernetes.
 - Defaults and tunables: `honua/values.yaml`
 - Values contract and migration policy: `docs/values-contract.md`, `docs/MIGRATION.md`
 - Ticket 2 smoke evidence: `docs/smoke/ticket-2-helm-smoke.md`
+- Ticket 6 install/upgrade/rollback smoke evidence: `docs/smoke/ticket-6-helm-smoke.md`
 - Environment overlays: `honua/values-dev.yaml`, `honua/values-stage.yaml`, `honua/values-prod.yaml`
 - Chart metadata and templates: `honua/Chart.yaml`, `honua/templates/`
 - Release pipeline and versioning: `.github/workflows/release.yml`, `RELEASING.md`
