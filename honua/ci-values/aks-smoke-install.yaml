@@ -1,0 +1,63 @@
+# AKS customer-operated smoke: install baseline (honua-helm#10).
+#
+# Models the Azure Marketplace customer-operated path: external PostGIS and
+# external Redis (Bitnami subcharts disabled, as in values-prod.yaml), a
+# pre-created runtime Secret, and an immutable release tag for evidence.
+#
+# This file is the chart-side contract input for the AKS install smoke. The
+# operator supplies the live cluster, the runtime Secret, and a concrete image
+# tag or digest via scripts/aks-smoke.sh. Placeholder endpoints below are
+# overridden by the harness (--db-host / --redis-host / --image-* flags); they
+# exist so the file renders and validates offline in CI.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/honua-io/honua-server
+  tag: "latest-aot"
+  pullPolicy: IfNotPresent
+
+# Recreate is the migration-safe default; the AKS install smoke exercises it so
+# old pods stop before new pods start during the inline-migration startup.
+strategy:
+  type: Recreate
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+preflight:
+  enabled: true
+  # The registry /v2/ reachability check stays on so the install smoke records
+  # registry reachability from inside the AKS cluster as evidence.
+  registryCheck:
+    enabled: true
+
+ingress:
+  enabled: false
+
+release:
+  id: honua-aks-smoke-install
+  manifest: "aks://honua-helm/10/install"
+
+config:
+  env:
+    ASPNETCORE_ENVIRONMENT: "Production"
+    ASPNETCORE_URLS: "http://+:8080"
+    Deployment__Mode: "SingleInstance"
+    HONUA_SKIP_MIGRATIONS: "false"
+
+# External managed data services (no PostGIS in Bitnami PostgreSQL); the runtime
+# Secret is pre-created by the operator / harness.
+secret:
+  create: false
+  name: honua-aks-runtime
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false

@@ -1,2 +1,5 @@
 # Helm dependency packages (generated)
 /honua/charts/
+
+# AKS smoke evidence output (scripts/aks-smoke.sh default --evidence-dir)
+/evidence/

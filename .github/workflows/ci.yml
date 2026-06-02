@@ -46,6 +46,16 @@ jobs:
         run: |
           helm template honua-stage ./honua -f honua/values-stage.yaml --is-upgrade > /tmp/honua-rendered-stage-upgrade.yaml
 
+      - name: Lint AKS smoke overlays
+        run: |
+          helm lint honua -f honua/ci-values/aks-smoke-install.yaml
+          helm lint honua -f honua/ci-values/aks-smoke-upgrade.yaml
+
+      - name: Render AKS smoke overlays (install + upgrade path)
+        run: |
+          helm template honua ./honua -f honua/ci-values/aks-smoke-install.yaml > /tmp/honua-rendered-aks-install.yaml
+          helm template honua ./honua --is-upgrade -f honua/ci-values/aks-smoke-upgrade.yaml > /tmp/honua-rendered-aks-upgrade.yaml
+
       - name: Render templates (ingress hosts empty)
         run: helm template honua ./honua -f honua/ci-values/ingress-empty.yaml > /tmp/honua-rendered-ingress-empty.yaml
 
@@ -121,6 +131,22 @@ jobs:
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-base.yaml | grep -q 'value: "true"'
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-install.yaml | grep -q 'value: "false"'
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-upgrade.yaml | grep -q 'value: "true"'
+
+      - name: Assert AKS smoke overlay operator contract
+        run: |
+          set -euo pipefail
+
+          # AKS install overlay must render the migration-safe contract surfaces.
+          grep -q 'name: honua-honua-preflight' /tmp/honua-rendered-aks-install.yaml
+          grep -q 'name: honua-honua-release-info' /tmp/honua-rendered-aks-install.yaml
+          grep -q 'type: Recreate' /tmp/honua-rendered-aks-install.yaml
+          grep -q 'honua.io/release-id: "honua-aks-smoke-install"' /tmp/honua-rendered-aks-install.yaml
+          # External managed data services: no chart-managed PostgreSQL/Redis subcharts.
+          if grep -q 'name: honua-postgresql' /tmp/honua-rendered-aks-install.yaml; then
+            echo "AKS install overlay must not render the chart-managed PostgreSQL subchart."
+            exit 1
+          fi
+          grep -q 'honua.io/release-id: "honua-aks-smoke-upgrade"' /tmp/honua-rendered-aks-upgrade.yaml
 
       - name: Validate autoscaling guard fails invalid config
         run: |
