@@ -199,6 +199,12 @@ kubectl get configmap <release>-honua-release-info -o yaml
 helm test <release>
 ```
 
+The kind-backed install-upgrade-rollback CI job captures these surfaces on
+every run; see [`smoke/ticket-6-helm-smoke.md`](smoke/ticket-6-helm-smoke.md)
+for the chart 0.2.0 baseline artifact list (`test-install.log`,
+`test-upgrade.log`, `test-rollback.log`, `helm-history.txt`, `helm-notes.txt`,
+`release-info.yaml`, `events.txt`, `pods.txt`).
+
 ## Rollback
 
 Rollback is a Helm release operation:
@@ -222,3 +228,9 @@ Values and behavior described in this document are stability-bearing. A
 breaking change to migration semantics, readiness semantics, image identity
 rules, preflight behavior, or release evidence surfaces requires at least a
 minor chart version bump and explicit upgrade notes.
+
+Chart `0.2.0` is the operator-ready contract baseline. The
+[`values-contract.md` Breaking Changes Policy](values-contract.md#breaking-changes-policy)
+and [`MIGRATION.md` Breaking Changes Policy](MIGRATION.md#breaking-changes-policy)
+sections enumerate how additions, deprecations, and removals map to patch,
+minor, and major chart bumps.
