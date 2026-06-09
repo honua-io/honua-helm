@@ -1,5 +1,7 @@
 # Helm Charts
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/honua-io/honua-helm/badge)](https://scorecard.dev/viewer/?uri=github.com/honua-io/honua-helm)
+
 - `honua/` - main chart for Honua Server.
 
 Repository layout is intentionally flat after extraction from the monorepo:
