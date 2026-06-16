@@ -23,10 +23,37 @@ evidence.
   the evidence the issue's acceptance criteria require. It supports a `--dry-run`
   mode (render + lint + kubeconform, no cluster) that runs in CI so the AKS
   overlays cannot rot.
+- `.github/workflows/aks-smoke.yml` — operator-triggered workflow with two
+  `workflow_dispatch` modes: `dry-run` (no cluster, no secrets) and `live` (real
+  AKS, gated behind the `aks-smoke` GitHub Environment). The live path logs in to
+  Azure via OIDC (`azure/login`, no client secret), pulls AKS credentials, and
+  runs the harness against the cluster.
+- `ci.yml` (job `lint-chart`) invokes `scripts/aks-smoke.sh --dry-run` on every
+  push/PR, so the harness itself — not just the overlays — is exercised
+  continuously and cannot rot.
 
 The harness does **not** provision AKS and does **not** fabricate results. Every
 recorded value comes from a command it actually ran against the kubeconfig you
 supply.
+
+## Running it from GitHub Actions
+
+Dry-run (anyone, no secrets) — Actions → "AKS Chart Smoke" → Run workflow →
+`mode = dry-run`. This renders, lints, and kubeconform-validates the AKS
+overlays and uploads the evidence; it never contacts a cluster.
+
+Live (operator) — first configure the `aks-smoke` GitHub Environment:
+
+- Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (an
+  OIDC app federated to this repo, see below), plus `HONUA_DB_CONNECTION`,
+  `HONUA_REDIS_CONNECTION`, `HONUA_ADMIN_PASSWORD`, `HONUA_MASTER_KEY`.
+- Variables: `AKS_RESOURCE_GROUP`, `AKS_CLUSTER_NAME`.
+
+The OIDC app needs a federated credential whose subject is
+`repo:honua-io/honua-helm:environment:aks-smoke` and AKS cluster-user access
+(e.g. the "Azure Kubernetes Service Cluster User Role" + a namespace-scoped
+RBAC role). Then dispatch with `mode = live` and an `image_digest` for
+listing-submission evidence.
 
 ## Prerequisites (operator)
 

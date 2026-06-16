@@ -292,6 +292,31 @@ jobs:
             exit 1
           fi
 
+      # Exercise the operator-run AKS smoke harness in its no-cluster mode so the
+      # harness itself (not just the overlays) cannot rot. --dry-run runs
+      # lint + template + kubeconform against the AKS overlays and contacts no
+      # cluster. The live AKS path is operator-run via aks-smoke.yml.
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: AKS smoke harness dry-run (no cluster)
+        run: |
+          scripts/aks-smoke.sh --dry-run \
+            --image-tag "$(helm show chart honua | awk -F': ' '/^appVersion:/ {print $2}')-aot" \
+            --evidence-dir /tmp/aks-smoke-dryrun
+
+      - name: Upload AKS smoke dry-run evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aks-smoke-dryrun
+          path: /tmp/aks-smoke-dryrun
+          if-no-files-found: warn
+
   install-upgrade-rollback-smoke:
     runs-on: ubuntu-latest
     steps:
