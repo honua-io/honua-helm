@@ -1,0 +1,180 @@
+name: AKS Chart Smoke
+
+# Operator-triggered AKS install + upgrade + rollback smoke for the Honua chart
+# on the Azure Marketplace customer-operated path (honua-helm#10).
+#
+# Two modes, both via workflow_dispatch:
+#   mode=dry-run  (default) — render + lint + kubeconform of the AKS overlays.
+#                 Contacts NO cluster and needs NO secrets. Safe to run anytime;
+#                 also exercised on every push/PR in ci.yml so the harness can't
+#                 rot.
+#   mode=live     — runs scripts/aks-smoke.sh against a real AKS cluster. Gated
+#                 behind the `aks-smoke` GitHub Environment so the OIDC azure
+#                 login + runtime secrets are operator-scoped and reviewable.
+#
+# The live path requires operator-provisioned Azure/AKS and is INTENTIONALLY
+# unable to run without the operator configuring the environment below. Nothing
+# here provisions AKS or fabricates evidence — the harness records only what it
+# actually runs against the kubeconfig it is given.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (no cluster) or live (real AKS)"
+        type: choice
+        options: [dry-run, live]
+        default: dry-run
+      image_tag:
+        description: "Honua image tag for pre-submission validation (e.g. v0.3.1-aot). Prefer image_digest for listing evidence."
+        type: string
+        required: false
+      image_digest:
+        description: "Honua image digest (sha256:...) — pin this for Azure Marketplace listing-submission evidence."
+        type: string
+        required: false
+      release_id:
+        description: "Listing release id recorded in evidence (live mode)."
+        type: string
+        required: false
+      release_manifest:
+        description: "Release manifest URL recorded in evidence (live mode)."
+        type: string
+        required: false
+      release_digest:
+        description: "Release manifest digest (sha256:...) recorded in evidence (live mode)."
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aks-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # DRY-RUN: no cluster, no secrets. Always available.
+  # ---------------------------------------------------------------------------
+  dry-run:
+    if: ${{ inputs.mode == 'dry-run' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+
+      - name: Add Bitnami chart repository
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: helm dependency build honua
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: AKS smoke harness dry-run
+        run: |
+          tag="${{ inputs.image_tag }}"
+          if [ -z "${tag}" ]; then
+            tag="$(helm show chart honua | awk -F': ' '/^appVersion:/ {print $2}')-aot"
+          fi
+          scripts/aks-smoke.sh --dry-run \
+            --image-tag "${tag}" \
+            ${{ inputs.image_digest && format('--image-digest {0}', inputs.image_digest) || '' }} \
+            --evidence-dir evidence/aks-dryrun-${{ github.run_id }}
+
+      - name: Upload dry-run evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aks-smoke-dryrun-${{ github.run_id }}
+          path: evidence/aks-dryrun-${{ github.run_id }}
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # LIVE: real AKS cluster. Gated behind the `aks-smoke` Environment so the
+  # operator supplies the OIDC app + AKS + runtime secrets and can require
+  # review. Without that environment configured this job cannot authenticate.
+  # ---------------------------------------------------------------------------
+  live:
+    if: ${{ inputs.mode == 'live' }}
+    runs-on: ubuntu-latest
+    environment: aks-smoke
+    permissions:
+      contents: read
+      id-token: write # OIDC federation for azure/login (no client secret)
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+
+      - name: Add Bitnami chart repository
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: helm dependency build honua
+
+      # OPERATOR-SUPPLIED: configure the `aks-smoke` Environment with these
+      # secrets/vars before this can run. AZURE_* identify the OIDC app
+      # (federated to this repo); AKS_* select the validation cluster.
+      - name: Azure login (OIDC, no client secret)
+        uses: azure/login@a65d910e8af852a8061c627c456678983e180302
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ vars.AKS_RESOURCE_GROUP }}" \
+            --name "${{ vars.AKS_CLUSTER_NAME }}" \
+            --overwrite-existing
+          kubectl config current-context
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      # Runtime connection material is passed via env (operator-supplied
+      # Environment secrets) and is NEVER written to the evidence directory.
+      - name: Run live AKS smoke (install + upgrade + rollback)
+        env:
+          HONUA_DB_CONNECTION: ${{ secrets.HONUA_DB_CONNECTION }}
+          HONUA_REDIS_CONNECTION: ${{ secrets.HONUA_REDIS_CONNECTION }}
+          HONUA_ADMIN_PASSWORD: ${{ secrets.HONUA_ADMIN_PASSWORD }}
+          HONUA_MASTER_KEY: ${{ secrets.HONUA_MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          digest_args=()
+          [ -n "${{ inputs.image_digest }}" ] && digest_args+=(--image-digest "${{ inputs.image_digest }}")
+          [ -n "${{ inputs.image_tag }}" ] && digest_args+=(--image-tag "${{ inputs.image_tag }}")
+          [ -n "${{ inputs.release_id }}" ] && digest_args+=(--release-id "${{ inputs.release_id }}")
+          [ -n "${{ inputs.release_manifest }}" ] && digest_args+=(--release-manifest "${{ inputs.release_manifest }}")
+          [ -n "${{ inputs.release_digest }}" ] && digest_args+=(--release-digest "${{ inputs.release_digest }}")
+
+          scripts/aks-smoke.sh \
+            --release honua \
+            --namespace honua \
+            --create-runtime-secret \
+            --evidence-dir "evidence/aks-${{ github.run_id }}" \
+            "${digest_args[@]}"
+
+      - name: Upload live AKS smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aks-smoke-live-${{ github.run_id }}
+          path: evidence/aks-${{ github.run_id }}
+          if-no-files-found: warn
