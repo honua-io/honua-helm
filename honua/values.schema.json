@@ -262,6 +262,21 @@
         }
       }
     },
+    "podDisruptionBudget": {
+      "type": "object",
+      "description": "PodDisruptionBudget for the Honua Deployment. Rendered automatically for multi-replica workloads unless enabled is set explicitly.",
+      "properties": {
+        "enabled": {
+          "type": ["boolean", "null"]
+        },
+        "minAvailable": {
+          "type": ["integer", "string", "null"]
+        },
+        "maxUnavailable": {
+          "type": ["integer", "string", "null"]
+        }
+      }
+    },
     "nodeSelector": {
       "type": "object"
     },
