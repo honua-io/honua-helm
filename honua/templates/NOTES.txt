@@ -38,6 +38,20 @@ WARNING: Recreate with more than one desired replica scales all old pods down
 before new pods start. This is migration-safe but causes upgrade downtime.
 {{- end }}
 
+{{- $deploymentMode := trim (default "SingleInstance" (dig "env" "Deployment__Mode" "SingleInstance" .Values.config)) }}
+{{- if and (not .Values.autoscaling.enabled) (eq $deploymentMode "SingleInstance") }}
+
+This release runs in SingleInstance mode with one server replica. To scale out to
+horizontally autoscaled HA, supply an override that:
+  1. sets config.env.Deployment__Mode: "MultiNode";
+  2. enables autoscaling (autoscaling.enabled=true) or raises replicaCount;
+  3. provides ConnectionStrings__redis; and
+  4. sets a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is
+     rejected in MultiNode), with its bucket/region or connection-string/container.
+The chart fails at render time if autoscaling is enabled while
+Deployment__Mode is SingleInstance, so change these settings together.
+{{- end }}
+
 See docs/contract.md in this chart repository for the durable operator-facing
 contract, including probe tuning, image identity, preflight scope, and rollback
 semantics.

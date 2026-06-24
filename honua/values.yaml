@@ -136,6 +136,13 @@ preflight:
 
 # HorizontalPodAutoscaler. When enabled, at least one target utilization value
 # must be greater than 0; the chart validates this at render time.
+#
+# Horizontal scale-out is only coherent in MultiNode mode. The chart fails at
+# render time if autoscaling.enabled is true while
+# config.env.Deployment__Mode is "SingleInstance" (the default). To run
+# autoscaled HA, set Deployment__Mode: "MultiNode" and also supply
+# ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or
+# AzureBlob; Local is rejected in MultiNode).
 autoscaling:
   enabled: false
   minReplicas: 2
@@ -185,6 +192,10 @@ config:
     HONUA_OBSERVABILITY: "false"
     HONUA_OPENTELEMETRY: "false"
     HONUA_SKIP_MIGRATIONS: "false"
+    # SingleInstance runs one coordinated server. Set MultiNode for horizontally
+    # scaled HA; MultiNode additionally requires ConnectionStrings__redis and a
+    # shared cloud FileStorage:Provider (AwsS3 or AzureBlob). Enabling autoscaling
+    # while this is SingleInstance fails render (see autoscaling above).
     Deployment__Mode: "SingleInstance"
     Public__BaseUrl: ""
     ASPNETCORE_ENVIRONMENT: "Production"

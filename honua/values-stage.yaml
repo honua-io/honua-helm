@@ -2,8 +2,23 @@
 # Pair this file with a site-specific override for ingress class, DNS, TLS, image
 # tag, and the pre-created runtime secret name when defaults do not match. The
 # runtime secret must include ConnectionStrings__redis for durable event storage.
+#
+# This overlay ships a single-instance deployment (replicaCount: 1,
+# Deployment__Mode=SingleInstance) so it is internally consistent and works out
+# of the box. The Honua Server does not coordinate multiple replicas in
+# SingleInstance mode, so the HorizontalPodAutoscaler is disabled here.
+#
+# To opt into horizontally scaled HA, supply a site-specific override that:
+#   1. sets config.env.Deployment__Mode: "MultiNode";
+#   2. enables autoscaling (autoscaling.enabled: true) or raises replicaCount;
+#   3. provides ConnectionStrings__redis (shared cache / coordination); and
+#   4. configures a shared cloud FileStorage provider — FileStorage:Provider must
+#      be AwsS3 or AzureBlob (Local storage is rejected in MultiNode), with the
+#      provider's bucket/region or connection-string/container settings.
+# The chart fails at render time if autoscaling is enabled while
+# Deployment__Mode is SingleInstance, so these settings must change together.
 
-replicaCount: 2
+replicaCount: 1
 
 image:
   tag: "latest-aot"
@@ -17,8 +32,11 @@ resources:
     cpu: "2"
     memory: 2Gi
 
+# Disabled because this overlay runs in SingleInstance mode. Enable only as part
+# of a MultiNode HA override (see the header comment) that also supplies Redis
+# and a shared cloud FileStorage provider.
 autoscaling:
-  enabled: true
+  enabled: false
   minReplicas: 2
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
