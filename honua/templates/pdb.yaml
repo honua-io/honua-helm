@@ -1,0 +1,29 @@
+{{- $pdb := .Values.podDisruptionBudget | default dict -}}
+{{- $explicitlyEnabled := dig "enabled" nil $pdb -}}
+{{- $multiReplica := or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) -}}
+{{- $enabled := ternary $multiReplica (eq $explicitlyEnabled true) (eq $explicitlyEnabled nil) -}}
+{{- if $enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "honua.fullname" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+spec:
+  {{- $minAvailable := dig "minAvailable" nil $pdb -}}
+  {{- $maxUnavailable := dig "maxUnavailable" nil $pdb -}}
+  {{- if and (ne $minAvailable nil) (ne $maxUnavailable nil) }}
+  {{- fail "Set only one of podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable, not both." }}
+  {{- end }}
+  {{- if ne $minAvailable nil }}
+  minAvailable: {{ $minAvailable }}
+  {{- else if ne $maxUnavailable nil }}
+  maxUnavailable: {{ $maxUnavailable }}
+  {{- else }}
+  maxUnavailable: 25%
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "honua.selectorLabels" . | nindent 6 }}
+{{- end }}

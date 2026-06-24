@@ -156,6 +156,18 @@ autoscaling:
           value: 10
           periodSeconds: 60
 
+# PodDisruptionBudget for the Honua Deployment. It protects multi-replica
+# workloads from full eviction during voluntary disruptions (node drains,
+# cluster upgrades). When enabled is null (the default), a PDB is rendered
+# automatically whenever the workload runs more than one pod (autoscaling.enabled
+# or replicaCount > 1); set enabled to true/false to force it on or off. Set
+# exactly one of minAvailable or maxUnavailable; when both are null the chart
+# defaults to maxUnavailable: 25%.
+podDisruptionBudget:
+  enabled: null
+  minAvailable: null
+  maxUnavailable: null
+
 nodeSelector: {}
 
 tolerations: []

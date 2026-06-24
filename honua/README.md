@@ -367,6 +367,9 @@ characters. For non-development deployments, it also fails if
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
 | `autoscaling.targetMemoryUtilizationPercentage` | `80` | Memory utilization threshold for scale decisions. |
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |
+| `podDisruptionBudget.enabled` | `null` | Render a PodDisruptionBudget. `null` auto-enables it for multi-replica workloads (`autoscaling.enabled` or `replicaCount > 1`); set `true`/`false` to force. |
+| `podDisruptionBudget.minAvailable` | `null` | Minimum available pods during voluntary disruptions. Mutually exclusive with `maxUnavailable`. |
+| `podDisruptionBudget.maxUnavailable` | `null` | Maximum unavailable pods during voluntary disruptions. Defaults to `25%` when both fields are unset. |
 | `ingress.enabled` | false | Enable ingress. |
 | `config.env.*` | N/A | Non-secret environment variables stored in a ConfigMap. |
 | `secret.env.*` | N/A | Secret environment variables stored in a chart-managed Secret. |
