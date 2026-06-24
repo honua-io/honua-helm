@@ -73,8 +73,8 @@ Environment overlays are provided for common release lanes:
 | Overlay | Purpose |
 |---------|---------|
 | `values-dev.yaml` | Local and ephemeral development installs with bundled PostgreSQL and Redis dependencies. |
-| `values-stage.yaml` | Staging validation with existing-secret mode, ingress, HPA, observability, and OpenTelemetry. |
-| `values-prod.yaml` | Customer-operated production posture with existing-secret mode, ingress, HPA, observability, and OpenTelemetry. |
+| `values-stage.yaml` | Staging validation with existing-secret mode, ingress, observability, and OpenTelemetry. Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled); opt into MultiNode for autoscaled HA. |
+| `values-prod.yaml` | Customer-operated production posture with existing-secret mode, ingress, observability, and OpenTelemetry. Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled); opt into MultiNode for autoscaled HA. |
 
 Layer a site-specific file after the environment overlay:
 
@@ -111,6 +111,16 @@ resources:
   limits:
     cpu: "2"
     memory: 2Gi
+
+# The shipped prod/stage overlays run single-instance (Deployment__Mode=SingleInstance,
+# HPA disabled) and are consistent out of the box. To run autoscaled HA, opt into
+# MultiNode here. The chart fails at render time if autoscaling is enabled while
+# Deployment__Mode is SingleInstance, so these settings must change together.
+# MultiNode additionally requires ConnectionStrings__redis (runtime Secret) and a
+# shared cloud FileStorage:Provider of AwsS3 or AzureBlob (Local is rejected).
+config:
+  env:
+    Deployment__Mode: "MultiNode"
 
 autoscaling:
   enabled: true
@@ -363,7 +373,7 @@ characters. For non-development deployments, it also fails if
 | `preflight.registryCheck.enabled` | true | Check the target image registry `/v2/` endpoint before apply. |
 | `terminationGracePeriodSeconds` | 60 | Pod shutdown grace period for lock release and clean termination. |
 | `resources` | requests `250m`/`512Mi`, limits `2`/`2Gi` | CPU/memory requests and limits. Tune for production workloads. |
-| `autoscaling.enabled` | false | Enable HPA. |
+| `autoscaling.enabled` | false | Enable HPA. Requires `config.env.Deployment__Mode=MultiNode` (plus Redis and a shared cloud `FileStorage:Provider`); render fails if enabled while mode is `SingleInstance`. |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
 | `autoscaling.targetMemoryUtilizationPercentage` | `80` | Memory utilization threshold for scale decisions. |
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |

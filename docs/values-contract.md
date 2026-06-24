@@ -36,6 +36,7 @@ helm upgrade --install honua ./honua \
 | Redis subchart enabled (`redis.enabled=true`) | `redis.auth.enabled=true` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Chart-managed Secret with Redis subchart and no explicit `secret.env.ConnectionStrings__redis` | `redis.auth.password` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Autoscaling (`autoscaling.enabled=true`) | `autoscaling.targetCPUUtilizationPercentage` or `autoscaling.targetMemoryUtilizationPercentage` greater than `0` | `honua/values.schema.json`, `honua/templates/hpa.yaml` |
+| Autoscaling (`autoscaling.enabled=true`) | `config.env.Deployment__Mode` must be `MultiNode` (not `SingleInstance`); MultiNode also requires `ConnectionStrings__redis` and a shared cloud `FileStorage:Provider` of `AwsS3` or `AzureBlob` (`Local` is rejected) | `honua/templates/validations.yaml` (chart-time); MultiNode runtime requirements enforced by Honua Server `ConfigurationValidationService` |
 | RollingUpdate (`strategy.type=RollingUpdate`) | At least one of `strategy.rollingUpdate.maxSurge` or `strategy.rollingUpdate.maxUnavailable` must be non-zero | `honua/values.schema.json` |
 
 The PostgreSQL subchart is development-only. It does not include PostGIS, so
@@ -90,8 +91,8 @@ from rendered ConfigMap and Secret data before template-required checks run.
 | Overlay | Purpose | Runtime secret posture | Notes |
 | --- | --- | --- | --- |
 | `honua/values-dev.yaml` | Local clusters and ephemeral preview namespaces | Chart-managed Secret with development-only strong password and connection-encryption key; PostgreSQL and Redis subcharts enabled | Self-contained for Helm rendering and development smoke. Not for production data because the PostgreSQL subchart is not PostGIS-enabled. |
-| `honua/values-stage.yaml` | Release-candidate validation | Existing Secret named `honua-stage-runtime` | Enables ingress, HPA, observability, and OpenTelemetry with staging-sized resources. Override DNS, TLS, image identity, and secret name per environment. |
-| `honua/values-prod.yaml` | Customer-operated production posture | Existing Secret named `honua-prod-runtime` | Enables ingress, HPA, observability, and OpenTelemetry with production-sized resources. Override DNS, TLS, image identity, provider annotations, and secret name per customer. |
+| `honua/values-stage.yaml` | Release-candidate validation | Existing Secret named `honua-stage-runtime` | Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled) so it is internally consistent out of the box. Enables ingress, observability, and OpenTelemetry with staging-sized resources. Override DNS, TLS, image identity, and secret name per environment. For autoscaled HA, opt into MultiNode (see the overlay header). |
+| `honua/values-prod.yaml` | Customer-operated production posture | Existing Secret named `honua-prod-runtime` | Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled) so it is internally consistent out of the box. Enables ingress, observability, and OpenTelemetry with production-sized resources. Override DNS, TLS, image identity, provider annotations, and secret name per customer. For autoscaled HA, opt into MultiNode (set `Deployment__Mode=MultiNode`, enable autoscaling, and supply Redis + a shared cloud `FileStorage:Provider`; see the overlay header). |
 
 ## Breaking Changes Policy
 

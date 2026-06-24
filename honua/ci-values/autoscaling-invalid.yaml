@@ -4,6 +4,12 @@ secret:
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
     ConnectionStrings__redis: "redis:6379,password=ci-redis-password"
+# MultiNode keeps the only intentional defect this fixture exercises the
+# autoscaling target-utilization guard (both targets are 0), not the
+# SingleInstance/autoscaling contradiction.
+config:
+  env:
+    Deployment__Mode: "MultiNode"
 autoscaling:
   enabled: true
   targetCPUUtilizationPercentage: 0

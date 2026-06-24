@@ -34,3 +34,8 @@
 {{- if and $appVersion (not (regexMatch $labelValuePattern $appVersion)) -}}
 {{- fail "release.appVersion, or Chart.AppVersion when release.appVersion is empty, must be a valid Kubernetes label value: 63 characters or less, using letters, numbers, '_', '.', or '-', and starting and ending with a letter or number." -}}
 {{- end -}}
+
+{{- $deploymentMode := trim (default "SingleInstance" (dig "env" "Deployment__Mode" "SingleInstance" .Values.config)) -}}
+{{- if and .Values.autoscaling.enabled (eq $deploymentMode "SingleInstance") -}}
+{{- fail "autoscaling.enabled is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either set autoscaling.enabled=false and pin replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode and supplying ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." -}}
+{{- end -}}
