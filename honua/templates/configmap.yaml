@@ -1,10 +1,6 @@
 {{- if .Values.config.create }}
 {{- $data := dict }}
-{{- range $key, $value := .Values.config.env }}
-{{- if and (ne (toString $value) "") (ne (toString $value) "<nil>") }}
-{{- $_ := set $data $key (toString $value) }}
-{{- end }}
-{{- end }}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $data) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
