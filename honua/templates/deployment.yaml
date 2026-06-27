@@ -30,6 +30,18 @@ spec:
         {{- end }}
       annotations:
         {{- include "honua.releaseAnnotations" . | nindent 8 }}
+        {{- /* Roll the pods whenever the chart-managed ConfigMap/Secret content
+               changes. These are consumed via envFrom, which Kubernetes reads
+               only at container start, so without a content checksum a
+               helm upgrade that only edits config.env or secret.env produces a
+               byte-identical Deployment, performs no rollout, and leaves pods
+               running stale config or un-rotated credentials. */ -}}
+        {{- if .Values.config.create }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.secret.create }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

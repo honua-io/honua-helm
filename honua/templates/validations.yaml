@@ -35,9 +35,17 @@
 {{- fail "release.appVersion, or Chart.AppVersion when release.appVersion is empty, must be a valid Kubernetes label value: 63 characters or less, using letters, numbers, '_', '.', or '-', and starting and ending with a letter or number." -}}
 {{- end -}}
 
+{{- /* SingleInstance cannot coordinate more than one replica. The deployment and
+       pdb templates both treat the workload as multi-replica when
+       autoscaling.enabled OR replicaCount > 1, so guard the same predicate here.
+       Previously only autoscaling.enabled was rejected, which let an operator set
+       replicaCount > 1 in the default SingleInstance mode and silently render
+       multiple uncoordinated pods behind one Service (plus auto podAntiAffinity
+       and a PDB). */ -}}
 {{- $deploymentMode := trim (default "SingleInstance" (dig "env" "Deployment__Mode" "SingleInstance" .Values.config)) -}}
-{{- if and .Values.autoscaling.enabled (eq $deploymentMode "SingleInstance") -}}
-{{- fail "autoscaling.enabled is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either set autoscaling.enabled=false and pin replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode and supplying ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." -}}
+{{- $multiReplica := or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) -}}
+{{- if and $multiReplica (eq $deploymentMode "SingleInstance") -}}
+{{- fail (printf "Running more than one replica (autoscaling.enabled=%v, replicaCount=%v) is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either keep SingleInstance with autoscaling.enabled=false and replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode and supplying ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." .Values.autoscaling.enabled .Values.replicaCount) -}}
 {{- end -}}
 
 {{- /* The container port and all three health probes follow service.targetPort
