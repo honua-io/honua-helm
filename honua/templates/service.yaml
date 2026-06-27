@@ -4,9 +4,16 @@ metadata:
   name: {{ include "honua.fullname" . }}
   labels:
     {{- include "honua.labels" . | nindent 4 }}
-  {{- with .Values.service.annotations }}
+  {{- if or .Values.service.annotations .Values.metrics.serviceAnnotations.enabled }}
   annotations:
+    {{- with .Values.service.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.metrics.serviceAnnotations.enabled }}
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.service.targetPort | quote }}
+    prometheus.io/path: {{ .Values.metrics.serviceAnnotations.path | quote }}
+    {{- end }}
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
