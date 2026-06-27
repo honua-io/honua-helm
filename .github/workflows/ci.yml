@@ -300,7 +300,7 @@ jobs:
           set +e
           helm template honua ./honua \
             -f honua/values-dev.yaml \
-            --set-string 'redis.auth.password=bad,pass' \
+            --set-string 'redis.auth.password=bad\,pass' \
             > /tmp/honua-rendered-redis-password-invalid.yaml 2>&1
           status=$?
           set -e
