@@ -1,9 +1,9 @@
 {{- if .Values.autoscaling.enabled }}
+{{- /* Cross-field guard (at least one utilization target > 0) lives in
+       templates/validations.yaml. These booleans only select which metrics to
+       render. */ -}}
 {{- $hasCPU := gt (int (default 0 .Values.autoscaling.targetCPUUtilizationPercentage)) 0 }}
 {{- $hasMemory := gt (int (default 0 .Values.autoscaling.targetMemoryUtilizationPercentage)) 0 }}
-{{- if not (or $hasCPU $hasMemory) }}
-{{- fail "autoscaling.enabled requires targetCPUUtilizationPercentage and/or targetMemoryUtilizationPercentage greater than 0" }}
-{{- end }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

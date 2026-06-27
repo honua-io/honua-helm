@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "description": "Values contract for the Honua Server Helm chart.",
+  "$comment": "This schema owns structural validation: types, enums, patterns, min/max, and the conditional rules in allOf (image tag XOR digest, digest pattern, pullPolicy-with-digest, RollingUpdate non-zero budget, autoscaling target presence, secret/redis/postgresql requirements). Cross-field render-time guards and operator-friendly failure messages live in templates/validations.yaml. Where a rule appears in both places it is enforced structurally here and explained there; keep the two aligned.",
   "properties": {
     "replicaCount": {
       "type": "integer",

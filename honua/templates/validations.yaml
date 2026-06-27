@@ -1,3 +1,21 @@
+{{- /*
+  Single validation layer for the chart's cross-field / render-time guards.
+
+  Division of responsibility with values.schema.json:
+    * values.schema.json owns structural validation -- types, enums, patterns,
+      min/max, and the JSON-Schema conditional rules (image tag XOR digest,
+      digest pattern, pullPolicy-with-digest, RollingUpdate non-zero budget,
+      autoscaling target presence, secret/redis/postgresql requirements). It is
+      the first gate and produces schema-level errors.
+    * This file owns cross-field render-time checks that JSON Schema cannot
+      express well, plus operator-friendly failure messages. Where a rule is
+      intentionally enforced in BOTH places (e.g. image tag/digest, the digest
+      pattern, autoscaling target presence) the schema is the early structural
+      gate and the guard here is the explanatory backstop; keep the two aligned.
+
+  All chart-wide fail-based guards belong here rather than scattered across the
+  individual resource templates.
+*/ -}}
 {{- $secretName := trim (default "" .Values.secret.name) -}}
 {{- $hasSecretName := gt (len $secretName) 0 -}}
 {{- $hasExtraEnvFrom := gt (len .Values.extraEnvFrom) 0 -}}
@@ -98,4 +116,31 @@
 {{- if not (or $hasOtlp $hasServiceMonitor $hasScrapeAnnotations) -}}
 {{- fail "config.env.HONUA_OPENTELEMETRY/HONUA_OBSERVABILITY is enabled but no telemetry receiver is configured. Set observability.otlpEndpoint to an OpenTelemetry collector, or enable metrics.serviceMonitor.enabled / metrics.serviceAnnotations.enabled. Otherwise disable observability so the deployment is not blind." -}}
 {{- end -}}
+{{- end -}}
+
+{{- /* Autoscaling requires at least one positive target utilization. Moved here
+       from hpa.yaml so the cross-field guard lives in the validation layer; the
+       schema also requires this for autoscaling.enabled=true. */ -}}
+{{- if .Values.autoscaling.enabled -}}
+{{- $hasCPU := gt (int (default 0 .Values.autoscaling.targetCPUUtilizationPercentage)) 0 -}}
+{{- $hasMemory := gt (int (default 0 .Values.autoscaling.targetMemoryUtilizationPercentage)) 0 -}}
+{{- if not (or $hasCPU $hasMemory) -}}
+{{- fail "autoscaling.enabled requires targetCPUUtilizationPercentage and/or targetMemoryUtilizationPercentage greater than 0" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* A PodDisruptionBudget accepts exactly one of minAvailable/maxUnavailable.
+       Moved here from pdb.yaml so the cross-field guard lives in the validation
+       layer. */ -}}
+{{- $pdb := .Values.podDisruptionBudget | default dict -}}
+{{- if and (ne (dig "minAvailable" nil $pdb) nil) (ne (dig "maxUnavailable" nil $pdb) nil) -}}
+{{- fail "Set only one of podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable, not both." -}}
+{{- end -}}
+
+{{- /* Chart-managed secret credential complexity/length policy. Enforced here in
+       the validation layer (was previously welded to honua.secretData). Only the
+       values the chart can see are checked; externally-managed secrets are
+       validated at install time by the preflight Job. */ -}}
+{{- if .Values.secret.create -}}
+{{- include "honua.validateSecretComplexity" . -}}
 {{- end -}}

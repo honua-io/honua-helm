@@ -275,6 +275,38 @@ jobs:
             exit 1
           fi
 
+      - name: Validate digest-format guard fails malformed digest
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set image.tag="" \
+            --set image.pullPolicy=IfNotPresent \
+            --set-string image.digest=sha256:not-a-valid-digest \
+            > /tmp/honua-rendered-digest-format-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected malformed image.digest render to fail."
+            cat /tmp/honua-rendered-digest-format-invalid.yaml
+            exit 1
+          fi
+
+      - name: Validate release.id label guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set-string release.id='Invalid Release Id!' \
+            > /tmp/honua-rendered-release-id-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected invalid release.id render to fail."
+            cat /tmp/honua-rendered-release-id-invalid.yaml
+            exit 1
+          fi
+
       - name: Validate prod overlay requires an explicit image pin
         run: |
           set +e
@@ -365,21 +397,47 @@ jobs:
             cat /tmp/honua-rendered-master-key-invalid.yaml
             exit 1
           fi
+          grep -q "Security__ConnectionEncryption__MasterKey must be at least 32 characters long" \
+            /tmp/honua-rendered-master-key-invalid.yaml
 
-      - name: Validate admin password guard fails invalid config
+      # Each fixture is 16+ characters so it clears the length check and isolates
+      # exactly one complexity rule; assert the specific failure message so the
+      # individual guards (not just the length short-circuit) are exercised.
+      - name: Validate admin password complexity guards fail invalid configs
         run: |
-          set +e
-          helm template honua ./honua \
-            -f honua/ci-values/base.yaml \
-            --set secret.env.HONUA_ADMIN_PASSWORD=weakpassword \
-            > /tmp/honua-rendered-admin-password-invalid.yaml 2>&1
-          status=$?
-          set -e
-          if [[ "${status}" -eq 0 ]]; then
-            echo "Expected weak HONUA_ADMIN_PASSWORD render to fail."
-            cat /tmp/honua-rendered-admin-password-invalid.yaml
-            exit 1
-          fi
+          set -euo pipefail
+          assert_admin_pw_fails() {
+            password="$1"
+            expected="$2"
+            set +e
+            out=$(helm template honua ./honua \
+              -f honua/ci-values/base.yaml \
+              --set-string "secret.env.HONUA_ADMIN_PASSWORD=${password}" 2>&1)
+            status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Expected HONUA_ADMIN_PASSWORD '${password}' to fail render."
+              echo "${out}"
+              exit 1
+            fi
+            if ! echo "${out}" | grep -q "${expected}"; then
+              echo "Expected failure message: ${expected}"
+              echo "Got: ${out}"
+              exit 1
+            fi
+          }
+          # Too short (length check).
+          assert_admin_pw_fails 'Weak1!' \
+            "HONUA_ADMIN_PASSWORD must be at least 16 characters long"
+          # 16+ chars, each missing exactly one required character class.
+          assert_admin_pw_fails 'ciadminpassword1!' \
+            "HONUA_ADMIN_PASSWORD must contain at least one uppercase letter"
+          assert_admin_pw_fails 'CIADMINPASSWORD1!' \
+            "HONUA_ADMIN_PASSWORD must contain at least one lowercase letter"
+          assert_admin_pw_fails 'CiAdminPasswordX!' \
+            "HONUA_ADMIN_PASSWORD must contain at least one digit"
+          assert_admin_pw_fails 'CiAdminPassword12' \
+            "HONUA_ADMIN_PASSWORD must contain at least one special character"
 
       - name: Validate Redis connection guard fails invalid config
         run: |

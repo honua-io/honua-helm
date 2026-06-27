@@ -11,11 +11,11 @@ metadata:
     {{- include "honua.labels" . | nindent 4 }}
     {{- include "honua.releaseLabels" . | nindent 4 }}
 spec:
+  {{- /* The minAvailable/maxUnavailable mutual-exclusion guard lives in
+         templates/validations.yaml; this template only selects which field to
+         render. */ -}}
   {{- $minAvailable := dig "minAvailable" nil $pdb -}}
   {{- $maxUnavailable := dig "maxUnavailable" nil $pdb -}}
-  {{- if and (ne $minAvailable nil) (ne $maxUnavailable nil) }}
-  {{- fail "Set only one of podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable, not both." }}
-  {{- end }}
   {{- if ne $minAvailable nil }}
   minAvailable: {{ $minAvailable }}
   {{- else if ne $maxUnavailable nil }}

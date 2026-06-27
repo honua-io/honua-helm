@@ -164,13 +164,65 @@ true
 {{- printf "%s-release-info" (include "honua.fullname" .) -}}
 {{- end -}}
 
+{{- /* Minimum credential lengths, defined once so the render-time validation
+       layer has a single source of truth for the thresholds. The preflight Job
+       (templates/preflight-job.yaml) enforces the same minimums at install time
+       for externally-managed secrets the chart cannot see at render time; keep
+       the two in sync. */ -}}
+{{- define "honua.minAdminPasswordLength" -}}16{{- end -}}
+{{- define "honua.minMasterKeyLength" -}}32{{- end -}}
+
+{{- /* Copy non-empty, non-nil string values from the "src" env dict into the
+       "dst" dict, then render nothing. Helm passes dicts by reference, so this
+       mutates dst in place. Shared by configmap.yaml and honua.secretData so the
+       empty-stripping rule is defined once. */ -}}
+{{- define "honua.nonEmptyEnv" -}}
+{{- $src := .src | default dict -}}
+{{- $dst := .dst -}}
+{{- range $key, $value := $src }}
+{{- if and (ne (toString $value) "") (ne (toString $value) "<nil>") }}
+{{- $_ := set $dst $key (toString $value) }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{- /* Authoritative complexity/length policy for chart-managed secret
+       credentials. Invoked from templates/validations.yaml (the validation
+       layer) rather than from Secret rendering, so the policy is no longer
+       welded to honua.secretData. Only runs for values the chart can see
+       (secret.create=true); externally-managed secrets are validated at install
+       time by the preflight Job. */ -}}
+{{- define "honua.validateSecretComplexity" -}}
+{{- $minPassword := int (include "honua.minAdminPasswordLength" .) -}}
+{{- $minMasterKey := int (include "honua.minMasterKeyLength" .) -}}
+{{- $secretEnv := get (.Values.secret | default dict) "env" | default dict -}}
+{{- $adminPassword := toString (default "" (get $secretEnv "HONUA_ADMIN_PASSWORD")) -}}
+{{- if $adminPassword -}}
+{{- if lt (len $adminPassword) $minPassword -}}
+{{- fail (printf "secret.env.HONUA_ADMIN_PASSWORD must be at least %d characters long." $minPassword) -}}
+{{- end -}}
+{{- if not (regexMatch "[A-Z]" $adminPassword) -}}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one uppercase letter." -}}
+{{- end -}}
+{{- if not (regexMatch "[a-z]" $adminPassword) -}}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one lowercase letter." -}}
+{{- end -}}
+{{- if not (regexMatch "[0-9]" $adminPassword) -}}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one digit." -}}
+{{- end -}}
+{{- if not (regexMatch "[^A-Za-z0-9]" $adminPassword) -}}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one special character." -}}
+{{- end -}}
+{{- end -}}
+{{- $masterKey := toString (default "" (get $secretEnv "Security__ConnectionEncryption__MasterKey")) -}}
+{{- if and $masterKey (lt (len $masterKey) $minMasterKey) -}}
+{{- fail (printf "secret.env.Security__ConnectionEncryption__MasterKey must be at least %d characters long." $minMasterKey) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.secretData" -}}
 {{- $data := dict -}}
-{{- range $key, $value := .Values.secret.env }}
-{{- if and (ne (toString $value) "") (ne (toString $value) "<nil>") }}
-{{- $_ := set $data $key (toString $value) }}
-{{- end }}
-{{- end }}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.secret.env "dst" $data) -}}
 {{- if and (not (hasKey $data "ConnectionStrings__DefaultConnection")) .Values.postgresql.enabled }}
 {{- $pgHost := include "honua.postgresqlHost" . }}
 {{- $pgPort := include "honua.postgresqlPort" . }}
@@ -195,29 +247,13 @@ true
 {{- end }}
 {{- if not (hasKey $data "HONUA_ADMIN_PASSWORD") }}
 {{- required "secret.env.HONUA_ADMIN_PASSWORD is required. Set it to a strong admin password." .Values.secret.env.HONUA_ADMIN_PASSWORD }}
-{{- else -}}
-{{- $adminPassword := get $data "HONUA_ADMIN_PASSWORD" | toString -}}
-{{- if lt (len $adminPassword) 16 }}
-{{- fail "secret.env.HONUA_ADMIN_PASSWORD must be at least 16 characters long." }}
-{{- end }}
-{{- if not (regexMatch "[A-Z]" $adminPassword) }}
-{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one uppercase letter." }}
-{{- end }}
-{{- if not (regexMatch "[a-z]" $adminPassword) }}
-{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one lowercase letter." }}
-{{- end }}
-{{- if not (regexMatch "[0-9]" $adminPassword) }}
-{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one digit." }}
-{{- end }}
-{{- if not (regexMatch "[^A-Za-z0-9]" $adminPassword) }}
-{{- fail "secret.env.HONUA_ADMIN_PASSWORD must contain at least one special character." }}
-{{- end }}
 {{- end }}
 {{- if not (hasKey $data "Security__ConnectionEncryption__MasterKey") }}
 {{- required "secret.env.Security__ConnectionEncryption__MasterKey is required. Set it to a secure random string of at least 32 characters." .Values.secret.env.Security__ConnectionEncryption__MasterKey }}
-{{- else if lt (len (get $data "Security__ConnectionEncryption__MasterKey" | toString)) 32 }}
-{{- fail "secret.env.Security__ConnectionEncryption__MasterKey must be at least 32 characters long." }}
 {{- end }}
+{{- /* Credential complexity/length policy lives in honua.validateSecretComplexity
+       and is enforced from templates/validations.yaml; this helper only resolves
+       and renders the Secret payload. */ -}}
 {{- range $key := keys $data | sortAlpha }}
 {{ $key }}: {{ get $data $key | toString | b64enc }}
 {{- end }}
