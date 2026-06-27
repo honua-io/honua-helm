@@ -38,6 +38,10 @@ spec:
           env:
             - name: HONUA_PREFLIGHT_TIMEOUT_SECONDS
               value: {{ .Values.preflight.timeoutSeconds | quote }}
+            - name: HONUA_PREFLIGHT_RETRIES
+              value: {{ .Values.preflight.retries | default 3 | quote }}
+            - name: HONUA_PREFLIGHT_RETRY_DELAY_SECONDS
+              value: {{ .Values.preflight.retryDelaySeconds | default 3 | quote }}
             - name: HONUA_PREFLIGHT_REGISTRY_CHECK
               value: {{ ternary "true" "false" .Values.preflight.registryCheck.enabled | quote }}
             - name: HONUA_PREFLIGHT_DATABASE_CHECK
@@ -70,6 +74,55 @@ spec:
               fail() {
                 echo "preflight failed: $*" >&2
                 exit 1
+              }
+
+              # Retry a check command with a fixed backoff. The hook runs with
+              # backoffLimit: 0, so without in-script retries a single transient
+              # DNS/egress/registry blip would abort the whole install/upgrade and
+              # trigger a rollback. Reachability probes are retried up to
+              # HONUA_PREFLIGHT_RETRIES times before the hook gives up.
+              retry() {
+                attempts="${HONUA_PREFLIGHT_RETRIES:-1}"
+                [ "${attempts}" -ge 1 ] || attempts=1
+                delay="${HONUA_PREFLIGHT_RETRY_DELAY_SECONDS:-0}"
+                i=1
+                while true; do
+                  if "$@"; then
+                    return 0
+                  fi
+                  if [ "${i}" -ge "${attempts}" ]; then
+                    return 1
+                  fi
+                  echo "  attempt ${i}/${attempts} failed; retrying in ${delay}s" >&2
+                  sleep "${delay}"
+                  i=$((i + 1))
+                done
+              }
+
+              # TCP reachability probe via curl. Connect-level success and
+              # protocol-level responses (curl exits 0/1/52/56) all prove the
+              # endpoint is reachable; any other exit means unreachable.
+              tcp_reachable() {
+                set +e
+                curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://$1:$2/" >/dev/null 2>&1
+                _status=$?
+                set -e
+                case "${_status}" in
+                  0|1|52|56)
+                    return 0
+                    ;;
+                  *)
+                    return 1
+                    ;;
+                esac
+              }
+
+              registry_reachable() {
+                set +e
+                curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" -o /dev/null "https://${HONUA_PREFLIGHT_REGISTRY_HOST}/v2/"
+                _status=$?
+                set -e
+                return "${_status}"
               }
 
               for var in ConnectionStrings__DefaultConnection HONUA_ADMIN_PASSWORD Security__ConnectionEncryption__MasterKey; do
@@ -142,17 +195,9 @@ spec:
                 fi
 
                 echo "Checking PostgreSQL TCP reachability at ${db_host}:${db_port}"
-                set +e
-                curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://${db_host}:${db_port}/" >/dev/null
-                db_status=$?
-                set -e
-                case "$db_status" in
-                  0|1|52|56)
-                    ;;
-                  *)
-                    fail "database endpoint ${db_host}:${db_port} is not reachable (curl exit ${db_status})"
-                    ;;
-                esac
+                if ! retry tcp_reachable "${db_host}" "${db_port}"; then
+                  fail "database endpoint ${db_host}:${db_port} is not reachable after ${HONUA_PREFLIGHT_RETRIES} attempt(s)"
+                fi
               else
                 echo "Skipping PostgreSQL TCP reachability check during initial chart-managed PostgreSQL install; pre-upgrade checks run after PostgreSQL exists."
               fi
@@ -181,17 +226,9 @@ spec:
                   fi
 
                   echo "Checking Redis TCP reachability at ${redis_host}:${redis_port}"
-                  set +e
-                  curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" "http://${redis_host}:${redis_port}/" >/dev/null
-                  redis_status=$?
-                  set -e
-                  case "$redis_status" in
-                    0|1|52|56)
-                      ;;
-                    *)
-                      fail "Redis endpoint ${redis_host}:${redis_port} is not reachable (curl exit ${redis_status})"
-                      ;;
-                  esac
+                  if ! retry tcp_reachable "${redis_host}" "${redis_port}"; then
+                    fail "Redis endpoint ${redis_host}:${redis_port} is not reachable after ${HONUA_PREFLIGHT_RETRIES} attempt(s)"
+                  fi
                 else
                   echo "Skipping Redis TCP reachability check during initial chart-managed Redis install; pre-upgrade checks run after Redis exists."
                 fi
@@ -199,12 +236,8 @@ spec:
 
               if [ "${HONUA_PREFLIGHT_REGISTRY_CHECK}" = "true" ]; then
                 echo "Checking image registry reachability at ${HONUA_PREFLIGHT_REGISTRY_HOST} for ${HONUA_IMAGE_REFERENCE}"
-                set +e
-                curl --silent --show-error --connect-timeout "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" --max-time "${HONUA_PREFLIGHT_TIMEOUT_SECONDS}" -o /dev/null "https://${HONUA_PREFLIGHT_REGISTRY_HOST}/v2/"
-                registry_status=$?
-                set -e
-                if [ "$registry_status" -ne 0 ]; then
-                  fail "image registry ${HONUA_PREFLIGHT_REGISTRY_HOST} is not reachable (curl exit ${registry_status})"
+                if ! retry registry_reachable; then
+                  fail "image registry ${HONUA_PREFLIGHT_REGISTRY_HOST} is not reachable after ${HONUA_PREFLIGHT_RETRIES} attempt(s)"
                 fi
               else
                 echo "Skipping image registry reachability check; kubelet image pull remains authoritative."

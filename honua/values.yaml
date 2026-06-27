@@ -145,11 +145,27 @@ preflight:
     tag: "8.5.0"
     pullPolicy: IfNotPresent
   timeoutSeconds: 5
+  # The preflight hook runs with backoffLimit: 0 (a single Pod attempt), so a
+  # transient DNS/egress/registry blip during the probe would abort the whole
+  # install/upgrade. To absorb such blips, each reachability probe (database,
+  # Redis, registry) is retried in-script up to `retries` times with
+  # `retryDelaySeconds` between attempts before the hook fails. Set retries to 1
+  # to disable retrying.
+  retries: 3
+  retryDelaySeconds: 3
   registryCheck:
     enabled: true
 
 # HorizontalPodAutoscaler. When enabled, at least one target utilization value
 # must be greater than 0; the chart validates this at render time.
+#
+# Memory-based autoscaling is OFF by default (targetMemoryUtilizationPercentage:
+# 0). The .NET server-GC heap holds onto committed memory and rarely releases it
+# back to the OS, so a memory utilization target tends to ratchet replicas up to
+# maxReplicas and then never scale them back down -- defeating elastic
+# scale-down. Default to CPU-only scaling and opt into memory scaling
+# deliberately (set targetMemoryUtilizationPercentage > 0) only after confirming
+# the workload's memory actually tracks load.
 #
 # Horizontal scale-out is only coherent in MultiNode mode. The chart fails at
 # render time if autoscaling.enabled is true while
@@ -162,7 +178,7 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 20
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 0
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60
