@@ -1,0 +1,30 @@
+# Exercises the observability/metrics integration: OTLP endpoint wiring plus the
+# ServiceMonitor, Prometheus scrape annotations, and PrometheusRule resources.
+config:
+  env:
+    HONUA_OBSERVABILITY: "true"
+    HONUA_OPENTELEMETRY: "true"
+
+observability:
+  otlpEndpoint: "http://otel-collector.observability.svc:4317"
+  otlpProtocol: "grpc"
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    labels:
+      release: kube-prometheus-stack
+  serviceAnnotations:
+    enabled: true
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password"
+    HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
+    ConnectionStrings__redis: "redis:6379,password=ci-redis-password"
