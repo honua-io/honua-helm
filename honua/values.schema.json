@@ -93,6 +93,18 @@
           "minimum": 1,
           "maximum": 30
         },
+        "retries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Attempts per reachability probe before the preflight hook fails."
+        },
+        "retryDelaySeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60,
+          "description": "Delay between preflight reachability probe attempts."
+        },
         "image": {
           "type": "object",
           "properties": {

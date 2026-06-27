@@ -158,8 +158,22 @@ jobs:
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-install.yaml | grep -q 'value: "false"'
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-upgrade.yaml | grep -q 'value: "true"'
 
+          # The preflight hook retries reachability probes in-script (backoffLimit
+          # is 0), so the retry env must be wired into the Job.
+          grep -q 'name: HONUA_PREFLIGHT_RETRIES' /tmp/honua-rendered-base.yaml
+          grep -q 'name: HONUA_PREFLIGHT_RETRY_DELAY_SECONDS' /tmp/honua-rendered-base.yaml
+
           # Multi-replica (autoscaling) workloads get the default soft anti-affinity.
           grep -q 'podAntiAffinity' /tmp/honua-rendered-autoscaling-cpu.yaml
+
+          # Memory-based autoscaling is off by default: with only CPU configured
+          # (autoscaling-cpu.yaml leaves the memory target unset) the HPA renders
+          # a cpu metric and no memory metric.
+          grep -q 'name: cpu' /tmp/honua-rendered-autoscaling-cpu.yaml
+          if grep -q 'name: memory' /tmp/honua-rendered-autoscaling-cpu.yaml; then
+            echo "HPA must not render a memory metric when targetMemoryUtilizationPercentage defaults to 0."
+            exit 1
+          fi
 
       - name: Assert AKS smoke overlay operator contract
         run: |

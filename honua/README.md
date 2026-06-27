@@ -137,7 +137,11 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 20
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  # Memory scaling is off by default (0). The .NET server-GC heap rarely returns
+  # committed memory to the OS, so a memory target tends to peg replicas at
+  # maxReplicas and never scale down. Set this > 0 only after confirming memory
+  # tracks load for your workload.
+  targetMemoryUtilizationPercentage: 0
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60
@@ -385,6 +389,8 @@ characters. For non-development deployments, it also fails if
 | `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used only when `strategy.type=RollingUpdate`; both values cannot be zero. |
 | `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
 | `preflight.timeoutSeconds` | 5 | Timeout for database and registry reachability checks. |
+| `preflight.retries` | 3 | Attempts per reachability probe (database/Redis/registry) before the hook fails. The hook runs with `backoffLimit: 0`, so in-script retries absorb transient DNS/egress/registry blips. Set to 1 to disable. |
+| `preflight.retryDelaySeconds` | 3 | Delay between preflight reachability probe attempts. |
 | `preflight.registryCheck.enabled` | true | Check the target image registry `/v2/` endpoint before apply. |
 | `terminationGracePeriodSeconds` | 60 | Pod shutdown grace period for lock release and clean termination. |
 | `tmpVolume.enabled` | true | Mount a writable `/tmp` emptyDir. Required because `readOnlyRootFilesystem` is true and the server writes temp files; disable only if the image never writes to disk. |
@@ -393,7 +399,7 @@ characters. For non-development deployments, it also fails if
 | `resources` | requests `250m`/`512Mi`, limits `2`/`2Gi` | CPU/memory requests and limits. Tune for production workloads. |
 | `autoscaling.enabled` | false | Enable HPA. Requires `config.env.Deployment__Mode=MultiNode` (plus Redis and a shared cloud `FileStorage:Provider`); render fails if enabled while mode is `SingleInstance`. |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
-| `autoscaling.targetMemoryUtilizationPercentage` | `80` | Memory utilization threshold for scale decisions. |
+| `autoscaling.targetMemoryUtilizationPercentage` | `0` | Memory utilization threshold. `0` disables memory-based scaling (the default), because the .NET server-GC heap rarely releases committed memory and a memory target tends to peg replicas at `maxReplicas`. Opt in (`> 0`) only after confirming memory tracks load. |
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |
 | `podDisruptionBudget.enabled` | `null` | Render a PodDisruptionBudget. `null` auto-enables it for multi-replica workloads (`autoscaling.enabled` or `replicaCount > 1`); set `true`/`false` to force. |
 | `podDisruptionBudget.minAvailable` | `null` | Minimum available pods during voluntary disruptions. Mutually exclusive with `maxUnavailable`. |
@@ -486,13 +492,20 @@ alert) are added once the server exposes the corresponding metric.
 
 The default HPA thresholds are tuned for mixed geospatial workloads:
 - `targetCPUUtilizationPercentage: 70` for CPU-heavy spatial predicates and tile generation.
-- `targetMemoryUtilizationPercentage: 80` for bursty map rendering and large feature payloads.
+- `targetMemoryUtilizationPercentage: 0` (memory scaling off) by default. The .NET
+  server-GC heap holds onto committed memory and rarely releases it to the OS, so a
+  memory utilization target tends to ratchet replicas up to `maxReplicas` and never
+  scale them back down, defeating elastic scale-down. Scale on CPU and opt into
+  memory scaling deliberately (see below).
 - `scaleUp` stabilization of 60s with 50% growth to react quickly to traffic ramps.
 - `scaleDown` stabilization of 300s with 10% shrink to avoid thrash after short spikes.
 
 For dataset-specific tuning:
 - Increase `maxReplicas` only after validating PostgreSQL connection limits.
-- Raise memory targets (for example 85-90) if large map exports are common and pod OOM is not observed.
+- Enable memory-based scaling (`targetMemoryUtilizationPercentage` > 0, for example
+  80-90) only if large map exports are common, the workload's memory actually
+  tracks load, and you have confirmed it scales back down rather than pegging at
+  `maxReplicas`.
 - Reduce `scaleDown` aggressiveness further for workloads with repeated 3-10 minute query bursts.
 
 ## Local validation

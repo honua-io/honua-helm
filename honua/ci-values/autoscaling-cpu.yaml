@@ -6,10 +6,12 @@ secret:
     ConnectionStrings__redis: "redis:6379,password=ci-redis-password"
 # Autoscaling (horizontal scale-out) is only coherent under MultiNode mode, which
 # also requires Redis (above) and a shared cloud FileStorage provider at runtime.
+# This overlay intentionally leaves targetMemoryUtilizationPercentage unset to
+# exercise the chart default (memory scaling OFF), so the HPA renders a CPU
+# metric only.
 config:
   env:
     Deployment__Mode: "MultiNode"
 autoscaling:
   enabled: true
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 0
