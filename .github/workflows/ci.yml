@@ -136,6 +136,14 @@ jobs:
           grep -q 'Security__ConnectionEncryption__MasterKey:' /tmp/honua-rendered-base.yaml
           grep -q 'readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete' /tmp/honua-rendered-base.yaml
 
+          # Read-only root needs a writable /tmp scratch volume by default.
+          grep -q 'mountPath: /tmp' /tmp/honua-rendered-base.yaml
+          # Single-replica baseline must not get the default anti-affinity.
+          if grep -q 'podAntiAffinity' /tmp/honua-rendered-base.yaml; then
+            echo "Single-replica baseline should not render default pod anti-affinity."
+            exit 1
+          fi
+
           grep -q 'image: "ghcr.io/honua-io/honua-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' /tmp/honua-rendered-digest.yaml
           grep -q 'honua.io/image-digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' /tmp/honua-rendered-digest.yaml
           grep -q 'honua.io/release-id: "honua-ci-digest"' /tmp/honua-rendered-digest.yaml
@@ -147,6 +155,9 @@ jobs:
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-base.yaml | grep -q 'value: "true"'
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-install.yaml | grep -q 'value: "false"'
           grep -A1 'name: HONUA_PREFLIGHT_DATABASE_CHECK' /tmp/honua-rendered-postgresql-upgrade.yaml | grep -q 'value: "true"'
+
+          # Multi-replica (autoscaling) workloads get the default soft anti-affinity.
+          grep -q 'podAntiAffinity' /tmp/honua-rendered-autoscaling-cpu.yaml
 
       - name: Assert AKS smoke overlay operator contract
         run: |
