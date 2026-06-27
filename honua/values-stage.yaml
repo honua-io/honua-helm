@@ -66,6 +66,13 @@ config:
     ASPNETCORE_ENVIRONMENT: "Staging"
     ASPNETCORE_URLS: "http://+:8080"
 
+# Observability is enabled above, so a receiver is required. Point this at your
+# OpenTelemetry collector (override the host/port for your cluster). Alternatively
+# enable metrics.serviceMonitor / metrics.serviceAnnotations to scrape Prometheus.
+observability:
+  otlpEndpoint: "http://otel-collector.observability.svc:4317"
+  otlpProtocol: "grpc"
+
 secret:
   create: false
   name: honua-stage-runtime

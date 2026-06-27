@@ -72,3 +72,22 @@
 {{- fail "redis.auth.password must not contain ',' or '=' when the chart derives ConnectionStrings__redis: those characters split/terminate the StackExchange.Redis configuration string and corrupt the credential. Set secret.env.ConnectionStrings__redis explicitly for such passwords." -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* When the server is told to emit telemetry, require a receiver so the
+       chart cannot ship "observability on, nothing listening". A receiver is an
+       OTLP collector endpoint, a Prometheus ServiceMonitor, or Prometheus scrape
+       annotations. */ -}}
+{{- $otel := lower (trim (toString (default "" (get $configEnv "HONUA_OPENTELEMETRY")))) -}}
+{{- $obs := lower (trim (toString (default "" (get $configEnv "HONUA_OBSERVABILITY")))) -}}
+{{- if or (eq $otel "true") (eq $obs "true") -}}
+{{- $observability := .Values.observability | default dict -}}
+{{- $metrics := .Values.metrics | default dict -}}
+{{- $serviceMonitor := get $metrics "serviceMonitor" | default dict -}}
+{{- $serviceAnnotations := get $metrics "serviceAnnotations" | default dict -}}
+{{- $hasOtlp := ne (trim (toString (default "" (get $observability "otlpEndpoint")))) "" -}}
+{{- $hasServiceMonitor := eq (toString (default false (get $serviceMonitor "enabled"))) "true" -}}
+{{- $hasScrapeAnnotations := eq (toString (default false (get $serviceAnnotations "enabled"))) "true" -}}
+{{- if not (or $hasOtlp $hasServiceMonitor $hasScrapeAnnotations) -}}
+{{- fail "config.env.HONUA_OPENTELEMETRY/HONUA_OBSERVABILITY is enabled but no telemetry receiver is configured. Set observability.otlpEndpoint to an OpenTelemetry collector, or enable metrics.serviceMonitor.enabled / metrics.serviceAnnotations.enabled. Otherwise disable observability so the deployment is not blind." -}}
+{{- end -}}
+{{- end -}}
