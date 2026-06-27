@@ -19,7 +19,9 @@ pods stop before new pods start during a migrating upgrade.
 ## Tech Stack
 
 - **Helm** chart, `apiVersion: v2`, `type: application` (see `honua/Chart.yaml`).
-- Chart `version: 0.2.0`, `appVersion: "0.0.0"` (placeholder; stamped at release).
+- Chart `version` and `appVersion` are defined in `honua/Chart.yaml`, which is the
+  single source of truth; `appVersion` is a `"0.0.0"` placeholder stamped at
+  release. Do not restate the concrete version here or elsewhere in docs.
 - Subchart dependencies (Bitnami, from `https://charts.bitnami.com/bitnami`):
   - `postgresql` `>=12.0.0 <16.0.0` (gated by `postgresql.enabled`, dev only —
     Bitnami PostgreSQL does NOT include PostGIS, which Honua requires).
@@ -168,3 +170,12 @@ This machine runs many agents concurrently (**Codex + Claude**, often via agentf
 2. **Commit and push when you finish a task** so your worktree can be reclaimed. An hourly job (`honua-clean`) removes a worktree ONLY when it is clean AND fully pushed (merged, remote-gone, or idle >=2d). Dirty or unpushed worktrees are NEVER touched — but uncommitted/unpushed work blocks reclamation and is at risk if the instance is reset. Build artifacts (bin/obj and untracked node_modules) are reclaimed automatically and safely.
 
 3. **Commit hygiene — no agent attribution.** Author every commit as the repo owner only (git identity: Mike McDougall <mike@honua.io>). Do **NOT** add any agent/tool attribution to commits: no `Co-Authored-By: Claude ...`, no `Co-Authored-By: Codex ...` (or other bot co-authors), and no "Generated with Claude Code" / "Generated with Codex" / "🤖" lines in the message or PR body. Write a plain, descriptive commit message and stop.
+
+   This is enforced in CI: `.github/workflows/commit-policy.yml` runs `scripts/check-no-ai-attribution.sh` over every pull request and fails if any commit message carries AI/agent attribution (Dependabot and GitHub Actions bot co-authors are allowed). To catch it before you push, wire the same check as a local `commit-msg` hook:
+
+   ```bash
+   ln -s ../../scripts/check-no-ai-attribution.sh .git/hooks/commit-msg
+   # or, if your git does not run the script directly:
+   printf '#!/bin/sh\nexec scripts/check-no-ai-attribution.sh --message-file "$1"\n' > .git/hooks/commit-msg
+   chmod +x .git/hooks/commit-msg
+   ```

@@ -1,0 +1,27 @@
+name: Commit policy
+
+# Enforces the AGENTS.md authorship rule: commits must be authored as the repo
+# owner only, with no AI/agent attribution (no "Co-Authored-By: Claude/Codex/..."
+# trailers, no "Generated with ..." lines, no robot emoji). Prevents recurrence
+# of the attribution trailers flagged in the release audit.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-ai-attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          # Need the PR's base and head commits to scan the full PR range.
+          fetch-depth: 0
+
+      - name: Reject AI/agent attribution in commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-no-ai-attribution.sh --range "${BASE_SHA}..${HEAD_SHA}"
