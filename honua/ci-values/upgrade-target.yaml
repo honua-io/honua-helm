@@ -1,4 +1,10 @@
-replicaCount: 2
+# The in-cluster smoke runs the real honua-server in kind, which has no shared
+# cloud FileStorage, so it must stay SingleInstance (MultiNode rejects Local
+# storage). SingleInstance with more than one replica is rejected by the chart's
+# HA guard, so this upgrade target stays at one replica; it still exercises the
+# strategy switch to RollingUpdate, the release-metadata change, and the
+# config/secret checksum-driven rollout.
+replicaCount: 1
 image:
   pullPolicy: IfNotPresent
 strategy:

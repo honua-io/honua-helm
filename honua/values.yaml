@@ -183,7 +183,9 @@ autoscaling:
 # automatically whenever the workload runs more than one pod (autoscaling.enabled
 # or replicaCount > 1); set enabled to true/false to force it on or off. Set
 # exactly one of minAvailable or maxUnavailable; when both are null the chart
-# defaults to maxUnavailable: 25%.
+# defaults to maxUnavailable: 1. (An absolute 1 is used rather than a percentage
+# because Kubernetes rounds a percentage maxUnavailable down, so 25% of 2-3
+# replicas is 0, which blocks all evictions and hangs node drains.)
 podDisruptionBudget:
   enabled: null
   minAvailable: null
