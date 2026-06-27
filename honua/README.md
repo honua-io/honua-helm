@@ -11,9 +11,19 @@ Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis su
 ```bash
 helm registry login ghcr.io
 helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+  --set config.env.ASPNETCORE_ENVIRONMENT="Development" \
   --set secret.env.ConnectionStrings__DefaultConnection="Host=postgres;Database=honua;Username=honua;Password=honua" \
-  --set secret.env.HONUA_ADMIN_PASSWORD="change-me"
+  --set secret.env.HONUA_ADMIN_PASSWORD="ExampleAdminPassword1!" \
+  --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
+
+The chart enforces its values contract at render time, so the install above sets
+all required secrets: `HONUA_ADMIN_PASSWORD` must be at least 16 characters with
+upper/lower/digit/special, and `Security__ConnectionEncryption__MasterKey` must
+be at least 32 characters. `ASPNETCORE_ENVIRONMENT=Development` keeps this a
+minimal evaluation install; non-development deployments additionally require
+`ConnectionStrings__redis`. For production, install from `values-prod.yaml` with
+a pinned image (see [Production example](#production-example)).
 
 Published chart cuts pin `image.tag` to a concrete `vX.Y.Z-aot` server release;
 the local repo default `latest-aot` is dev-only.
@@ -192,6 +202,7 @@ For production, point `ConnectionStrings__DefaultConnection` at a managed PostGI
 
 ```bash
 helm upgrade --install honua honua \
+  --set config.env.ASPNETCORE_ENVIRONMENT=Development \
   --set postgresql.enabled=true \
   --set postgresql.auth.username=honua \
   --set postgresql.auth.password=honua \
@@ -199,6 +210,10 @@ helm upgrade --install honua honua \
   --set secret.env.HONUA_ADMIN_PASSWORD="ExampleAdminPassword1!" \
   --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
+
+The dev-only PostgreSQL subchart example runs in `Development` so it does not
+require Redis. For non-development environments, enable Redis (below) or supply
+`secret.env.ConnectionStrings__redis`.
 
 When `postgresql.enabled=true`, `postgresql.auth.username`,
 `postgresql.auth.password`, and `postgresql.auth.database` are required. In
@@ -489,7 +504,8 @@ helm lint honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml
-helm lint honua -f honua/values-prod.yaml
+# values-prod.yaml clears image.tag to force an explicit pin; supply one to lint/template it.
+helm lint honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot
 helm template honua honua -f honua/ci-values/base.yaml
 helm template honua honua -f honua/ci-values/digest.yaml
 helm template honua honua -f honua/ci-values/rolling-update.yaml
@@ -497,7 +513,7 @@ helm template honua honua -f honua/ci-values/postgresql.yaml
 helm template honua honua --is-upgrade -f honua/ci-values/postgresql.yaml
 helm template honua-dev honua -f honua/values-dev.yaml
 helm template honua-stage honua -f honua/values-stage.yaml
-helm template honua-prod honua -f honua/values-prod.yaml
+helm template honua-prod honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot
 helm template honua-stage honua -f honua/values-stage.yaml --is-upgrade
 helm test honua  # After install, runs the test hook
 ```

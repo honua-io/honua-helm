@@ -32,11 +32,16 @@ replicaCount: 1
 #   * an immutable release tag: override image.tag with a concrete "vX.Y.Z-aot"
 #     release tag (the value release CI stamps into values.yaml).
 #
-# By default this overlay inherits values.yaml image.tag, which release CI stamps
-# to the immutable "vX.Y.Z-aot" tag at chart-release time; it intentionally does
-# not re-pin the mutable "latest-aot" tag. pullPolicy is IfNotPresent so a pinned
-# identity is not silently re-pulled.
+# This overlay intentionally clears image.tag so a from-checkout
+# "helm install -f values-prod.yaml" cannot silently inherit the mutable
+# "latest-aot" tag from values.yaml. With both image.tag and image.digest empty,
+# the chart's one-of-tag/digest guard fails render until an operator supplies an
+# immutable identity (digest preferred, or a concrete "vX.Y.Z-aot" release tag).
+# Release CI stamps the immutable tag into values.yaml on the packaged chart, so
+# published chart installs are pinned without further action. pullPolicy is
+# IfNotPresent so a pinned identity is not silently re-pulled.
 image:
+  tag: ""
   pullPolicy: IfNotPresent
 
 resources:
@@ -73,8 +78,6 @@ ingress:
 
 config:
   env:
-    HONUA_ADMIN_UI: "false"
-    HONUA_SERVE_ADMIN_UI: "true"
     HONUA_OBSERVABILITY: "true"
     HONUA_OPENTELEMETRY: "true"
     HONUA_SKIP_MIGRATIONS: "false"

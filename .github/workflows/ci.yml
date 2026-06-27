@@ -31,7 +31,9 @@ jobs:
         run: |
           helm lint honua -f honua/values-dev.yaml
           helm lint honua -f honua/values-stage.yaml
-          helm lint honua -f honua/values-prod.yaml
+          # values-prod.yaml intentionally clears image.tag so a from-checkout
+          # install must supply an immutable pin; lint with a representative pin.
+          helm lint honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot
 
       - name: Render templates (base)
         run: helm template honua ./honua -f honua/ci-values/base.yaml > /tmp/honua-rendered-base.yaml
@@ -40,7 +42,7 @@ jobs:
         run: |
           helm template honua-dev ./honua -f honua/values-dev.yaml > /tmp/honua-rendered-dev.yaml
           helm template honua-stage ./honua -f honua/values-stage.yaml > /tmp/honua-rendered-stage.yaml
-          helm template honua-prod ./honua -f honua/values-prod.yaml > /tmp/honua-rendered-prod.yaml
+          helm template honua-prod ./honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot > /tmp/honua-rendered-prod.yaml
 
       - name: Render staged upgrade path
         run: |
@@ -258,6 +260,67 @@ jobs:
             cat /tmp/honua-rendered-image-empty.yaml
             exit 1
           fi
+
+      - name: Validate prod overlay requires an explicit image pin
+        run: |
+          set +e
+          helm template honua-prod ./honua -f honua/values-prod.yaml \
+            > /tmp/honua-rendered-prod-unpinned.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected values-prod.yaml without an image pin to fail render."
+            cat /tmp/honua-rendered-prod-unpinned.yaml
+            exit 1
+          fi
+
+      - name: Validate ASPNETCORE_URLS / targetPort mismatch guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set config.env.ASPNETCORE_URLS="http://+:9999" \
+            > /tmp/honua-rendered-port-mismatch.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected ASPNETCORE_URLS port not matching service.targetPort to fail."
+            cat /tmp/honua-rendered-port-mismatch.yaml
+            exit 1
+          fi
+          grep -q "service.targetPort" /tmp/honua-rendered-port-mismatch.yaml
+
+      - name: Validate derived PostgreSQL password charset guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/values-dev.yaml \
+            --set postgresql.auth.password='bad;pass' \
+            > /tmp/honua-rendered-pg-password-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected postgresql.auth.password with ';' to fail when the chart derives the connection string."
+            cat /tmp/honua-rendered-pg-password-invalid.yaml
+            exit 1
+          fi
+          grep -q "postgresql.auth.password must not contain" /tmp/honua-rendered-pg-password-invalid.yaml
+
+      - name: Validate derived Redis password charset guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/values-dev.yaml \
+            --set-string 'redis.auth.password=bad\,pass' \
+            > /tmp/honua-rendered-redis-password-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected redis.auth.password with ',' to fail when the chart derives the connection string."
+            cat /tmp/honua-rendered-redis-password-invalid.yaml
+            exit 1
+          fi
+          grep -q "redis.auth.password must not contain" /tmp/honua-rendered-redis-password-invalid.yaml
 
       - name: Validate release appVersion label guard fails invalid config
         run: |
