@@ -1,4 +1,12 @@
 replicaCount: 2
+# Multi-replica rollout is only coherent in MultiNode mode; SingleInstance with
+# more than one replica is rejected by the chart's HA guard. This overlay renders
+# the RollingUpdate strategy across two MultiNode replicas (it already supplies
+# ConnectionStrings__redis); FileStorage is not chart-rendered so it is omitted
+# in this render-only fixture.
+config:
+  env:
+    Deployment__Mode: "MultiNode"
 strategy:
   type: RollingUpdate
   rollingUpdate:

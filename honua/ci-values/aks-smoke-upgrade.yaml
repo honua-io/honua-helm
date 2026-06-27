@@ -1,11 +1,14 @@
 # AKS customer-operated smoke: upgrade target (honua-helm#10).
 #
 # Applied as the `helm upgrade` step after aks-smoke-install.yaml. It changes
-# release evidence metadata and scales to two replicas to exercise the upgrade
-# path the marketplace listing depends on, while keeping the migration-safe
-# Recreate strategy. Pair with scripts/aks-smoke.sh, which overrides the image
-# tag/digest and data-service endpoints for the live run.
-replicaCount: 2
+# release evidence metadata to exercise the upgrade path the marketplace listing
+# depends on, while keeping the migration-safe Recreate strategy. This overlay
+# models the SingleInstance marketplace baseline, so it stays at one replica:
+# SingleInstance with more than one replica is rejected by the chart's HA guard
+# (multi-replica HA requires Deployment__Mode=MultiNode with shared Redis and a
+# cloud FileStorage provider). Pair with scripts/aks-smoke.sh, which overrides
+# the image tag/digest and data-service endpoints for the live run.
+replicaCount: 1
 
 image:
   repository: ghcr.io/honua-io/honua-server
