@@ -58,8 +58,6 @@ ingress:
 
 config:
   env:
-    HONUA_ADMIN_UI: "true"
-    HONUA_SERVE_ADMIN_UI: "true"
     HONUA_OBSERVABILITY: "true"
     HONUA_OPENTELEMETRY: "true"
     HONUA_SKIP_MIGRATIONS: "false"

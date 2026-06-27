@@ -39,3 +39,36 @@
 {{- if and .Values.autoscaling.enabled (eq $deploymentMode "SingleInstance") -}}
 {{- fail "autoscaling.enabled is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either set autoscaling.enabled=false and pin replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode and supplying ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." -}}
 {{- end -}}
+
+{{- /* The container port and all three health probes follow service.targetPort
+       (the container's named "http" port). ASPNETCORE_URLS must listen on that
+       same port or every probe targets a port nothing serves and the pod never
+       becomes ready. */ -}}
+{{- $configEnv := get (.Values.config | default dict) "env" | default dict -}}
+{{- $aspnetUrls := trim (default "" (get $configEnv "ASPNETCORE_URLS")) -}}
+{{- if $aspnetUrls -}}
+{{- $targetPort := toString .Values.service.targetPort -}}
+{{- $urlPortMatch := regexFind ":[0-9]+" $aspnetUrls -}}
+{{- $urlPort := trimPrefix ":" $urlPortMatch -}}
+{{- if and $urlPort (ne $urlPort $targetPort) -}}
+{{- fail (printf "config.env.ASPNETCORE_URLS listens on port %s but service.targetPort is %s. The container port and the liveness/readiness/startup probes all follow service.targetPort, so these must match; align ASPNETCORE_URLS and service.targetPort." $urlPort $targetPort) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* When the chart derives the PostgreSQL/Redis connection string from a
+       subchart password, the password is interpolated into a delimiter-sensitive
+       connection string. Reject the delimiter/keyword characters that would
+       corrupt it; operators with such passwords must set the connection string
+       explicitly via secret.env. */ -}}
+{{- if eq (include "honua.usesChartManagedPostgresqlConnection" .) "true" -}}
+{{- $pgPassword := toString (default "" .Values.postgresql.auth.password) -}}
+{{- if regexMatch "[;=]" $pgPassword -}}
+{{- fail "postgresql.auth.password must not contain ';' or '=' when the chart derives ConnectionStrings__DefaultConnection: those characters are parsed by Npgsql as additional connection keywords and corrupt the credential. Set secret.env.ConnectionStrings__DefaultConnection explicitly for such passwords." -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (include "honua.usesChartManagedRedisConnection" .) "true" -}}
+{{- $redisPassword := toString (default "" .Values.redis.auth.password) -}}
+{{- if regexMatch "[,=]" $redisPassword -}}
+{{- fail "redis.auth.password must not contain ',' or '=' when the chart derives ConnectionStrings__redis: those characters split/terminate the StackExchange.Redis configuration string and corrupt the credential. Set secret.env.ConnectionStrings__redis explicitly for such passwords." -}}
+{{- end -}}
+{{- end -}}

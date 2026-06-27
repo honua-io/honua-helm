@@ -19,8 +19,6 @@ resources:
 
 config:
   env:
-    HONUA_ADMIN_UI: "true"
-    HONUA_SERVE_ADMIN_UI: "true"
     HONUA_OBSERVABILITY: "false"
     HONUA_OPENTELEMETRY: "false"
     HONUA_SKIP_MIGRATIONS: "false"
