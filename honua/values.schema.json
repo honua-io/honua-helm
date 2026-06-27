@@ -294,6 +294,49 @@
         "sizeLimit": { "type": "string" }
       }
     },
+    "observability": {
+      "type": "object",
+      "description": "OpenTelemetry receiver wiring for the server's emitted telemetry.",
+      "properties": {
+        "otlpEndpoint": {
+          "type": "string"
+        },
+        "otlpProtocol": {
+          "type": "string"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Prometheus metrics integration (ServiceMonitor, scrape annotations, PrometheusRule).",
+      "properties": {
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "port": { "type": ["string", "integer"] },
+            "path": { "type": "string" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" },
+            "labels": { "type": "object" }
+          }
+        },
+        "serviceAnnotations": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string" }
+          }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "type": "object" }
+          }
+        }
+      }
+    },
     "config": {
       "type": "object",
       "description": "Chart-managed or externally managed ConfigMap settings.",

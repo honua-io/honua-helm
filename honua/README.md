@@ -404,6 +404,69 @@ The chart configures probes on:
 
 The full operator contract is documented in [`docs/contract.md`](../docs/contract.md).
 
+## Observability and metrics
+
+Honua Server emits OpenTelemetry traces and metrics when
+`config.env.HONUA_OPENTELEMETRY` (or `HONUA_OBSERVABILITY`) is `"true"` (the
+default in the stage and prod overlays). That telemetry needs a **receiver**, so
+the chart fails render when observability is enabled without one. Configure at
+least one of the following.
+
+### OpenTelemetry collector (OTLP, push)
+
+```yaml
+config:
+  env:
+    HONUA_OPENTELEMETRY: "true"
+observability:
+  otlpEndpoint: "http://otel-collector.observability.svc:4317"
+  otlpProtocol: "grpc"   # or "http/protobuf" (port 4318)
+```
+
+When `observability.otlpEndpoint` is set the chart injects the standard
+`OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` environment
+variables so the server's OpenTelemetry SDK exports to the collector.
+
+### Prometheus (scrape)
+
+For a Prometheus Operator cluster, enable a `ServiceMonitor` and the baseline
+`PrometheusRule` availability alerts:
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    path: /metrics
+    interval: 30s
+    labels:
+      release: kube-prometheus-stack   # match your Prometheus ruleSelector/serviceMonitorSelector
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+```
+
+For a non-Operator Prometheus that discovers targets via annotations, use
+`metrics.serviceAnnotations.enabled: true` instead, which stamps
+`prometheus.io/scrape`, `prometheus.io/port`, and `prometheus.io/path` on the
+Service.
+
+The `ServiceMonitor`/`PrometheusRule` resources require the Prometheus Operator
+CRDs and a server build that exposes a Prometheus endpoint at the configured
+port/path. The shipped `PrometheusRule` alerts on availability
+(`kube_deployment_status_replicas_available == 0`) and crash-looping via
+kube-state-metrics, so it does not depend on any application metric being
+emitted. Application-level alerts (for example a GeoServices in-band error-rate
+alert) are added once the server exposes the corresponding metric.
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `observability.otlpEndpoint` | `""` | OTLP collector endpoint; injected as `OTEL_EXPORTER_OTLP_ENDPOINT`. Required (with the scrape options) when observability is enabled. |
+| `observability.otlpProtocol` | `grpc` | OTLP protocol (`grpc` or `http/protobuf`). |
+| `metrics.serviceMonitor.enabled` | false | Render a Prometheus Operator `ServiceMonitor`. |
+| `metrics.serviceAnnotations.enabled` | false | Stamp `prometheus.io/*` scrape annotations on the Service. |
+| `metrics.prometheusRule.enabled` | false | Render the baseline availability `PrometheusRule`. |
+
 ## Geospatial HPA tuning guidance
 
 The default HPA thresholds are tuned for mixed geospatial workloads:

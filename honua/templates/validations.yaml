@@ -39,3 +39,23 @@
 {{- if and .Values.autoscaling.enabled (eq $deploymentMode "SingleInstance") -}}
 {{- fail "autoscaling.enabled is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either set autoscaling.enabled=false and pin replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode and supplying ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." -}}
 {{- end -}}
+
+{{- /* When the server is told to emit telemetry, require a receiver so the
+       chart cannot ship "observability on, nothing listening". A receiver is an
+       OTLP collector endpoint, a Prometheus ServiceMonitor, or Prometheus scrape
+       annotations. */ -}}
+{{- $configEnv := get (.Values.config | default dict) "env" | default dict -}}
+{{- $otel := lower (trim (toString (default "" (get $configEnv "HONUA_OPENTELEMETRY")))) -}}
+{{- $obs := lower (trim (toString (default "" (get $configEnv "HONUA_OBSERVABILITY")))) -}}
+{{- if or (eq $otel "true") (eq $obs "true") -}}
+{{- $observability := .Values.observability | default dict -}}
+{{- $metrics := .Values.metrics | default dict -}}
+{{- $serviceMonitor := get $metrics "serviceMonitor" | default dict -}}
+{{- $serviceAnnotations := get $metrics "serviceAnnotations" | default dict -}}
+{{- $hasOtlp := ne (trim (toString (default "" (get $observability "otlpEndpoint")))) "" -}}
+{{- $hasServiceMonitor := eq (toString (default false (get $serviceMonitor "enabled"))) "true" -}}
+{{- $hasScrapeAnnotations := eq (toString (default false (get $serviceAnnotations "enabled"))) "true" -}}
+{{- if not (or $hasOtlp $hasServiceMonitor $hasScrapeAnnotations) -}}
+{{- fail "config.env.HONUA_OPENTELEMETRY/HONUA_OBSERVABILITY is enabled but no telemetry receiver is configured. Set observability.otlpEndpoint to an OpenTelemetry collector, or enable metrics.serviceMonitor.enabled / metrics.serviceAnnotations.enabled. Otherwise disable observability so the deployment is not blind." -}}
+{{- end -}}
+{{- end -}}

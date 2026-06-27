@@ -68,6 +68,22 @@ jobs:
       - name: Render templates (redis auth)
         run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
 
+      - name: Render templates (observability)
+        run: helm template honua ./honua -f honua/ci-values/observability.yaml > /tmp/honua-rendered-observability.yaml
+
+      - name: Assert observability resources render
+        run: |
+          set -euo pipefail
+          grep -q 'kind: ServiceMonitor' /tmp/honua-rendered-observability.yaml
+          grep -q 'kind: PrometheusRule' /tmp/honua-rendered-observability.yaml
+          grep -q 'OTEL_EXPORTER_OTLP_ENDPOINT' /tmp/honua-rendered-observability.yaml
+          grep -q 'prometheus.io/scrape: "true"' /tmp/honua-rendered-observability.yaml
+          # Metrics resources must NOT render in the baseline (opt-in only).
+          if grep -q 'kind: ServiceMonitor' /tmp/honua-rendered-base.yaml; then
+            echo "ServiceMonitor must not render without metrics.serviceMonitor.enabled."
+            exit 1
+          fi
+
       - name: Render templates (digest image)
         run: helm template honua ./honua -f honua/ci-values/digest.yaml > /tmp/honua-rendered-digest.yaml
 
@@ -302,6 +318,22 @@ jobs:
             cat /tmp/honua-rendered-redis-missing.yaml
             exit 1
           fi
+
+      - name: Validate observability-without-receiver guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set config.env.HONUA_OPENTELEMETRY=true \
+            > /tmp/honua-rendered-observability-no-receiver.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected observability enabled without a receiver to fail."
+            cat /tmp/honua-rendered-observability-no-receiver.yaml
+            exit 1
+          fi
+          grep -q "no telemetry receiver is configured" /tmp/honua-rendered-observability-no-receiver.yaml
 
       # Exercise the operator-run AKS smoke harness in its no-cluster mode so the
       # harness itself (not just the overlays) cannot rot. --dry-run runs

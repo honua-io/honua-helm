@@ -67,9 +67,18 @@ spec:
             {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.extraEnv }}
+          {{- $otlpEndpoint := trim (default "" (dig "otlpEndpoint" "" (.Values.observability | default dict))) }}
+          {{- if or $otlpEndpoint .Values.extraEnv }}
           env:
+            {{- if $otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ $otlpEndpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ default "grpc" (dig "otlpProtocol" "grpc" (.Values.observability | default dict)) | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}

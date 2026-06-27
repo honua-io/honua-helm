@@ -242,6 +242,49 @@ extraEnvFrom: []
 extraVolumes: []
 extraVolumeMounts: []
 
+# Observability. Honua Server emits OpenTelemetry traces/metrics when
+# config.env.HONUA_OPENTELEMETRY (or HONUA_OBSERVABILITY) is "true". Those signals
+# need a receiver: set observability.otlpEndpoint to an OpenTelemetry collector,
+# or enable a metrics.serviceMonitor / metrics.serviceAnnotations scrape target.
+# The chart fails render if observability is enabled with no receiver configured
+# (see templates/validations.yaml), so prod/stage cannot ship "blind".
+observability:
+  # OTLP exporter endpoint (OpenTelemetry collector). When set, the chart injects
+  # the standard OTEL_EXPORTER_OTLP_ENDPOINT/OTEL_EXPORTER_OTLP_PROTOCOL env vars
+  # so the server's OpenTelemetry SDK exports to the collector.
+  # Example: http://otel-collector.observability.svc:4317
+  otlpEndpoint: ""
+  # OTLP protocol: "grpc" (default, port 4317) or "http/protobuf" (port 4318).
+  otlpProtocol: "grpc"
+
+# Prometheus metrics integration. These resources require the Prometheus Operator
+# CRDs (ServiceMonitor/PrometheusRule) and/or a Prometheus that honors scrape
+# annotations, plus a server build that exposes a Prometheus endpoint at the
+# configured port/path. All are opt-in (disabled by default) so the chart renders
+# on clusters without the Prometheus Operator.
+metrics:
+  # Prometheus Operator ServiceMonitor scraping the server metrics endpoint.
+  serviceMonitor:
+    enabled: false
+    # Service port name to scrape (the chart Service names its port "http").
+    port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels so a Prometheus Operator release selector can adopt this.
+    labels: {}
+  # Prometheus scrape annotations on the Service (for non-Operator Prometheus
+  # that discovers targets via prometheus.io/* annotations).
+  serviceAnnotations:
+    enabled: false
+    path: /metrics
+  # PrometheusRule with baseline availability alerts (zero available replicas,
+  # crash-looping). These alert on kube-state-metrics series, so they do not
+  # depend on any application metric being emitted yet.
+  prometheusRule:
+    enabled: false
+    labels: {}
+
 # Optional Bitnami PostgreSQL dependency. This is development-only because the
 # subchart does not include PostGIS; production should use an external
 # PostGIS-enabled database and provide ConnectionStrings__DefaultConnection.
