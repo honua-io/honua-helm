@@ -286,6 +286,14 @@
     "affinity": {
       "type": "object"
     },
+    "tmpVolume": {
+      "type": "object",
+      "description": "Writable /tmp emptyDir for the read-only-root container.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "sizeLimit": { "type": "string" }
+      }
+    },
     "observability": {
       "type": "object",
       "description": "OpenTelemetry receiver wiring for the server's emitted telemetry.",

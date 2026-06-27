@@ -128,6 +128,16 @@ strategy:
 
 terminationGracePeriodSeconds: 60
 
+# Writable scratch volume. securityContext.readOnlyRootFilesystem is true, so the
+# container filesystem is read-only except for mounts. .NET and geospatial code
+# paths write to /tmp (temp files, shadow copies, GDAL scratch), which would hit
+# EROFS without a writable mount. This mounts an emptyDir at /tmp. Disable only
+# if you have proven the image never writes to disk.
+tmpVolume:
+  enabled: true
+  # Optional emptyDir size cap, e.g. "1Gi". Empty means no limit.
+  sizeLimit: ""
+
 preflight:
   enabled: true
   image:
@@ -183,6 +193,11 @@ nodeSelector: {}
 
 tolerations: []
 
+# Pod affinity/anti-affinity. When left empty, the chart applies a soft
+# (preferred) pod anti-affinity spreading replicas across nodes for multi-replica
+# workloads (autoscaling.enabled or replicaCount > 1), so a single node drain
+# does not take out the whole fleet or stall against the auto-rendered PDB. Set
+# an explicit affinity here to fully override that default.
 affinity: {}
 
 # Chart-managed ConfigMap. Set config.create=false and config.name to reference
