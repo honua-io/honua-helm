@@ -75,7 +75,7 @@ from rendered ConfigMap and Secret data before template-required checks run.
 | --- | --- | --- |
 | Image | `image.repository`, `image.tag`, `image.digest`, `image.pullPolicy`, `image.pullSecrets` | Production release lanes should prefer `image.digest` with `image.tag=""`; immutable tags are the fallback. |
 | Release evidence | `release.id`, `release.manifest`, `release.digest`, `release.appVersion` | `release.id` and the effective app version must be label-safe; use `release.manifest` for free-form build metadata and `release.digest` for SHA-256 evidence. |
-| Upgrade contract | `strategy.*`, `terminationGracePeriodSeconds`, `preflight.*` | Default `Recreate` is migration-safe for inline migrations; preflight validates required keys, database and Redis reachability, and optional registry reachability. |
+| Upgrade contract | `strategy.*`, `terminationGracePeriodSeconds`, `lifecycle`, `preflight.*` | Default `Recreate` is migration-safe for inline migrations; preflight validates required keys, database and Redis reachability, and optional registry reachability. For `RollingUpdate`/HPA scale-down set a `lifecycle.preStop` sleep so Service endpoint removal propagates before SIGTERM (zero-downtime drain). |
 | Naming | `nameOverride`, `fullnameOverride` | Use only for DNS length constraints or platform naming standards. |
 | ServiceAccount | `serviceAccount.*` | Token automount stays disabled by default. |
 | Routing | `service.*`, `ingress.*` | Ingress class, DNS, TLS, and annotations are platform-specific. |

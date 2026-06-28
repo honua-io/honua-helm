@@ -12,6 +12,13 @@ strategy:
   rollingUpdate:
     maxSurge: 0
     maxUnavailable: 1
+# preStop drain so Service endpoint removal propagates to kube-proxy/ingress
+# before SIGTERM, avoiding connection resets during the RollingUpdate window.
+# Kept shorter than terminationGracePeriodSeconds (60).
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "sleep 5"]
 release:
   id: honua-ci-rolling
   manifest: "ci://honua-helm/rolling-update"

@@ -128,6 +128,32 @@ strategy:
 
 terminationGracePeriodSeconds: 60
 
+# Container lifecycle hooks (passed through verbatim to the honua container).
+#
+# Zero-downtime rollouts (strategy.type: RollingUpdate, and HPA scale-down)
+# need a preStop delay. When a pod is terminated, Kubernetes sends SIGTERM and
+# removes the Service endpoint concurrently; endpoint removal is asynchronous
+# and takes time to propagate to kube-proxy and ingress controllers. Without a
+# preStop pause the server can start shutting down while kube-proxy still routes
+# new connections to it, so requests in the propagation window get
+# connection-refused/reset. terminationGracePeriodSeconds bounds the kill but
+# does NOT close this race.
+#
+# A preStop sleep holds the container running (the pod stays Terminating) so the
+# endpoint deletion has time to propagate before the process receives SIGTERM.
+# Keep the sleep shorter than terminationGracePeriodSeconds. Recommended for any
+# RollingUpdate / autoscaled (MultiNode) deployment:
+#
+# lifecycle:
+#   preStop:
+#     exec:
+#       command: ["/bin/sh", "-c", "sleep 5"]
+#
+# Left empty by default because the chart's default strategy is Recreate
+# (old pods stop before new pods start), where a preStop delay only slows
+# termination without benefit.
+lifecycle: {}
+
 # Writable scratch volume. securityContext.readOnlyRootFilesystem is true, so the
 # container filesystem is read-only except for mounts. .NET and geospatial code
 # paths write to /tmp (temp files, shadow copies, GDAL scratch), which would hit
