@@ -4,9 +4,17 @@ name: Commit policy
 # owner only, with no AI/agent attribution (no "Co-Authored-By: Claude/Codex/..."
 # trailers, no "Generated with ..." lines, no robot emoji). Prevents recurrence
 # of the attribution trailers flagged in the release audit.
+#
+# Runs on both pull_request and push to trunk. The pull_request trigger scans
+# the PR range; the push trigger closes the gap where a commit landed directly
+# on trunk (or via an admin/force merge) would never be scanned by a PR-only
+# gate.
 
 on:
   pull_request:
+  push:
+    branches:
+      - trunk
 
 permissions:
   contents: read
@@ -17,11 +25,29 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          # Need the PR's base and head commits to scan the full PR range.
+          # Need the base and head commits to scan the full range.
           fetch-depth: 0
 
-      - name: Reject AI/agent attribution in commit messages
+      - name: Reject AI/agent attribution in commit messages (pull_request)
+        if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: scripts/check-no-ai-attribution.sh --range "${BASE_SHA}..${HEAD_SHA}"
+
+      - name: Reject AI/agent attribution in commit messages (push)
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          zero='0000000000000000000000000000000000000000'
+          # On a brand-new branch (or when the before commit is unknown/missing
+          # locally) there is no usable base, so scan every commit reachable from
+          # the pushed head. Otherwise scan only the newly pushed range.
+          if [ "${BEFORE_SHA}" = "${zero}" ] || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            scripts/check-no-ai-attribution.sh --range "${AFTER_SHA}"
+          else
+            scripts/check-no-ai-attribution.sh --range "${BEFORE_SHA}..${AFTER_SHA}"
+          fi
