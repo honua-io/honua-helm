@@ -127,6 +127,36 @@ the kubelet's image pull. The kubelet remains authoritative for full image
 pull success, including private registry credentials and node-level pull
 policy behavior.
 
+## Secret and Config Rotation
+
+The chart injects runtime credentials and settings through `envFrom`
+(`secretRef` / `configMapRef`), which Kubernetes reads only when a container
+starts. To make in-place edits roll the pods, the Deployment stamps a
+`checksum/config` and `checksum/secret` annotation derived from the
+**chart-managed** ConfigMap and Secret. A `helm upgrade` that changes
+`config.env` or `secret.env` therefore changes the pod spec and triggers a
+controlled rollout.
+
+That checksum covers only chart-managed objects. It does **not** cover
+externally-managed sources -- `secret.create=false` with `secret.name` (for
+example the production `honua-prod-runtime` Secret), `config.create=false`, an
+External Secrets Operator source, or anything supplied via `extraEnvFrom`. The
+chart cannot see those contents at render time, so rotating such a Secret or
+ConfigMap in place produces a byte-identical Deployment, performs no rollout,
+and leaves the running pods on the previous credentials.
+
+After rotating an externally-managed Secret or ConfigMap, force a rollout
+explicitly:
+
+```bash
+kubectl rollout restart deployment/<release>-honua -n <namespace>
+```
+
+or change a value under `podAnnotations` (for example a rotation timestamp) so
+the upgrade renders a new pod spec and Kubernetes performs a controlled
+rollout. The preflight Job validates external secret keys at install time, but
+it does not trigger a rollout for content-only rotations.
+
 ## Image Identity
 
 Production deployments should pin by digest:

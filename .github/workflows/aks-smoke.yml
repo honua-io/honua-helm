@@ -80,14 +80,20 @@ jobs:
           kubeconform -v
 
       - name: AKS smoke harness dry-run
+        env:
+          # Pass operator inputs through env so the Actions template engine does
+          # not interpolate them into the shell body (script-injection safe).
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
         run: |
-          tag="${{ inputs.image_tag }}"
+          tag="${IMAGE_TAG}"
           if [ -z "${tag}" ]; then
             tag="$(helm show chart honua | awk -F': ' '/^appVersion:/ {print $2}')-aot"
           fi
+          dry_args=(--image-tag "${tag}")
+          [ -n "${IMAGE_DIGEST}" ] && dry_args+=(--image-digest "${IMAGE_DIGEST}")
           scripts/aks-smoke.sh --dry-run \
-            --image-tag "${tag}" \
-            ${{ inputs.image_digest && format('--image-digest {0}', inputs.image_digest) || '' }} \
+            "${dry_args[@]}" \
             --evidence-dir evidence/aks-dryrun-${{ github.run_id }}
 
       - name: Upload dry-run evidence
@@ -155,14 +161,21 @@ jobs:
           HONUA_REDIS_CONNECTION: ${{ secrets.HONUA_REDIS_CONNECTION }}
           HONUA_ADMIN_PASSWORD: ${{ secrets.HONUA_ADMIN_PASSWORD }}
           HONUA_MASTER_KEY: ${{ secrets.HONUA_MASTER_KEY }}
+          # Pass operator inputs through env so the Actions template engine does
+          # not interpolate them into the shell body (script-injection safe).
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_MANIFEST: ${{ inputs.release_manifest }}
+          RELEASE_DIGEST: ${{ inputs.release_digest }}
         run: |
           set -euo pipefail
           digest_args=()
-          [ -n "${{ inputs.image_digest }}" ] && digest_args+=(--image-digest "${{ inputs.image_digest }}")
-          [ -n "${{ inputs.image_tag }}" ] && digest_args+=(--image-tag "${{ inputs.image_tag }}")
-          [ -n "${{ inputs.release_id }}" ] && digest_args+=(--release-id "${{ inputs.release_id }}")
-          [ -n "${{ inputs.release_manifest }}" ] && digest_args+=(--release-manifest "${{ inputs.release_manifest }}")
-          [ -n "${{ inputs.release_digest }}" ] && digest_args+=(--release-digest "${{ inputs.release_digest }}")
+          [ -n "${IMAGE_DIGEST}" ] && digest_args+=(--image-digest "${IMAGE_DIGEST}")
+          [ -n "${IMAGE_TAG}" ] && digest_args+=(--image-tag "${IMAGE_TAG}")
+          [ -n "${RELEASE_ID}" ] && digest_args+=(--release-id "${RELEASE_ID}")
+          [ -n "${RELEASE_MANIFEST}" ] && digest_args+=(--release-manifest "${RELEASE_MANIFEST}")
+          [ -n "${RELEASE_DIGEST}" ] && digest_args+=(--release-digest "${RELEASE_DIGEST}")
 
           scripts/aks-smoke.sh \
             --release honua \

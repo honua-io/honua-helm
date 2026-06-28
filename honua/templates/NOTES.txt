@@ -52,6 +52,19 @@ The chart fails at render time if autoscaling is enabled while
 Deployment__Mode is SingleInstance, so change these settings together.
 {{- end }}
 
+{{- if or (and (not .Values.secret.create) .Values.secret.name) (and (not .Values.config.create) .Values.config.name) .Values.extraEnvFrom }}
+
+NOTE: This release consumes one or more externally-managed Secret/ConfigMap
+sources (secret.create=false / config.create=false / extraEnvFrom). The chart's
+content checksum only covers chart-managed objects, and Kubernetes reads
+envFrom values only at container start. Rotating an external Secret/ConfigMap in
+place (e.g. honua-prod-runtime or an External Secrets Operator source) does NOT
+roll the pods on its own, so a plain `helm upgrade` may leave pods running the
+old credentials. After rotating, force a rollout:
+  kubectl rollout restart deployment/{{ include "honua.fullname" . }} -n {{ .Release.Namespace }}
+or bump a value under podAnnotations so the upgrade renders a new pod spec.
+{{- end }}
+
 See docs/contract.md in this chart repository for the durable operator-facing
 contract, including probe tuning, image identity, preflight scope, and rollback
 semantics.

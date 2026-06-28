@@ -132,8 +132,8 @@ spec:
                 fi
               done
 
-              if [ "${#HONUA_ADMIN_PASSWORD}" -lt 16 ]; then
-                fail "HONUA_ADMIN_PASSWORD must be at least 16 characters long"
+              if [ "${#HONUA_ADMIN_PASSWORD}" -lt {{ include "honua.minAdminPasswordLength" . }} ]; then
+                fail "HONUA_ADMIN_PASSWORD must be at least {{ include "honua.minAdminPasswordLength" . }} characters long"
               fi
               case "${HONUA_ADMIN_PASSWORD}" in
                 *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]*)
@@ -164,8 +164,8 @@ spec:
                   ;;
               esac
 
-              if [ "${#Security__ConnectionEncryption__MasterKey}" -lt 32 ]; then
-                fail "Security__ConnectionEncryption__MasterKey must be at least 32 characters long"
+              if [ "${#Security__ConnectionEncryption__MasterKey}" -lt {{ include "honua.minMasterKeyLength" . }} ]; then
+                fail "Security__ConnectionEncryption__MasterKey must be at least {{ include "honua.minMasterKeyLength" . }} characters long"
               fi
 
               if [ "${HONUA_PREFLIGHT_DATABASE_CHECK}" = "true" ]; then
