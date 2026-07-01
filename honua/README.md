@@ -450,8 +450,8 @@ variables so the server's OpenTelemetry SDK exports to the collector.
 
 ### Prometheus (scrape)
 
-For a Prometheus Operator cluster, enable a `ServiceMonitor` and the baseline
-`PrometheusRule` availability alerts:
+For a Prometheus Operator cluster, enable a `ServiceMonitor` and the
+`PrometheusRule`:
 
 ```yaml
 metrics:
@@ -474,11 +474,52 @@ Service.
 
 The `ServiceMonitor`/`PrometheusRule` resources require the Prometheus Operator
 CRDs and a server build that exposes a Prometheus endpoint at the configured
-port/path. The shipped `PrometheusRule` alerts on availability
-(`kube_deployment_status_replicas_available == 0`) and crash-looping via
-kube-state-metrics, so it does not depend on any application metric being
-emitted. Application-level alerts (for example a GeoServices in-band error-rate
-alert) are added once the server exposes the corresponding metric.
+port/path.
+
+### Alerting (SLO rules + receivers)
+
+The `PrometheusRule` has two rule groups when `metrics.prometheusRule.enabled`:
+
+- **`honua.availability`** — infrastructure alerts on kube-state-metrics
+  (`kube_deployment_status_replicas_available == 0`, crash-looping). No
+  application metric required.
+- **`honua.slo`** (`metrics.prometheusRule.slo.enabled`, default true) —
+  request-availability, combined error-rate, and multi-window burn-rate alerts
+  built on the server's `honua_request_error_total` / `honua_http_requests_total`
+  counters. These deliberately **include the GeoServices in-band 200-with-`{error}`
+  signal**: GeoServices returns HTTP 200 with an `{error}` body for Esri-client
+  compatibility, so those failures are invisible to load-balancer 5xx metrics. The
+  server increments `honua_request_error_total` with `in_band="true"` for them, so
+  every ratio counts that class and `HonuaGeoServicesInBandErrorRateHigh` alerts on
+  it directly. Thresholds/windows mirror the honua-devops SLO rules and are fully
+  overridable under `metrics.prometheusRule.slo`. Scope the counters to this
+  release with `metrics.prometheusRule.slo.metricSelector`.
+
+Wire delivery with the `AlertmanagerConfig` receiver surface (does **not** deploy
+Alertmanager; the Alertmanager Operator merges it by namespace/label selector).
+Each SLO alert carries `severity` and `route` labels a route can match on:
+
+```yaml
+metrics:
+  alertmanagerConfig:
+    enabled: true
+    labels:
+      alertmanagerConfig: honua   # match your Alertmanager alertmanagerConfigSelector
+    route:
+      receiver: honua-slack
+      groupBy: ["alertname", "route"]
+      routes:
+        - matchers: [{ name: route, value: pagerduty-critical }]
+          receiver: honua-pagerduty
+    receivers:
+      - name: honua-slack
+        slackConfigs:
+          - apiURL: { name: honua-alertmanager-secrets, key: slackApiUrl }
+            channel: "#honua-alerts"
+      - name: honua-pagerduty
+        pagerdutyConfigs:
+          - routingKey: { name: honua-alertmanager-secrets, key: pagerdutyRoutingKey }
+```
 
 | Value | Default | Description |
 |-------|---------|-------------|
@@ -486,7 +527,10 @@ alert) are added once the server exposes the corresponding metric.
 | `observability.otlpProtocol` | `grpc` | OTLP protocol (`grpc` or `http/protobuf`). |
 | `metrics.serviceMonitor.enabled` | false | Render a Prometheus Operator `ServiceMonitor`. |
 | `metrics.serviceAnnotations.enabled` | false | Stamp `prometheus.io/*` scrape annotations on the Service. |
-| `metrics.prometheusRule.enabled` | false | Render the baseline availability `PrometheusRule`. |
+| `metrics.prometheusRule.enabled` | false | Render the `PrometheusRule` (infra + SLO alerts). |
+| `metrics.prometheusRule.slo.enabled` | true | Emit the `honua.slo` group (availability / error-rate / burn-rate / in-band). Applies only when `prometheusRule.enabled`. |
+| `metrics.prometheusRule.slo.metricSelector` | `""` | Label matcher scoping the counters to this deployment, e.g. `service="honua-server"`. |
+| `metrics.alertmanagerConfig.enabled` | false | Render an `AlertmanagerConfig` (receivers + route). Requires at least one receiver. |
 
 ## Geospatial HPA tuning guidance
 

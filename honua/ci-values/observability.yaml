@@ -1,5 +1,7 @@
 # Exercises the observability/metrics integration: OTLP endpoint wiring plus the
-# ServiceMonitor, Prometheus scrape annotations, and PrometheusRule resources.
+# ServiceMonitor, Prometheus scrape annotations, the PrometheusRule (baseline
+# availability + application SLO rules, including the GeoServices in-band
+# 200-with-{error} signal), and the AlertmanagerConfig receiver surface.
 config:
   env:
     HONUA_OBSERVABILITY: "true"
@@ -21,6 +23,37 @@ metrics:
     enabled: true
     labels:
       release: kube-prometheus-stack
+    slo:
+      enabled: true
+      metricSelector: 'service="honua-server"'
+      alertLabels:
+        service: honua-server
+  alertmanagerConfig:
+    enabled: true
+    labels:
+      alertmanagerConfig: honua
+    route:
+      receiver: honua-slack
+      groupBy: ["alertname", "route"]
+      routes:
+        - matchers:
+            - name: route
+              value: pagerduty-critical
+          receiver: honua-pagerduty
+    receivers:
+      - name: honua-slack
+        slackConfigs:
+          - apiURL:
+              name: honua-alertmanager-secrets
+              key: slackApiUrl
+            channel: "#honua-alerts"
+            sendResolved: true
+      - name: honua-pagerduty
+        pagerdutyConfigs:
+          - routingKey:
+              name: honua-alertmanager-secrets
+              key: pagerdutyRoutingKey
+            sendResolved: true
 
 secret:
   env:

@@ -3,6 +3,18 @@
   "type": "object",
   "description": "Values contract for the Honua Server Helm chart.",
   "$comment": "This schema owns structural validation: types, enums, patterns, min/max, and the conditional rules in allOf (image tag XOR digest, digest pattern, pullPolicy-with-digest, RollingUpdate non-zero budget, autoscaling target presence, secret/redis/postgresql requirements). Cross-field render-time guards and operator-friendly failure messages live in templates/validations.yaml. Where a rule appears in both places it is enforced structurally here and explained there; keep the two aligned.",
+  "definitions": {
+    "honuaBurnRateTier": {
+      "type": "object",
+      "properties": {
+        "threshold": { "type": "number", "minimum": 0 },
+        "window": { "type": "string" },
+        "for": { "type": "string" },
+        "severity": { "type": "string" },
+        "route": { "type": "string" }
+      }
+    }
+  },
   "properties": {
     "replicaCount": {
       "type": "integer",
@@ -345,7 +357,73 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "labels": { "type": "object" }
+            "labels": { "type": "object" },
+            "slo": {
+              "type": "object",
+              "description": "Application SLO alert rules (availability, error-rate, burn-rate, GeoServices in-band 200-with-error).",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "metricSelector": { "type": "string" },
+                "alertLabels": { "type": "object" },
+                "runbookUrl": { "type": "string" },
+                "errorBudget": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "availability": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": { "type": "boolean" },
+                    "target": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                    "window": { "type": "string" },
+                    "for": { "type": "string" },
+                    "severity": { "type": "string" },
+                    "route": { "type": "string" }
+                  }
+                },
+                "errorRate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": { "type": "boolean" },
+                    "threshold": { "type": "number", "minimum": 0 },
+                    "window": { "type": "string" },
+                    "for": { "type": "string" },
+                    "severity": { "type": "string" },
+                    "route": { "type": "string" }
+                  }
+                },
+                "inBandErrors": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": { "type": "boolean" },
+                    "threshold": { "type": "number", "minimum": 0 },
+                    "window": { "type": "string" },
+                    "for": { "type": "string" },
+                    "severity": { "type": "string" },
+                    "route": { "type": "string" }
+                  }
+                },
+                "burnRate": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": { "type": "boolean" },
+                    "fast": { "$ref": "#/definitions/honuaBurnRateTier" },
+                    "medium": { "$ref": "#/definitions/honuaBurnRateTier" },
+                    "slow": { "$ref": "#/definitions/honuaBurnRateTier" }
+                  }
+                },
+                "extraRules": { "type": "array" }
+              }
+            }
+          }
+        },
+        "alertmanagerConfig": {
+          "type": "object",
+          "description": "AlertmanagerConfig receiver/route surface (monitoring.coreos.com/v1alpha1).",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "type": "object" },
+            "annotations": { "type": "object" },
+            "route": { "type": "object" },
+            "receivers": { "type": "array" },
+            "inhibitRules": { "type": "array" }
           }
         }
       }
