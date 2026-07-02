@@ -78,11 +78,41 @@ jobs:
           set -euo pipefail
           grep -q 'kind: ServiceMonitor' /tmp/honua-rendered-observability.yaml
           grep -q 'kind: PrometheusRule' /tmp/honua-rendered-observability.yaml
+          grep -q 'kind: AlertmanagerConfig' /tmp/honua-rendered-observability.yaml
           grep -q 'OTEL_EXPORTER_OTLP_ENDPOINT' /tmp/honua-rendered-observability.yaml
           grep -q 'prometheus.io/scrape: "true"' /tmp/honua-rendered-observability.yaml
+          # Application SLO rules, including the GeoServices in-band 200-with-{error}
+          # signal that is invisible to load-balancer 5xx metrics, must render.
+          grep -q 'name: honua.slo' /tmp/honua-rendered-observability.yaml
+          grep -q 'alert: HonuaGeoServicesInBandErrorRateHigh' /tmp/honua-rendered-observability.yaml
+          grep -q 'alert: HonuaErrorBudgetFastBurn' /tmp/honua-rendered-observability.yaml
+          grep -q 'in_band="true"' /tmp/honua-rendered-observability.yaml
           # Metrics resources must NOT render in the baseline (opt-in only).
           if grep -q 'kind: ServiceMonitor' /tmp/honua-rendered-base.yaml; then
             echo "ServiceMonitor must not render without metrics.serviceMonitor.enabled."
+            exit 1
+          fi
+          if grep -q 'kind: PrometheusRule' /tmp/honua-rendered-base.yaml; then
+            echo "PrometheusRule must not render without metrics.prometheusRule.enabled."
+            exit 1
+          fi
+          if grep -q 'kind: AlertmanagerConfig' /tmp/honua-rendered-base.yaml; then
+            echo "AlertmanagerConfig must not render without metrics.alertmanagerConfig.enabled."
+            exit 1
+          fi
+
+      - name: Validate alertmanagerConfig guard fails without receivers
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set metrics.alertmanagerConfig.enabled=true \
+            > /tmp/honua-rendered-alertmanager-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected alertmanagerConfig without receivers to fail."
+            cat /tmp/honua-rendered-alertmanager-invalid.yaml
             exit 1
           fi
 

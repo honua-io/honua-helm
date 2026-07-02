@@ -299,11 +299,97 @@ metrics:
     enabled: false
     path: /metrics
   # PrometheusRule with baseline availability alerts (zero available replicas,
-  # crash-looping). These alert on kube-state-metrics series, so they do not
-  # depend on any application metric being emitted yet.
+  # crash-looping) plus opt-in application SLO alerts. The baseline alerts read
+  # kube-state-metrics series, so they do not depend on any application metric.
   prometheusRule:
     enabled: false
     labels: {}
+    # Application SLO alerts built on Honua's request/error counters. These add the
+    # request-availability, error-rate, and multi-window burn-rate signals — and
+    # critically the GeoServices in-band 200-with-{error} signal. Those error
+    # envelopes are returned with HTTP 200 for Esri-client compatibility, so they
+    # are invisible to load-balancer / transport 5xx metrics. The server increments
+    # honua_request_error_total with in_band="true" for them, so every ratio below
+    # (which sums the whole honua_request_error_total counter) catches that class,
+    # and inBandErrors alerts on it directly. Mirrors the honua-devops SLO rules.
+    slo:
+      enabled: true
+      # Optional label matcher fragment scoping the counters to this deployment,
+      # e.g. 'service="honua-server"' or 'namespace="honua"'. Empty = all Honua
+      # series scraped by the Prometheus that loads this rule.
+      metricSelector: ""
+      # Extra labels merged onto every SLO alert (identity + Alertmanager routing).
+      alertLabels:
+        service: honua-server
+      runbookUrl: "https://github.com/honua-io/honua-devops/blob/main/docs/slo-release-gates.md"
+      # Error budget: the fraction of requests allowed to error. It is the burn-rate
+      # denominator (burn rate = observed error ratio / errorBudget).
+      errorBudget: 0.010
+      # Rolling request-availability alert (1 - error ratio) < target.
+      availability:
+        enabled: true
+        target: 0.990
+        window: 30d
+        for: 10m
+        severity: critical
+        route: pagerduty-critical
+      # Short-window combined (transport 5xx + in-band 200-with-{error}) error rate.
+      errorRate:
+        enabled: true
+        threshold: 0.010
+        window: 5m
+        for: 10m
+        severity: warning
+        route: slack-warning
+      # Dedicated GeoServices 200-with-{error} in-band signal so the LB-invisible
+      # error class is never masked by a healthy transport (5xx) picture.
+      inBandErrors:
+        enabled: true
+        threshold: 0.010
+        window: 5m
+        for: 10m
+        severity: warning
+        route: slack-warning
+      # Multi-window error-budget burn-rate alerts (fast/medium/slow).
+      burnRate:
+        enabled: true
+        fast:
+          threshold: 14.4
+          window: 5m
+          for: 5m
+          severity: critical
+          route: pagerduty-critical
+        medium:
+          threshold: 6.0
+          window: 30m
+          for: 15m
+          severity: warning
+          route: slack-warning
+        slow:
+          threshold: 3.0
+          window: 6h
+          for: 30m
+          severity: warning
+          route: email-info
+      # Operator-supplied rules appended verbatim to the honua.slo group.
+      extraRules: []
+  # AlertmanagerConfig receiver/route surface (monitoring.coreos.com/v1alpha1).
+  # This wires WHERE the alerts above are delivered (PagerDuty/Slack/email/...);
+  # the Alertmanager Operator merges it by namespace/label selector. It does NOT
+  # deploy Alertmanager. Disabled by default; at least one receiver is required
+  # when enabled. The SLO alerts carry `severity` and `route` labels that a route
+  # can match on (e.g. route.matchers: [{name: route, value: pagerduty-critical}]).
+  alertmanagerConfig:
+    enabled: false
+    # Extra labels so the Alertmanager `alertmanagerConfigSelector` can adopt this.
+    labels: {}
+    annotations: {}
+    # Pass-through AlertmanagerConfig spec.route (matchers, groupBy, receiver, ...).
+    route: {}
+    # Pass-through AlertmanagerConfig spec.receivers (each: name + *Configs list).
+    receivers: []
+    # Optional pass-through spec.inhibitRules.
+    inhibitRules: []
 
 # Optional Bitnami PostgreSQL dependency. This is development-only because the
 # subchart does not include PostGIS; production should use an external

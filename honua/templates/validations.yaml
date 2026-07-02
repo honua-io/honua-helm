@@ -118,6 +118,17 @@
 {{- end -}}
 {{- end -}}
 
+{{- /* An AlertmanagerConfig with no receivers is a no-op that silently drops
+       alerts. When the receiver surface is enabled, require at least one
+       receiver so the chart cannot ship "routing on, nowhere to deliver". */ -}}
+{{- $metricsValues := .Values.metrics | default dict -}}
+{{- $amConfig := get $metricsValues "alertmanagerConfig" | default dict -}}
+{{- if eq (toString (default false (get $amConfig "enabled"))) "true" -}}
+{{- if not (get $amConfig "receivers") -}}
+{{- fail "metrics.alertmanagerConfig.enabled is true but metrics.alertmanagerConfig.receivers is empty. Define at least one receiver (name + a *Configs list), or disable metrics.alertmanagerConfig so alerts are not routed into a no-op." -}}
+{{- end -}}
+{{- end -}}
+
 {{- /* Autoscaling requires at least one positive target utilization. Moved here
        from hpa.yaml so the cross-field guard lives in the validation layer; the
        schema also requires this for autoscaling.enabled=true. */ -}}
