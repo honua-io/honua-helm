@@ -393,6 +393,7 @@ characters. For non-development deployments, it also fails if
 | `preflight.retryDelaySeconds` | 3 | Delay between preflight reachability probe attempts. |
 | `preflight.registryCheck.enabled` | true | Check the target image registry `/v2/` endpoint before apply. |
 | `terminationGracePeriodSeconds` | 60 | Pod shutdown grace period for lock release and clean termination. |
+| `lifecycle` | `{}` | Container lifecycle hooks passed through verbatim. For zero-downtime `RollingUpdate` / HPA scale-down, set a `preStop` sleep (e.g. `preStop.exec.command: ["/bin/sh","-c","sleep 5"]`) so Service endpoint removal propagates to kube-proxy/ingress before SIGTERM; keep it shorter than `terminationGracePeriodSeconds`. Left empty under the default `Recreate` strategy, where a preStop delay only slows termination. |
 | `tmpVolume.enabled` | true | Mount a writable `/tmp` emptyDir. Required because `readOnlyRootFilesystem` is true and the server writes temp files; disable only if the image never writes to disk. |
 | `tmpVolume.sizeLimit` | `""` | Optional `emptyDir` size cap for `/tmp` (e.g. `1Gi`). |
 | `affinity` | `{}` | Pod affinity rules. When empty, the chart applies a soft pod anti-affinity spreading replicas across nodes for multi-replica workloads (`autoscaling.enabled` or `replicaCount > 1`). |

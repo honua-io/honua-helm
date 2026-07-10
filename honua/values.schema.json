@@ -97,6 +97,10 @@
       "type": "integer",
       "minimum": 0
     },
+    "lifecycle": {
+      "type": "object",
+      "description": "Container lifecycle hooks for the honua container (e.g. a preStop sleep to drain Service endpoints during RollingUpdate / HPA scale-down)."
+    },
     "preflight": {
       "type": "object",
       "properties": {
