@@ -38,6 +38,25 @@ jobs:
       - name: Render templates (base)
         run: helm template honua ./honua -f honua/ci-values/base.yaml > /tmp/honua-rendered-base.yaml
 
+      - name: Render templates (private preflight image)
+        run: |
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set-string preflight.image.repository=registry.airgap.example/honua/curl \
+            --set-string preflight.image.tag=8.5.0-airgap \
+            > /tmp/honua-rendered-private-preflight-image.yaml
+
+      - name: Assert preflight image is reused by Helm test hook
+        run: |
+          set -euo pipefail
+          expected='image: "registry.airgap.example/honua/curl:8.5.0-airgap"'
+          count="$(grep -Fc "${expected}" /tmp/honua-rendered-private-preflight-image.yaml)"
+          if [[ "${count}" -ne 2 ]]; then
+            echo "Expected preflight Job and Helm test hook to reuse the private preflight image; found ${count} renders."
+            grep -n -A2 -B2 'image:' /tmp/honua-rendered-private-preflight-image.yaml || true
+            exit 1
+          fi
+
       - name: Render templates (environment overlays)
         run: |
           helm template honua-dev ./honua -f honua/values-dev.yaml > /tmp/honua-rendered-dev.yaml
