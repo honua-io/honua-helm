@@ -2,6 +2,7 @@
 
 [![Helm CI](https://github.com/honua-io/honua-helm/actions/workflows/ci.yml/badge.svg)](https://github.com/honua-io/honua-helm/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/honua-io/honua-helm/badge)](https://scorecard.dev/viewer/?uri=github.com/honua-io/honua-helm)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 The Kubernetes deploy path for [Honua Server](https://github.com/honua-io/honua-server) — a
 cloud-native geospatial server that exposes one shared capability set through many protocol
