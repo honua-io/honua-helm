@@ -493,8 +493,15 @@ The `PrometheusRule` has two rule groups when `metrics.prometheusRule.enabled`:
   server increments `honua_request_error_total` with `in_band="true"` for them, so
   every ratio counts that class and `HonuaGeoServicesInBandErrorRateHigh` alerts on
   it directly. Thresholds/windows mirror the honua-devops SLO rules and are fully
-  overridable under `metrics.prometheusRule.slo`. Scope the counters to this
-  release with `metrics.prometheusRule.slo.metricSelector`.
+  overridable under `metrics.prometheusRule.slo`.
+
+  By default, every application counter selector is scoped with the Prometheus
+  Operator target labels `namespace="<release namespace>"` and
+  `service="<release fullname>"`. This prevents a rule installed for one tenant
+  or release from aggregating another Honua deployment. A non-empty
+  `metrics.prometheusRule.slo.metricSelector` replaces the derived selector. Set
+  it when an annotation-based or custom scrape configuration uses different
+  target labels; the selector must identify only the intended Honua deployment.
 
 Wire delivery with the `AlertmanagerConfig` receiver surface (does **not** deploy
 Alertmanager; the Alertmanager Operator merges it by namespace/label selector).
@@ -530,7 +537,7 @@ metrics:
 | `metrics.serviceAnnotations.enabled` | false | Stamp `prometheus.io/*` scrape annotations on the Service. |
 | `metrics.prometheusRule.enabled` | false | Render the `PrometheusRule` (infra + SLO alerts). |
 | `metrics.prometheusRule.slo.enabled` | true | Emit the `honua.slo` group (availability / error-rate / burn-rate / in-band). Applies only when `prometheusRule.enabled`. |
-| `metrics.prometheusRule.slo.metricSelector` | `""` | Label matcher scoping the counters to this deployment, e.g. `service="honua-server"`. |
+| `metrics.prometheusRule.slo.metricSelector` | `""` (automatic) | PromQL label matchers scoping the counters. Empty derives `namespace` and `service` from the Helm release; a non-empty value replaces the derived selector. |
 | `metrics.alertmanagerConfig.enabled` | false | Render an `AlertmanagerConfig` (receivers + route). Requires at least one receiver. |
 
 ## Geospatial HPA tuning guidance
