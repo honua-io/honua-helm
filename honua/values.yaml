@@ -341,8 +341,10 @@ metrics:
     slo:
       enabled: true
       # Optional label matcher fragment scoping the counters to this deployment,
-      # e.g. 'service="honua-server"' or 'namespace="honua"'. Empty = all Honua
-      # series scraped by the Prometheus that loads this rule.
+      # e.g. 'cluster="prod",service="honua-server"'. Empty automatically uses
+      # the Prometheus Operator target labels for this release:
+      # namespace="<release namespace>",service="<release fullname>". Set an
+      # explicit selector when a custom scraper uses different target labels.
       metricSelector: ""
       # Extra labels merged onto every SLO alert (identity + Alertmanager routing).
       alertLabels:

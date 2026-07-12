@@ -99,6 +99,14 @@ Operators upgrading from `0.1.x` should review these default behavior changes:
 - `release.id` and the effective app version (`release.appVersion` or
   `Chart.AppVersion`) must be valid Kubernetes label values.
 
+## Prometheus SLO selector upgrade note
+
+An empty `metrics.prometheusRule.slo.metricSelector` now scopes application
+counters to the release's Prometheus target labels (`namespace` and `service`)
+instead of querying every Honua series. Existing non-empty selectors remain
+authoritative. Operators using custom scrape relabeling should set an explicit
+selector matching their target labels before upgrade.
+
 ## Breaking Changes Policy
 
 Future breaking changes must follow this policy:

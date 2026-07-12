@@ -1,6 +1,7 @@
 {{- if .Values.metrics.prometheusRule.enabled }}
 {{- $slo := .Values.metrics.prometheusRule.slo | default dict }}
-{{- $sel := trim (default "" (get $slo "metricSelector")) }}
+{{- $defaultSel := printf "namespace=%q,service=%q" .Release.Namespace (include "honua.fullname" .) }}
+{{- $sel := default $defaultSel (trim (default "" (get $slo "metricSelector"))) }}
 {{- $inbandSel := ternary (printf "%s,in_band=\"true\"" $sel) "in_band=\"true\"" (ne $sel "") }}
 {{- $budget := $slo.errorBudget | default 0.010 }}
 {{- $runbook := $slo.runbookUrl | default "" }}

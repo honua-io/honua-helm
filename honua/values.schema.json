@@ -367,7 +367,10 @@
               "description": "Application SLO alert rules (availability, error-rate, burn-rate, GeoServices in-band 200-with-error).",
               "properties": {
                 "enabled": { "type": "boolean" },
-                "metricSelector": { "type": "string" },
+                "metricSelector": {
+                  "type": "string",
+                  "description": "PromQL label matchers for Honua counters. Empty derives namespace and service target labels from the Helm release; a non-empty value replaces that default."
+                },
                 "alertLabels": { "type": "object" },
                 "runbookUrl": { "type": "string" },
                 "errorBudget": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },

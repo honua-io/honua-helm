@@ -73,6 +73,14 @@ jobs:
       - name: Render templates (observability)
         run: helm template honua ./honua -f honua/ci-values/observability.yaml > /tmp/honua-rendered-observability.yaml
 
+      - name: Render templates (default SLO metric scope)
+        run: |
+          helm template tenant-a ./honua \
+            --namespace tenant-a \
+            -f honua/ci-values/base.yaml \
+            --set metrics.prometheusRule.enabled=true \
+            > /tmp/honua-rendered-slo-default-scope.yaml
+
       - name: Assert observability resources render
         run: |
           set -euo pipefail
@@ -87,6 +95,22 @@ jobs:
           grep -q 'alert: HonuaGeoServicesInBandErrorRateHigh' /tmp/honua-rendered-observability.yaml
           grep -q 'alert: HonuaErrorBudgetFastBurn' /tmp/honua-rendered-observability.yaml
           grep -q 'in_band="true"' /tmp/honua-rendered-observability.yaml
+          # An explicit selector remains authoritative and is not combined with
+          # the chart-derived release scope.
+          grep -q 'honua_http_requests_total{service="honua-server"}' /tmp/honua-rendered-observability.yaml
+          if grep -q 'honua_http_requests_total{namespace="default",service="honua-server"}' /tmp/honua-rendered-observability.yaml; then
+            echo "An explicit SLO metricSelector must override the default scope."
+            exit 1
+          fi
+          # With no override, every application counter is isolated to the
+          # Helm release's namespace and Service target labels.
+          grep -q 'honua_http_requests_total{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
+          grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
+          grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua",in_band="true"}' /tmp/honua-rendered-slo-default-scope.yaml
+          if grep -Eq 'honua_(http_requests|request_error)_total\{\}' /tmp/honua-rendered-slo-default-scope.yaml; then
+            echo "Default SLO rules must not use unscoped application metrics."
+            exit 1
+          fi
           # Metrics resources must NOT render in the baseline (opt-in only).
           if grep -q 'kind: ServiceMonitor' /tmp/honua-rendered-base.yaml; then
             echo "ServiceMonitor must not render without metrics.serviceMonitor.enabled."
