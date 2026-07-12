@@ -14,7 +14,7 @@ spec:
   automountServiceAccountToken: false
   containers:
     - name: curl
-      image: curlimages/curl:8.5.0
+      image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
       command:
         - sh
         - -c
