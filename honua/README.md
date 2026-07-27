@@ -2,9 +2,14 @@
 
 Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
 
-- Source of truth: `oci://ghcr.io/honua-io/charts/honua`
+- Publish target: `oci://ghcr.io/honua-io/charts/honua`
 - GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
 - Versioning and cut procedure: see [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
+
+> **Status:** no chart release has been cut yet, so the OCI registry commands
+> below do not resolve until the first `chart-vX.Y.Z` tag is published. Until
+> then, install from a checkout — see the
+> [repo README quick start](https://github.com/honua-io/honua-helm#quick-start-development-install).
 
 ## Install (published chart)
 
@@ -587,4 +592,4 @@ For install/upgrade smoke against a real API server, see `../docs/MIGRATION.md`.
 Running `helm template honua honua` without a values file fails by design because
 the baseline contract leaves required runtime secrets empty.
 
-For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](https://github.com/honua-io/honua-server/blob/trunk/docs/contributor/development/k3d-helm.md).
+For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](https://github.com/honua-io/honua-server/blob/trunk/docs/internal/contributor/development/k3d-helm.md).
