@@ -3,27 +3,42 @@
 {{- $defaultSel := printf "namespace=%q,service=%q" .Release.Namespace (include "honua.fullname" .) }}
 {{- $sel := default $defaultSel (trim (default "" (get $slo "metricSelector"))) }}
 {{- $inbandSel := ternary (printf "%s,in_band=\"true\"" $sel) "in_band=\"true\"" (ne $sel "") }}
+{{- $fiveXxSel := ternary (printf "%s,error_code=~\"5..\"" $sel) "error_code=~\"5..\"" (ne $sel "") }}
+{{- $geoServicesSel := printf "%s,honua_protocol=~\"FeatureServer|MapServer|ImageServer|VectorTileServer|GPServer|NAServer|GeometryService|PrintingTools|StaticMap\"" $sel }}
 {{- $budget := $slo.errorBudget | default 0.010 }}
 {{- $runbook := $slo.runbookUrl | default "" }}
 {{- $alertLabels := $slo.alertLabels | default dict }}
 {{- /*
-  SLO denominator: honua_serving_request_duration_ms_count — the Prometheus _count child of the
-  server's serving-plane latency histogram, i.e. one sample per served request that classifies to a
-  Honua protocol. It is the ONLY request-volume series honua-server exports; the flat
-  honua_http_requests_total these rules used to divide by was never emitted by anything, and an
-  absent series does not error in PromQL — rate() over it is an empty vector, so every ratio below
-  evaluated to nothing and no alert could ever fire. The canonical list of series names the server
-  actually exports is honua-server's observability/slo-metric-contract.json, and honua-release's
-  gate-observability fails if this file drifts from it (honua-release#5).
+  DENOMINATOR: honua_serving_request_duration_ms_count — the Prometheus _count child of the server's
+  serving-plane latency histogram, i.e. one sample per served request that classifies to a Honua
+  protocol, excluding health probes and the metrics scrape. The flat honua_http_requests_total these
+  rules used to divide by was never emitted by anything, and an absent series does not error in
+  PromQL — rate() over it is an empty vector, so every ratio evaluated to nothing and no alert could
+  ever fire. The canonical list of names the server exports is honua-server's
+  observability/slo-metric-contract.json, and honua-release's gate-observability fails if this file
+  drifts from it (honua-release#5).
 
-  The histogram's _count is also strictly richer than a flat counter: it carries honua_protocol,
-  honua_operation and status_class, so a GeoServices-only budget can be scoped with
-  honua_protocol=~"FeatureServer|MapServer|ImageServer|VectorTileServer".
+  It is not the only request-volume series available — OpenTelemetry's ASP.NET Core instrumentation
+  also exports http_server_request_duration_seconds_count for every HTTP request. That one is not
+  used here because it carries no Honua protocol label, so a protocol-scoped budget cannot be
+  expressed with it.
 
-  Combined error ratio over a window: every error envelope (transport 4xx/5xx AND in-band
-  200-with-{error}) over classified serving-plane requests.
+  NUMERATOR: transport 5xx PLUS every in-band (HTTP < 400 body-envelope) error. Not 5xx alone, which
+  is blind to the GeoServices 200-with-{error} class these alerts exist for; and not every error
+  envelope either, because that counts ordinary 4xx — an Esri client probing capabilities and
+  collecting 404s would permanently breach a 99.0% availability target through no fault of the
+  platform. The two selectors are disjoint (in_band is defined as error_code < 400).
+
+  `or`, not `+`: PromQL binary arithmetic drops any group missing from either side, so a `+` would
+  silently yield nothing whenever a deployment has in-band errors but no 5xx — reintroducing exactly
+  the empty-vector silence this change fixes.
+
+  SCOPE: a ratio is only meaningful when the denominator covers the numerator's population.
+  HonuaGeoServicesInBandErrorRateHigh therefore narrows the denominator to the GeoServices protocol
+  family ($geoServicesSel, mirroring HonuaTelemetry.Protocols.GeoServicesFamily); the all-surface
+  alerts leave it unscoped because their numerator is all-surface too.
 */ -}}
-{{- $errRatio := printf "sum(rate(honua_request_error_total{%s}[%%s])) / clamp_min(sum(rate(honua_serving_request_duration_ms_count{%s}[%%s])), 0.001)" $sel $sel }}
+{{- $errRatio := printf "(sum(rate(honua_request_error_total{%s}[%%s]) or rate(honua_request_error_total{%s}[%%s]))) / clamp_min(sum(rate(honua_serving_request_duration_ms_count{%s}[%%s])), 0.001)" $inbandSel $fiveXxSel $sel }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -59,7 +74,7 @@ spec:
 {{- with $slo.availability }}
 {{- if .enabled }}
         - alert: HonuaAvailabilitySloViolation
-          expr: '(1 - ({{ printf "sum(rate(honua_request_error_total{%s}[%s]))" $sel .window }} / clamp_min({{ printf "sum(rate(honua_serving_request_duration_ms_count{%s}[%s]))" $sel .window }}, 0.001))) < {{ .target }}'
+          expr: '(1 - ({{ printf $errRatio .window .window .window }})) < {{ .target }}'
           for: {{ .for }}
           labels:
             severity: {{ .severity | quote }}
@@ -80,7 +95,7 @@ spec:
 {{- with $slo.errorRate }}
 {{- if .enabled }}
         - alert: HonuaErrorRateHigh
-          expr: '({{ printf $errRatio .window .window }}) > {{ .threshold }}'
+          expr: '({{ printf $errRatio .window .window .window }}) > {{ .threshold }}'
           for: {{ .for }}
           labels:
             severity: {{ .severity | quote }}
@@ -101,7 +116,7 @@ spec:
 {{- with $slo.inBandErrors }}
 {{- if .enabled }}
         - alert: HonuaGeoServicesInBandErrorRateHigh
-          expr: '(sum(rate(honua_request_error_total{ {{- $inbandSel -}} }[{{ .window }}])) / clamp_min({{ printf "sum(rate(honua_serving_request_duration_ms_count{%s}[%s]))" $sel .window }}, 0.001)) > {{ .threshold }}'
+          expr: '(sum(rate(honua_request_error_total{ {{- $inbandSel -}} }[{{ .window }}])) / clamp_min({{ printf "sum(rate(honua_serving_request_duration_ms_count{%s}[%s]))" $geoServicesSel .window }}, 0.001)) > {{ .threshold }}'
           for: {{ .for }}
           labels:
             severity: {{ .severity | quote }}
@@ -124,7 +139,7 @@ spec:
 {{- range $tier, $cfg := (dict "Fast" .fast "Medium" .medium "Slow" .slow) }}
 {{- if $cfg }}
         - alert: HonuaErrorBudget{{ $tier }}Burn
-          expr: '(({{ printf $errRatio $cfg.window $cfg.window }}) / {{ $budget }}) > {{ $cfg.threshold }}'
+          expr: '(({{ printf $errRatio $cfg.window $cfg.window $cfg.window }}) / {{ $budget }}) > {{ $cfg.threshold }}'
           for: {{ $cfg.for }}
           labels:
             severity: {{ $cfg.severity | quote }}
