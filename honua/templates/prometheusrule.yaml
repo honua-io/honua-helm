@@ -6,8 +6,24 @@
 {{- $budget := $slo.errorBudget | default 0.010 }}
 {{- $runbook := $slo.runbookUrl | default "" }}
 {{- $alertLabels := $slo.alertLabels | default dict }}
-{{- /* Combined error ratio over a window: transport 5xx AND in-band 200-with-{error}. */ -}}
-{{- $errRatio := printf "sum(rate(honua_request_error_total{%s}[%%s])) / clamp_min(sum(rate(honua_http_requests_total{%s}[%%s])), 0.001)" $sel $sel }}
+{{- /*
+  SLO denominator: honua_serving_request_duration_ms_count — the Prometheus _count child of the
+  server's serving-plane latency histogram, i.e. one sample per served request that classifies to a
+  Honua protocol. It is the ONLY request-volume series honua-server exports; the flat
+  honua_http_requests_total these rules used to divide by was never emitted by anything, and an
+  absent series does not error in PromQL — rate() over it is an empty vector, so every ratio below
+  evaluated to nothing and no alert could ever fire. The canonical list of series names the server
+  actually exports is honua-server's observability/slo-metric-contract.json, and honua-release's
+  gate-observability fails if this file drifts from it (honua-release#5).
+
+  The histogram's _count is also strictly richer than a flat counter: it carries honua_protocol,
+  honua_operation and status_class, so a GeoServices-only budget can be scoped with
+  honua_protocol=~"FeatureServer|MapServer|ImageServer|VectorTileServer".
+
+  Combined error ratio over a window: every error envelope (transport 4xx/5xx AND in-band
+  200-with-{error}) over classified serving-plane requests.
+*/ -}}
+{{- $errRatio := printf "sum(rate(honua_request_error_total{%s}[%%s])) / clamp_min(sum(rate(honua_serving_request_duration_ms_count{%s}[%%s])), 0.001)" $sel $sel }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -43,7 +59,7 @@ spec:
 {{- with $slo.availability }}
 {{- if .enabled }}
         - alert: HonuaAvailabilitySloViolation
-          expr: '(1 - ({{ printf "sum(rate(honua_request_error_total{%s}[%s]))" $sel .window }} / clamp_min({{ printf "sum(rate(honua_http_requests_total{%s}[%s]))" $sel .window }}, 0.001))) < {{ .target }}'
+          expr: '(1 - ({{ printf "sum(rate(honua_request_error_total{%s}[%s]))" $sel .window }} / clamp_min({{ printf "sum(rate(honua_serving_request_duration_ms_count{%s}[%s]))" $sel .window }}, 0.001))) < {{ .target }}'
           for: {{ .for }}
           labels:
             severity: {{ .severity | quote }}
@@ -85,7 +101,7 @@ spec:
 {{- with $slo.inBandErrors }}
 {{- if .enabled }}
         - alert: HonuaGeoServicesInBandErrorRateHigh
-          expr: '(sum(rate(honua_request_error_total{ {{- $inbandSel -}} }[{{ .window }}])) / clamp_min({{ printf "sum(rate(honua_http_requests_total{%s}[%s]))" $sel .window }}, 0.001)) > {{ .threshold }}'
+          expr: '(sum(rate(honua_request_error_total{ {{- $inbandSel -}} }[{{ .window }}])) / clamp_min({{ printf "sum(rate(honua_serving_request_duration_ms_count{%s}[%s]))" $sel .window }}, 0.001)) > {{ .threshold }}'
           for: {{ .for }}
           labels:
             severity: {{ .severity | quote }}
