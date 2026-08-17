@@ -116,17 +116,22 @@ jobs:
           grep -q 'in_band="true"' /tmp/honua-rendered-observability.yaml
           # An explicit selector remains authoritative and is not combined with
           # the chart-derived release scope.
-          grep -q 'honua_http_requests_total{service="honua-server"}' /tmp/honua-rendered-observability.yaml
-          if grep -q 'honua_http_requests_total{namespace="default",service="honua-server"}' /tmp/honua-rendered-observability.yaml; then
+          # The SLO denominator must be a series honua-server actually exports. These
+          # assertions previously pinned honua_http_requests_total, a metric no Honua
+          # component has ever emitted — so this step did not merely miss the drift, it
+          # enforced it. Keep them in step with honua-server's
+          # observability/slo-metric-contract.json.
+          grep -q 'honua_serving_request_duration_ms_count{service="honua-server"}' /tmp/honua-rendered-observability.yaml
+          if grep -q 'honua_serving_request_duration_ms_count{namespace="default",service="honua-server"}' /tmp/honua-rendered-observability.yaml; then
             echo "An explicit SLO metricSelector must override the default scope."
             exit 1
           fi
-          # With no override, every application counter is isolated to the
+          # With no override, every application series is isolated to the
           # Helm release's namespace and Service target labels.
-          grep -q 'honua_http_requests_total{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
+          grep -q 'honua_serving_request_duration_ms_count{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
           grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
           grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua",in_band="true"}' /tmp/honua-rendered-slo-default-scope.yaml
-          if grep -Eq 'honua_(http_requests|request_error)_total\{\}' /tmp/honua-rendered-slo-default-scope.yaml; then
+          if grep -Eq 'honua_(serving_request_duration_ms_count|request_error_total)\{\}' /tmp/honua-rendered-slo-default-scope.yaml; then
             echo "Default SLO rules must not use unscoped application metrics."
             exit 1
           fi
