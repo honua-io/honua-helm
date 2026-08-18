@@ -116,17 +116,33 @@ jobs:
           grep -q 'in_band="true"' /tmp/honua-rendered-observability.yaml
           # An explicit selector remains authoritative and is not combined with
           # the chart-derived release scope.
-          grep -q 'honua_http_requests_total{service="honua-server"}' /tmp/honua-rendered-observability.yaml
-          if grep -q 'honua_http_requests_total{namespace="default",service="honua-server"}' /tmp/honua-rendered-observability.yaml; then
+          # The SLO denominator must be a series honua-server actually exports. These
+          # assertions previously pinned honua_http_requests_total, a metric no Honua
+          # component has ever emitted — so this step did not merely miss the drift, it
+          # enforced it. Keep them in step with honua-server's
+          # observability/slo-metric-contract.json.
+          grep -q 'honua_serving_request_duration_ms_count{service="honua-server"}' /tmp/honua-rendered-observability.yaml
+          if grep -q 'honua_serving_request_duration_ms_count{namespace="default",service="honua-server"}' /tmp/honua-rendered-observability.yaml; then
             echo "An explicit SLO metricSelector must override the default scope."
             exit 1
           fi
-          # With no override, every application counter is isolated to the
+          # With no override, every application series is isolated to the
           # Helm release's namespace and Service target labels.
-          grep -q 'honua_http_requests_total{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
-          grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
+          grep -q 'honua_serving_request_duration_ms_count{namespace="tenant-a",service="tenant-a-honua"}' /tmp/honua-rendered-slo-default-scope.yaml
           grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua",in_band="true"}' /tmp/honua-rendered-slo-default-scope.yaml
-          if grep -Eq 'honua_(http_requests|request_error)_total\{\}' /tmp/honua-rendered-slo-default-scope.yaml; then
+          grep -q 'honua_request_error_total{namespace="tenant-a",service="tenant-a-honua",error_code=~"5.."}' /tmp/honua-rendered-slo-default-scope.yaml
+          # The budgeted numerator is in-band OR 5xx, joined with `or` and never `+`:
+          # PromQL arithmetic drops any group missing from either side, so `+` would
+          # yield nothing at all whenever a deployment has in-band errors but no 5xx.
+          if grep -Eq 'honua_request_error_total\{[^}]*\}\[[0-9a-z]+\]\) \+ rate' /tmp/honua-rendered-slo-default-scope.yaml; then
+            echo "The SLO numerator must union its two selectors with 'or', not '+'."
+            exit 1
+          fi
+          # The GeoServices in-band alert must scope BOTH sides of its ratio to the
+          # GeoServices protocol family. Dividing a GeoServices-only numerator by all
+          # serving-plane traffic understates the error rate — the fail-open shape.
+          grep -q 'honua_serving_request_duration_ms_count{namespace="tenant-a",service="tenant-a-honua",honua_protocol=~"FeatureServer' /tmp/honua-rendered-slo-default-scope.yaml
+          if grep -Eq 'honua_(serving_request_duration_ms_count|request_error_total)\{\}' /tmp/honua-rendered-slo-default-scope.yaml; then
             echo "Default SLO rules must not use unscoped application metrics."
             exit 1
           fi

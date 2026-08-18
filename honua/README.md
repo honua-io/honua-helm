@@ -495,14 +495,18 @@ The `PrometheusRule` has two rule groups when `metrics.prometheusRule.enabled`:
   application metric required.
 - **`honua.slo`** (`metrics.prometheusRule.slo.enabled`, default true) —
   request-availability, combined error-rate, and multi-window burn-rate alerts
-  built on the server's `honua_request_error_total` / `honua_http_requests_total`
-  counters. These deliberately **include the GeoServices in-band 200-with-`{error}`
-  signal**: GeoServices returns HTTP 200 with an `{error}` body for Esri-client
-  compatibility, so those failures are invisible to load-balancer 5xx metrics. The
-  server increments `honua_request_error_total` with `in_band="true"` for them, so
-  every ratio counts that class and `HonuaGeoServicesInBandErrorRateHigh` alerts on
-  it directly. Thresholds/windows mirror the honua-devops SLO rules and are fully
-  overridable under `metrics.prometheusRule.slo`.
+  built on the server's `honua_request_error_total` counter over the
+  `honua_serving_request_duration_ms_count` request total. These deliberately
+  **include the GeoServices in-band 200-with-`{error}` signal**: GeoServices returns
+  HTTP 200 with an `{error}` body for Esri-client compatibility, so those failures
+  are invisible to load-balancer 5xx metrics. The server increments
+  `honua_request_error_total` with `in_band="true"` for them, so the budgeted ratio
+  is transport 5xx plus in-band errors, and `HonuaGeoServicesInBandErrorRateHigh`
+  alerts on the GeoServices-scoped slice directly. Ordinary out-of-band 4xx is
+  excluded so routine client probing cannot burn the budget. Series names and scopes
+  come from honua-server's `observability/slo-metric-contract.json`.
+  Thresholds/windows mirror the honua-devops SLO rules and are fully overridable
+  under `metrics.prometheusRule.slo`.
 
   By default, every application counter selector is scoped with the Prometheus
   Operator target labels `namespace="<release namespace>"` and
