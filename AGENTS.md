@@ -152,9 +152,11 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
   no `+` build metadata. Put free-form build info in `release.manifest`.
 - Bitnami PostgreSQL has no PostGIS — for anything beyond local dev, point
   `ConnectionStrings__DefaultConnection` at an external PostGIS database.
-- Versioning: chart tagged `chart-vX.Y.Z` here; release workflow validates
+- Versioning: chart tagged with a signed annotated `chart-vX.Y.Z` here; release workflow validates
   SemVer (no `v` prefix, no `+`), verifies the server image exists, then stamps
-  `Chart.yaml` version/appVersion and `values.yaml` `image.tag` before packaging.
+  `Chart.yaml` version/appVersion and `values.yaml` `image.tag` before packaging,
+  refuses an existing OCI version, and requires an anonymous byte-identical pull
+  before creating the GitHub Release. Manual dispatch is dry-run only.
   See `RELEASING.md`.
 - When changing pinned subchart versions, update both `Chart.yaml` ranges and
   `Chart.lock` (`helm dependency update`), since CI builds from the lock.

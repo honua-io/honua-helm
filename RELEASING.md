@@ -30,15 +30,13 @@ install time.
 ## Cut procedure
 
 The canonical public release path is the tag-triggered run, which publishes to
-OCI and creates the matching GitHub Release. `workflow_dispatch` is the
-dry-run lane: by default it validates inputs, verifies the honua-server
+OCI, verifies the exact chart bytes through an anonymous pull, and then creates
+the matching GitHub Release. `workflow_dispatch` is dry-run only: it validates
+inputs, verifies the honua-server
 image, builds dependencies from `Chart.lock`, stamps the chart, lints,
-renders, and packages — but does not publish. An explicit `publish: true`
-dispatch input flips it to a publish-without-Release path; reserve that for
-unusual flows (for example, a manual republish) and do not pair it with the
-tag path for the same `chart_version` — re-pushing the same OCI artifact tag
-overwrites the existing manifest and changes its digest, breaking the
-chart-version → digest contract.
+renders, and packages the chart — but cannot publish or attest it. There is no
+manual republish path: an existing OCI version fails the release preflight so
+the chart-version → digest contract cannot be overwritten.
 
 ### 1. Prepare on `trunk`
 
@@ -55,38 +53,50 @@ chart-version → digest contract.
 
 - `chart_version`: e.g. `0.2.0`
 - `app_version`: e.g. `1.2.3`
-- `publish`: leave **off** for a dry run (default)
 
 The workflow resolves the inputs, verifies that
 `ghcr.io/honua-io/honua-server:v${app_version}-aot` exists and resolves to a
 single `sha256` digest, builds dependencies, stamps `Chart.yaml` and
-`values.yaml`, lints, renders, and packages the `.tgz`. With `publish: false`
-the run stops there and emits a "dry run (no publish)" step summary — no
+`values.yaml`, lints, renders, and packages the `.tgz`. The run then stops and
+emits a "dry run (no publish)" step summary — no
 chart is pushed to OCI and no GitHub Release is created. Use this to
 validate inputs without consuming a chart version.
-
-Setting `publish: true` performs every step above and additionally pushes to
-`oci://ghcr.io/honua-io/charts`. This path does not create a GitHub Release;
-prefer the tag path (Step 3) for the canonical public cut.
 
 ### 3. Tag the cut
 
 ```bash
-git tag chart-vX.Y.Z
+git tag -s chart-vX.Y.Z -m "Honua chart X.Y.Z"
 git push origin chart-vX.Y.Z
 ```
 
-The tag-triggered run derives `chart_version` from the tag and reads
+The tag must be annotated, signed, and reported as verified by GitHub. The
+tag-triggered run derives `chart_version` from the tag and reads
 `app_version` from `Chart.yaml`. Both are stamped into the package, the
-chart is pushed to `oci://ghcr.io/honua-io/charts`, and a GitHub Release
-named `chart-vX.Y.Z` is created with the `.tgz` attached and auto-generated
-notes.
+workflow proves the version is absent, and the chart is pushed once to
+`oci://ghcr.io/honua-io/charts`. A fresh job with no registry login pulls the
+same version and requires its SHA-256 to match the packaged bytes. Only then is
+a GitHub Release named `chart-vX.Y.Z` created with the `.tgz`, checksum, and
+release notes attached.
+
+For the first chart package, GHCR may create `charts/honua` as private even
+though this source repository is public. If the anonymous-pull job fails for
+that reason, an organization package administrator must change
+`charts/honua` visibility to **Public**, then use **Re-run failed jobs**. Do not
+rerun the successful publish job or push the tag again. Publication itself
+uses the job-scoped `GITHUB_TOKEN` with `packages: write`; no long-lived
+registry credential is required.
+
+If GHCR accepted the chart but the publish job itself failed before recording
+the digest, do not rerun that job against the same version. Confirm the package
+exists, advance the chart version, and cut a new signed tag; the preflight will
+not treat a pre-existing version as an artifact built by a later run.
 
 ### Rejection rules
 
 The workflow fails fast (`set -euo pipefail`) when:
 
 - Tag does not match `chart-vX.Y.Z[-suffix]`.
+- Tag is lightweight, unsigned, or its signature is not verified by GitHub.
 - `chart_version` is not bare SemVer (`X.Y.Z`, optional pre-release; no `v`
   prefix and no `+` build metadata).
 - `app_version` is empty, `null`, or the placeholder `0.0.0` — operators must
@@ -108,6 +118,9 @@ The workflow fails fast (`set -euo pipefail`) when:
   `dist/honua-${chart_version}.tgz`.
 - `helm push` succeeds without returning a single `sha256` OCI digest for the
   published chart.
+- The chart version already exists in GHCR.
+- The published `.tgz` cannot be pulled anonymously or differs byte-for-byte
+  from the packaged and attested artifact.
 
 ## Coupling to honua-server
 
@@ -148,10 +161,12 @@ customer requirement for `helm repo add`.
 ## Verification after a cut
 
 ```bash
-helm registry login ghcr.io
+tmp_dir="$(mktemp -d)"
+export HELM_REGISTRY_CONFIG="${tmp_dir}/registry.json"
 helm pull oci://ghcr.io/honua-io/charts/honua --version X.Y.Z
 helm show chart oci://ghcr.io/honua-io/charts/honua --version X.Y.Z
 ```
 
 Confirm the rendered `Chart.yaml` shows the expected `version` and `appVersion`,
-and that `values.yaml` shows the stamped `image.tag`.
+and that `values.yaml` shows the stamped `image.tag`. Do not log in for this
+check: anonymous success is the public-install evidence.
