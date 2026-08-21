@@ -7,12 +7,11 @@ Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis su
 - Versioning and cut procedure: see [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
 
 > **Status:** no chart has been published to the OCI registry yet (neither a
-> `chart-vX.Y.Z` release nor a manual `workflow_dispatch` publish has run), so
+> `chart-vX.Y.Z` release has run), so
 > the OCI registry commands below do not currently resolve. Availability is
 > determined by whether a chart package exists at the OCI reference — check
-> with `helm show chart oci://ghcr.io/honua-io/charts/honua` — not by release
-> tags alone, since the release workflow's manual dispatch can publish without
-> tagging. Until a chart is published, install from a checkout — see the
+> with an anonymous `helm show chart oci://ghcr.io/honua-io/charts/honua` — not
+> by release tags alone. Until a chart is published, install from a checkout — see the
 > [repo README quick start](https://github.com/honua-io/honua-helm#quick-start-development-install).
 
 ## Install (published chart)
