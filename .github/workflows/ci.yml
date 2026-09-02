@@ -720,18 +720,12 @@ jobs:
           exit 1
 
       - name: Install, upgrade, test, and rollback
+        env:
+          HONUA_IMAGE_DIGEST_A: sha256:373aa1fdf1bd4153df9cb21e25e43dfc463c0e194fcac13b40a39c4bb390eb72
+          HONUA_IMAGE_DIGEST_B: sha256:571395718765a499d8e25e069ded7bb8d990dd784e9f1e6bef4fd2b8322f2508
         run: |
           set -euo pipefail
-          mkdir -p /tmp/honua-smoke
-
-          helm install honua ./honua -n honua-smoke -f honua/ci-values/upgrade-base.yaml --wait --timeout 10m
-          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-install.log
-
-          helm upgrade honua ./honua -n honua-smoke -f honua/ci-values/upgrade-target.yaml --wait --timeout 10m
-          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-upgrade.log
-
-          helm rollback honua 1 -n honua-smoke --wait --timeout 10m
-          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-rollback.log
+          scripts/distinct-digest-smoke.sh
 
       - name: Capture smoke evidence
         if: always()
