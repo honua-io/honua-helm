@@ -241,6 +241,13 @@ helm rollback <release> <revision>
 Digest-pinned values make rollback deterministic because the previous Helm
 revision points back to the previous image digest.
 
+CI proves that restoration with `scripts/distinct-digest-smoke.sh`: revisions
+1 and 2 use distinct immutable server digests, a durable database row is seeded
+before upgrade, and each phase captures manifests, values, workload
+UIDs/imageIDs, release metadata, checksums, Helm-test logs, and a runtime marker
+checksum. Rollback must restore revision 1's kubelet imageID and runtime marker
+while preserving the seed; a deliberate non-restoration assertion must fail.
+
 The chart cannot guarantee database schema downgrade compatibility. If a
 migration is not backward compatible with the rolled-back Honua image, the
 operator must restore the database from a backup or roll forward to a
