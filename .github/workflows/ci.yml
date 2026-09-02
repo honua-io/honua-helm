@@ -92,6 +92,23 @@ jobs:
       - name: Render templates (redis auth)
         run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
 
+      - name: Prove Redis-free Production and maintained bundled Redis
+        run: |
+          set -euo pipefail
+          helm template honua ./honua -f honua/values-prod.yaml \
+            --set-string image.tag=v1.0.0-aot > /tmp/honua-rendered-prod-redis-free.yaml
+          grep -A1 'name: HONUA_PREFLIGHT_REDIS_REQUIRED' /tmp/honua-rendered-prod-redis-free.yaml | grep -q 'value: "false"'
+          if grep -q 'kind: StatefulSet' /tmp/honua-rendered-prod-redis-free.yaml; then
+            echo "Redis-free Production unexpectedly rendered a bundled Redis workload."
+            exit 1
+          fi
+          grep -q 'image: "redis:7.4-alpine"' /tmp/honua-rendered-redis-auth.yaml
+          grep -A1 'name: HONUA_PREFLIGHT_REDIS_CHECK' /tmp/honua-rendered-redis-auth.yaml | grep -q 'value: "false"'
+          if grep -q 'bitnami/redis' /tmp/honua-rendered-redis-auth.yaml; then
+            echo "Withdrawn Bitnami Redis repository remains in the rendered chart."
+            exit 1
+          fi
+
       - name: Render templates (observability)
         run: helm template honua ./honua -f honua/ci-values/observability.yaml > /tmp/honua-rendered-observability.yaml
 
@@ -201,9 +218,9 @@ jobs:
           set -euo pipefail
 
           pg_name_override="$(printf '%s' 'Host=honua-pgsvc;Port=55432;Database=honua;Username=honua;Password=ci-password' | base64 | tr -d '\n')"
-          redis_name_override="$(printf '%s' 'honua-cache-master:16379,password=ci-redis-password' | base64 | tr -d '\n')"
+          redis_name_override="$(printf '%s' 'honua-honua-redis:6379,password=ci-redis-password' | base64 | tr -d '\n')"
           pg_fullname_override="$(printf '%s' 'Host=custom-postgresql;Port=55433;Database=honua;Username=honua;Password=ci-password' | base64 | tr -d '\n')"
-          redis_fullname_override="$(printf '%s' 'custom-redis-master:26379,password=ci-redis-password' | base64 | tr -d '\n')"
+          redis_fullname_override="$(printf '%s' 'honua-honua-redis:6379,password=ci-redis-password' | base64 | tr -d '\n')"
 
           grep -q "ConnectionStrings__DefaultConnection: ${pg_name_override}" /tmp/honua-rendered-dependency-name-overrides.yaml
           grep -q "ConnectionStrings__redis: ${redis_name_override}" /tmp/honua-rendered-dependency-name-overrides.yaml

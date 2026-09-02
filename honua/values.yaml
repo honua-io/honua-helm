@@ -465,13 +465,16 @@ postgresql:
     password: ""
     database: ""
 
-# Optional chart-managed Bitnami Redis dependency. Non-development deployments
-# require Redis for durable feature-change event storage. With chart-managed
+# Optional chart-managed Redis using the Docker Official Image. SingleInstance
+# deployments do not require Redis; MultiNode deployments do. With chart-managed
 # secrets, either set secret.env.ConnectionStrings__redis or provide
 # redis.auth.password so the chart can derive the Redis connection string.
 redis:
   enabled: false
-  architecture: standalone
+  image:
+    repository: redis
+    tag: "7.4-alpine"
+    pullPolicy: IfNotPresent
   auth:
     enabled: true
     password: ""

@@ -493,10 +493,19 @@
     },
     "redis": {
       "type": "object",
-      "description": "Optional Bitnami Redis dependency settings.",
+      "description": "Optional chart-managed Redis settings using the Docker Official Image.",
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          },
+          "required": ["repository", "tag", "pullPolicy"]
         },
         "auth": {
           "type": "object",

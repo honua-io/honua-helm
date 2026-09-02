@@ -17,11 +17,6 @@ postgresql:
 
 redis:
   enabled: true
-  fullnameOverride: custom-redis
   auth:
     enabled: true
     password: "ci-redis-password"
-  master:
-    service:
-      ports:
-        redis: 26379
