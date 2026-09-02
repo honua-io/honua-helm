@@ -553,6 +553,7 @@ jobs:
           set +e
           helm template honua ./honua \
             -f honua/ci-values/base.yaml \
+            --set redis.enabled=true \
             --set secret.env.ConnectionStrings__redis= \
             > /tmp/honua-rendered-redis-missing.yaml 2>&1
           status=$?
