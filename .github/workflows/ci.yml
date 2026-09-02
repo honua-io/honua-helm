@@ -766,27 +766,14 @@ jobs:
           exit 1
 
       - name: Install, upgrade, test, and rollback
+        env:
+          # Server 9f2f16a (server#4725), publisher run 34692125246: amd64
+          # AOT -> JIT -> AOT keeps distinct imageIDs and Disabled licensing.
+          HONUA_IMAGE_DIGEST_A: sha256:51a3fac496dc2e422646603f8675c7517dadad13b1263909fe73c65fd29b445d
+          HONUA_IMAGE_DIGEST_B: sha256:62a3d0b42a9087cba79065944f5956bf2fd4af4bb130b7533e06f1a36b2eb14e
         run: |
           set -euo pipefail
-          mkdir -p /tmp/honua-smoke
-
-          helm install honua ./honua -n honua-smoke -f honua/ci-values/upgrade-base.yaml --wait --timeout 10m
-          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-install.log
-          # Helm --logs prints Pod hooks; collect the completed Job explicitly.
-          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status | tee -a /tmp/honua-smoke/test-install.log
-          grep -Fq "license status check passed: mode=disabled" /tmp/honua-smoke/test-install.log
-
-          helm upgrade honua ./honua -n honua-smoke -f honua/ci-values/upgrade-target.yaml --wait --timeout 10m
-          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-upgrade.log
-          # Helm --logs prints Pod hooks; collect the completed Job explicitly.
-          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status | tee -a /tmp/honua-smoke/test-upgrade.log
-          grep -Fq "license status check passed: mode=disabled" /tmp/honua-smoke/test-upgrade.log
-
-          helm rollback honua 1 -n honua-smoke --wait --timeout 10m
-          helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-rollback.log
-          # Helm --logs prints Pod hooks; collect the completed Job explicitly.
-          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status | tee -a /tmp/honua-smoke/test-rollback.log
-          grep -Fq "license status check passed: mode=disabled" /tmp/honua-smoke/test-rollback.log
+          scripts/distinct-digest-smoke.sh
 
       - name: Capture smoke evidence
         if: always()
