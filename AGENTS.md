@@ -25,8 +25,9 @@ pods stop before new pods start during a migrating upgrade.
 - Subchart dependencies (Bitnami, from `https://charts.bitnami.com/bitnami`):
   - `postgresql` `>=12.0.0 <16.0.0` (gated by `postgresql.enabled`, dev only —
     Bitnami PostgreSQL does NOT include PostGIS, which Honua requires).
-  - `redis` `>=18.0.0 <21.0.0` (gated by `redis.enabled`).
-  - `Chart.lock` pins `postgresql 15.5.38` and `redis 20.13.4`.
+  - `Chart.lock` pins `postgresql 15.5.38`.
+- Optional chart-managed Redis uses the Docker Official `redis` image directly;
+  it is not a subchart dependency.
 - Values validation via `honua/values.schema.json` (JSON Schema) plus
   `fail`-based template guards in `honua/templates/validations.yaml`.
 - CI uses Helm (`azure/setup-helm`), `kind` (`helm/kind-action`), `kubectl`, and

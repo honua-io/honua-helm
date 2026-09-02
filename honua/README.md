@@ -223,8 +223,9 @@ helm upgrade --install honua honua \
   --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
 
-The dev-only PostgreSQL subchart example runs in `Development` so it does not
-require Redis. For non-development environments, enable Redis (below) or supply
+The dev-only PostgreSQL subchart example runs in `Development`. Production
+SingleInstance deployments are also legitimately Redis-free. MultiNode
+deployments must enable chart-managed Redis (below) or supply
 `secret.env.ConnectionStrings__redis`.
 
 When `postgresql.enabled=true`, `postgresql.auth.username`,
@@ -236,7 +237,7 @@ skips PostgreSQL TCP reachability because Helm pre-install hooks run before
 subchart Services and Pods are created. Pre-upgrade hooks check the existing
 PostgreSQL endpoint.
 
-## Redis subchart
+## Optional chart-managed Redis
 
 ```bash
 helm upgrade --install honua honua \
@@ -421,7 +422,7 @@ characters. For non-development deployments, it also fails if
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
-| `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+| `redis.enabled` | false | Enable single-node Redis from the Docker Official Image. Requires `redis.auth.enabled=true`; chart-managed secrets derive the Redis connection string from `redis.auth.password`. MultiNode installs need either this or an external `ConnectionStrings__redis`. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 

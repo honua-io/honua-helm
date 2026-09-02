@@ -17,11 +17,6 @@ postgresql:
 
 redis:
   enabled: true
-  nameOverride: cache
   auth:
     enabled: true
     password: "ci-redis-password"
-  master:
-    service:
-      ports:
-        redis: 16379
