@@ -80,11 +80,11 @@ jobs:
             exit 1
           fi
           if [[ "${app_version}" == v* ]]; then
-            echo "::error::app_version '${app_version}' must not start with 'v' — supply the bare server SemVer (e.g. 1.2.3, not v1.2.3). The image tag is stamped as v\${app_version}-aot." >&2
+            echo "::error::app_version '${app_version}' must not start with 'v' â€” supply the bare server SemVer (e.g. 1.2.3, not v1.2.3). The image tag is stamped as v\${app_version}-aot." >&2
             exit 1
           fi
           if [[ "${app_version}" == *-aot ]]; then
-            echo "::error::app_version '${app_version}' must not end with '-aot' — supply the bare server SemVer (e.g. 1.2.3, not 1.2.3-aot). The image tag is stamped as v\${app_version}-aot." >&2
+            echo "::error::app_version '${app_version}' must not end with '-aot' â€” supply the bare server SemVer (e.g. 1.2.3, not 1.2.3-aot). The image tag is stamped as v\${app_version}-aot." >&2
             exit 1
           fi
           if [[ ! "${app_version}" =~ ${semver_re} ]]; then
@@ -362,8 +362,10 @@ jobs:
       contents: read
     env:
       OCI_CHART: oci://ghcr.io/honua-io/charts/honua
-      HELM_REGISTRY_CONFIG: ${{ runner.temp }}/anonymous-registry-config.json
     steps:
+      - name: Use an anonymous Helm registry configuration
+        run: echo "HELM_REGISTRY_CONFIG=${RUNNER_TEMP}/anonymous-registry-config.json" >> "${GITHUB_ENV}"
+
       - name: Setup Helm
         uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
 

@@ -4,17 +4,17 @@ name: AKS Chart Smoke
 # on the Azure Marketplace customer-operated path (honua-helm#10).
 #
 # Two modes, both via workflow_dispatch:
-#   mode=dry-run  (default) — render + lint + kubeconform of the AKS overlays.
+#   mode=dry-run  (default) â€” render + lint + kubeconform of the AKS overlays.
 #                 Contacts NO cluster and needs NO secrets. Safe to run anytime;
 #                 also exercised on every push/PR in ci.yml so the harness can't
 #                 rot.
-#   mode=live     — runs scripts/aks-smoke.sh against a real AKS cluster. Gated
+#   mode=live     â€” runs scripts/aks-smoke.sh against a real AKS cluster. Gated
 #                 behind the `aks-smoke` GitHub Environment so the OIDC azure
 #                 login + runtime secrets are operator-scoped and reviewable.
 #
 # The live path requires operator-provisioned Azure/AKS and is INTENTIONALLY
 # unable to run without the operator configuring the environment below. Nothing
-# here provisions AKS or fabricates evidence — the harness records only what it
+# here provisions AKS or fabricates evidence â€” the harness records only what it
 # actually runs against the kubeconfig it is given.
 
 on:
@@ -30,7 +30,7 @@ on:
         type: string
         required: false
       image_digest:
-        description: "Honua image digest (sha256:...) — pin this for Azure Marketplace listing-submission evidence."
+        description: "Honua image digest (sha256:...) â€” pin this for Azure Marketplace listing-submission evidence."
         type: string
         required: false
       release_id:
@@ -61,10 +61,10 @@ jobs:
     if: ${{ inputs.mode == 'dry-run' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Helm
-        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
 
       - name: Add Bitnami chart repository
         run: helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -76,6 +76,7 @@ jobs:
         run: |
           curl -fsSL -o /tmp/kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  /tmp/kubeconform.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
           kubeconform -v
 
@@ -98,7 +99,7 @@ jobs:
 
       - name: Upload dry-run evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aks-smoke-dryrun-${{ github.run_id }}
           path: evidence/aks-dryrun-${{ github.run_id }}
@@ -117,10 +118,10 @@ jobs:
       contents: read
       id-token: write # OIDC federation for azure/login (no client secret)
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Helm
-        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
 
       - name: Add Bitnami chart repository
         run: helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -132,7 +133,7 @@ jobs:
       # secrets/vars before this can run. AZURE_* identify the OIDC app
       # (federated to this repo); AKS_* select the validation cluster.
       - name: Azure login (OIDC, no client secret)
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -150,6 +151,7 @@ jobs:
         run: |
           curl -fsSL -o /tmp/kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  /tmp/kubeconform.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
           kubeconform -v
 
@@ -186,7 +188,7 @@ jobs:
 
       - name: Upload live AKS smoke evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aks-smoke-live-${{ github.run_id }}
           path: evidence/aks-${{ github.run_id }}
