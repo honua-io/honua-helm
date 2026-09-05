@@ -121,7 +121,7 @@ jobs:
           # the chart-derived release scope.
           # The SLO denominator must be a series honua-server actually exports. These
           # assertions previously pinned honua_http_requests_total, a metric no Honua
-          # component has ever emitted â€” so this step did not merely miss the drift, it
+          # component has ever emitted — so this step did not merely miss the drift, it
           # enforced it. Keep them in step with honua-server's
           # observability/slo-metric-contract.json.
           grep -q 'honua_serving_request_duration_ms_count{service="honua-server"}' /tmp/honua-rendered-observability.yaml
@@ -143,7 +143,7 @@ jobs:
           fi
           # The GeoServices in-band alert must scope BOTH sides of its ratio to the
           # GeoServices protocol family. Dividing a GeoServices-only numerator by all
-          # serving-plane traffic understates the error rate â€” the fail-open shape.
+          # serving-plane traffic understates the error rate — the fail-open shape.
           grep -q 'honua_serving_request_duration_ms_count{namespace="tenant-a",service="tenant-a-honua",honua_protocol=~"FeatureServer' /tmp/honua-rendered-slo-default-scope.yaml
           if grep -Eq 'honua_(serving_request_duration_ms_count|request_error_total)\{\}' /tmp/honua-rendered-slo-default-scope.yaml; then
             echo "Default SLO rules must not use unscoped application metrics."

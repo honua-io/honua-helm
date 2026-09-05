@@ -4,17 +4,17 @@ name: AKS Chart Smoke
 # on the Azure Marketplace customer-operated path (honua-helm#10).
 #
 # Two modes, both via workflow_dispatch:
-#   mode=dry-run  (default) â€” render + lint + kubeconform of the AKS overlays.
+#   mode=dry-run  (default) — render + lint + kubeconform of the AKS overlays.
 #                 Contacts NO cluster and needs NO secrets. Safe to run anytime;
 #                 also exercised on every push/PR in ci.yml so the harness can't
 #                 rot.
-#   mode=live     â€” runs scripts/aks-smoke.sh against a real AKS cluster. Gated
+#   mode=live     — runs scripts/aks-smoke.sh against a real AKS cluster. Gated
 #                 behind the `aks-smoke` GitHub Environment so the OIDC azure
 #                 login + runtime secrets are operator-scoped and reviewable.
 #
 # The live path requires operator-provisioned Azure/AKS and is INTENTIONALLY
 # unable to run without the operator configuring the environment below. Nothing
-# here provisions AKS or fabricates evidence â€” the harness records only what it
+# here provisions AKS or fabricates evidence — the harness records only what it
 # actually runs against the kubeconfig it is given.
 
 on:
@@ -30,7 +30,7 @@ on:
         type: string
         required: false
       image_digest:
-        description: "Honua image digest (sha256:...) â€” pin this for Azure Marketplace listing-submission evidence."
+        description: "Honua image digest (sha256:...) — pin this for Azure Marketplace listing-submission evidence."
         type: string
         required: false
       release_id:

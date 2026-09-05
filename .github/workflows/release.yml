@@ -80,11 +80,11 @@ jobs:
             exit 1
           fi
           if [[ "${app_version}" == v* ]]; then
-            echo "::error::app_version '${app_version}' must not start with 'v' â€” supply the bare server SemVer (e.g. 1.2.3, not v1.2.3). The image tag is stamped as v\${app_version}-aot." >&2
+            echo "::error::app_version '${app_version}' must not start with 'v' — supply the bare server SemVer (e.g. 1.2.3, not v1.2.3). The image tag is stamped as v\${app_version}-aot." >&2
             exit 1
           fi
           if [[ "${app_version}" == *-aot ]]; then
-            echo "::error::app_version '${app_version}' must not end with '-aot' â€” supply the bare server SemVer (e.g. 1.2.3, not 1.2.3-aot). The image tag is stamped as v\${app_version}-aot." >&2
+            echo "::error::app_version '${app_version}' must not end with '-aot' — supply the bare server SemVer (e.g. 1.2.3, not 1.2.3-aot). The image tag is stamped as v\${app_version}-aot." >&2
             exit 1
           fi
           if [[ ! "${app_version}" =~ ${semver_re} ]]; then
