@@ -10,6 +10,12 @@ Release manifest: {{ default "<unset>" .Values.release.manifest }}
 Release digest: {{ default "<unset>" .Values.release.digest }}
 Upgrade strategy: {{ default "Recreate" .Values.strategy.type }}
 
+{{- if .Values.controlPlane.deployTarget.enabled }}
+Control-plane deploy target: {{ include "honua.deployTargetId" . }} (backend: {{ include "honua.deployTargetBackend" . }}, rollback: manual via `helm rollback`, no automatic recovery)
+{{- else }}
+Control-plane deploy target: registration disabled (controlPlane.deployTarget.enabled=false)
+{{- end }}
+
 Evidence:
   kubectl get configmap {{ include "honua.releaseInfoConfigMapName" . }} -n {{ .Release.Namespace }} -o yaml
   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

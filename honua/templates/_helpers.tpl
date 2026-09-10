@@ -164,6 +164,35 @@ true
 {{- printf "%s-release-info" (include "honua.fullname" .) -}}
 {{- end -}}
 
+{{- define "honua.deployTargetConfigMapName" -}}
+{{- printf "%s-deploy-target" (include "honua.fullname" .) -}}
+{{- end -}}
+
+{{- define "honua.deployTargetId" -}}
+{{- $deployTarget := get (.Values.controlPlane | default dict) "deployTarget" | default dict -}}
+{{- default (include "honua.fullname" .) (trim (default "" (get $deployTarget "targetId"))) -}}
+{{- end -}}
+
+{{- define "honua.deployTargetName" -}}
+{{- $deployTarget := get (.Values.controlPlane | default dict) "deployTarget" | default dict -}}
+{{- default (include "honua.fullname" .) (trim (default "" (get $deployTarget "targetName"))) -}}
+{{- end -}}
+
+{{- define "honua.deployTargetEnvironment" -}}
+{{- $deployTarget := get (.Values.controlPlane | default dict) "deployTarget" | default dict -}}
+{{- default (include "honua.runtimeEnvironment" .) (trim (default "" (get $deployTarget "environment"))) -}}
+{{- end -}}
+
+{{- define "honua.deployTargetBackend" -}}
+{{- $deployTarget := get (.Values.controlPlane | default dict) "deployTarget" | default dict -}}
+{{- default "honua-gitops-kubernetes" (trim (default "" (get $deployTarget "backend"))) -}}
+{{- end -}}
+
+{{- define "honua.deployTargetArtifactReference" -}}
+{{- $deployTarget := get (.Values.controlPlane | default dict) "deployTarget" | default dict -}}
+{{- default (include "honua.imageReference" .) (trim (default "" (get $deployTarget "artifactReference"))) -}}
+{{- end -}}
+
 {{- /* Minimum credential lengths, defined once so the render-time validation
        layer has a single source of truth for the thresholds. The preflight Job
        (templates/preflight-job.yaml) enforces the same minimums at install time

@@ -299,6 +299,57 @@ The values schema rejects `RollingUpdate` when both `maxSurge` and
 
 Readiness at `/healthz/ready` is the chart signal that startup and migrations completed.
 
+For an atomic guarded upgrade on Helm 3, prefer `--atomic` with an explicit
+timeout so a failed rollout auto-rolls-back to the prior revision instead of
+leaving a partially-applied Deployment:
+
+```bash
+helm upgrade --install honua ./honua -f honua/values-prod.yaml \
+  --atomic --timeout 10m
+```
+
+`--atomic` waits for the readiness scope described above (startup + migrations
++ dependency checks via `/healthz/ready`, bounded by `startupProbe` and
+`readinessProbe`) and automatically runs `helm rollback` to the previous
+revision if that wait fails or times out; it implies `--wait`. Size `--timeout`
+above the worst-case migration duration for your database, or a slow migration
+can be aborted mid-run. `helm history` retains prior revisions (and their
+values/manifest) so a subsequent manual `helm rollback` remains available even
+without `--atomic`; see [Release evidence and rollback](#release-evidence-and-rollback)
+for what that rollback can and cannot restore.
+
+## Deploy target registration
+
+`controlPlane.deployTarget.enabled` (default `true`) registers this chart's
+installed Deployment as a stable target with Honua Server's control plane by
+rendering `ControlPlane__DeployTargets__0__*` environment variables (consumed
+by `ConfigurationDeployTargetRegistry`). Without this, a chart-installed
+server registers no deploy target and the `/api/v1/admin/deploy/preflight` and
+`deploy.rollback` capability surfaces have nothing to plan against.
+
+The only backend this chart wires up is the Honua GitOps hand-off backend,
+`honua-gitops-kubernetes`. That backend always reports
+`SupportsRollback=false`: a chart-installed server advertises **manual
+recovery only**. Registering a target, or documenting `helm rollback` here,
+does not add telemetry-driven automatic rollback — that requires a real
+executable backend (for example an Argo Rollouts controller with the matching
+RBAC/CRDs), which this chart does not install. The values schema and
+`templates/validations.yaml` both reject any other `controlPlane.deployTarget.backend`
+value for exactly this reason: no other backend's prerequisites exist in this
+chart, so accepting one would advertise a capability the installation cannot
+execute.
+
+```yaml
+controlPlane:
+  deployTarget:
+    enabled: true                          # false opts this install out entirely
+    targetId: ""                           # empty uses the chart fullname
+    backend: "honua-gitops-kubernetes"      # the only supported value
+    environment: ""                        # empty uses config.env.ASPNETCORE_ENVIRONMENT
+    targetName: ""                         # empty uses the chart fullname
+    artifactReference: ""                  # empty uses the rendered image reference
+```
+
 ## Preflight hook
 
 `preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, Redis TCP reachability for non-development deployments, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
@@ -422,6 +473,11 @@ characters. For non-development deployments, it also fails if
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
 | `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+| `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
+| `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
+| `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |
+| `controlPlane.deployTarget.environment` | `""` | Target environment label. Empty uses `config.env.ASPNETCORE_ENVIRONMENT`. |
+| `controlPlane.deployTarget.artifactReference` | `""` | Target artifact reference. Empty uses the rendered image reference. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 

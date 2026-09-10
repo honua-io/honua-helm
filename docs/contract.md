@@ -53,6 +53,69 @@ When `strategy.type=RollingUpdate`, the values schema rejects a zero rollout
 budget where both `maxSurge` and `maxUnavailable` are `0`, `"0"`, or `"0%"`.
 At least one of those values must allow Kubernetes to make rollout progress.
 
+## Upgrade Execution
+
+For Helm 3, the recommended guarded upgrade path is:
+
+```bash
+helm upgrade --install <release> ./honua -f <values> --atomic --timeout 10m
+```
+
+`--atomic` implies `--wait` and automatically runs `helm rollback` to the
+previous revision if the upgrade does not reach a ready state before
+`--timeout` elapses. The readiness scope that gates `--wait`/`--atomic` is the
+`/healthz/ready` contract in [Health And Probes](#health-and-probes): startup,
+migrations, and dependency checks must all complete. Size `--timeout` above
+the worst-case migration duration; migrations run inline in the new pod
+during a `Recreate` rollout, and a timeout that is too tight aborts a slow but
+otherwise successful migrating upgrade.
+
+Migration compatibility is the operator's responsibility, not something the
+chart can verify: `RollingUpdate` requires forward/backward-compatible
+migrations across the old and new images (see Migrations above), while
+`Recreate` tolerates a breaking migration because old pods are fully stopped
+first.
+
+`helm history <release>` retains prior revisions (manifest, values, and
+chart/app version) up to Helm's `--history-max` limit (default 10, set at
+install/upgrade time). Old Helm revisions are release-metadata retention only
+-- they do not retain database state or, for externally-managed
+Secrets/ConfigMaps, their prior content (see Secret and Config Rotation
+below). Digest-pinned `image.digest` values make the retained revision's
+*application artifact* identity exact; this is distinct from the release
+evidence retention described here.
+
+## Deploy Target Registration
+
+`controlPlane.deployTarget.enabled` (default `true`) renders
+`ControlPlane__DeployTargets__0__*` environment variables identifying this
+chart's Deployment as a stable deploy target for Honua Server's control
+plane (`ConfigurationDeployTargetRegistry`). Without this, a chart-installed
+server registers no deploy target, and the control plane's
+`/api/v1/admin/deploy/preflight` and `deploy.rollback` capability surfaces
+have nothing to plan against.
+
+The registered `Backend` is always `honua-gitops-kubernetes`, the Honua
+GitOps hand-off backend. That backend's `GetCapabilitiesAsync` always returns
+`SupportsRollback=false`, and its `RollbackAsync` always returns
+`ManualInterventionRequired` -- it hands the desired revision to an external
+GitOps controller and cannot itself revert a running workload. Registering
+this target, or documenting `helm rollback` in this contract, therefore does
+not advertise telemetry-driven automatic rollback. Recovery for a
+chart-installed server is the manual `helm rollback` procedure described
+below; an operator wanting executable automatic recovery needs a real
+backend with the matching controller and RBAC/CRDs installed and configured
+as a distinct deploy target, which this chart does not provide.
+
+The values schema and `templates/validations.yaml` both reject any
+`controlPlane.deployTarget.backend` value other than
+`honua-gitops-kubernetes`, and reject an empty resolved `targetId`,
+`targetName`, or `environment`. This keeps the registration truthful: an
+operator cannot configure the chart to claim a backend whose prerequisites it
+does not install, and the chart cannot silently register an unusable target.
+Set `controlPlane.deployTarget.enabled=false` to opt an installation out of
+registration entirely.
+
 ## Health And Probes
 
 The chart relies on these Honua health endpoints:

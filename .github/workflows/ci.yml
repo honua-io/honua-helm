@@ -230,6 +230,16 @@ jobs:
           grep -q 'Security__ConnectionEncryption__MasterKey:' /tmp/honua-rendered-base.yaml
           grep -q 'readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete' /tmp/honua-rendered-base.yaml
 
+          # Deploy target registration is on by default and must be truthful:
+          # Kubernetes/the hand-off backend only, never an unearned automatic
+          # rollback claim.
+          grep -q 'name: honua-honua-deploy-target' /tmp/honua-rendered-base.yaml
+          grep -q 'ControlPlane__DeployTargets__0__TargetKind: "Kubernetes"' /tmp/honua-rendered-base.yaml
+          grep -q 'ControlPlane__DeployTargets__0__Backend: "honua-gitops-kubernetes"' /tmp/honua-rendered-base.yaml
+          grep -q 'ControlPlane__DeployTargets__0__TargetId: "honua-honua"' /tmp/honua-rendered-base.yaml
+          grep -q 'ControlPlane__DeployTargets__0__TargetName: "honua-honua"' /tmp/honua-rendered-base.yaml
+          grep -q 'ControlPlane__DeployTargets__0__ArtifactReference:' /tmp/honua-rendered-base.yaml
+
           # Read-only root needs a writable /tmp scratch volume by default.
           grep -q 'mountPath: /tmp' /tmp/honua-rendered-base.yaml
           # Single-replica baseline must not get the default anti-affinity.
@@ -411,6 +421,38 @@ jobs:
             cat /tmp/honua-rendered-prod-unpinned.yaml
             exit 1
           fi
+
+      - name: Validate deploy target registration opt-out
+        run: |
+          set -euo pipefail
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set controlPlane.deployTarget.enabled=false \
+            > /tmp/honua-rendered-deploy-target-disabled.yaml
+          if grep -q 'ControlPlane__DeployTargets__0' /tmp/honua-rendered-deploy-target-disabled.yaml; then
+            echo "controlPlane.deployTarget.enabled=false must not render any ControlPlane__DeployTargets__0__* keys."
+            exit 1
+          fi
+          if grep -q 'name: honua-honua-deploy-target' /tmp/honua-rendered-deploy-target-disabled.yaml; then
+            echo "controlPlane.deployTarget.enabled=false must not render the deploy-target ConfigMap."
+            exit 1
+          fi
+
+      - name: Validate deploy target backend allowlist guard fails invalid config
+        run: |
+          set +e
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            --set controlPlane.deployTarget.backend=some-unwired-backend \
+            > /tmp/honua-rendered-deploy-target-backend-invalid.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected controlPlane.deployTarget.backend other than honua-gitops-kubernetes to fail render."
+            cat /tmp/honua-rendered-deploy-target-backend-invalid.yaml
+            exit 1
+          fi
+          grep -q "must be one of the following: \"honua-gitops-kubernetes\"" /tmp/honua-rendered-deploy-target-backend-invalid.yaml
 
       - name: Validate ASPNETCORE_URLS / targetPort mismatch guard fails invalid config
         run: |
@@ -727,6 +769,20 @@ jobs:
           helm install honua ./honua -n honua-smoke -f honua/ci-values/upgrade-base.yaml --wait --timeout 10m
           helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-install.log
 
+          # Prove the installed target registers truthfully: Kubernetes/the
+          # hand-off backend on the ConfigMap the Deployment loads via envFrom,
+          # and no rollback-capable backend without an executable receipt.
+          kubectl get configmap honua-honua-deploy-target -n honua-smoke \
+            -o jsonpath='{.data.ControlPlane__DeployTargets__0__TargetKind}' | grep -qx 'Kubernetes'
+          kubectl get configmap honua-honua-deploy-target -n honua-smoke \
+            -o jsonpath='{.data.ControlPlane__DeployTargets__0__Backend}' | grep -qx 'honua-gitops-kubernetes'
+          # The Deployment loads this ConfigMap via envFrom (see deployment.yaml),
+          # so a running pod referencing it is the installed-target proof; the
+          # AOT production image is distroless-style and has no `env`/shell
+          # binary to introspect the container environment directly.
+          kubectl get deployment honua-honua -n honua-smoke \
+            -o jsonpath='{.spec.template.spec.containers[0].envFrom}' | grep -q 'honua-honua-deploy-target'
+
           helm upgrade honua ./honua -n honua-smoke -f honua/ci-values/upgrade-target.yaml --wait --timeout 10m
           helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-upgrade.log
 
@@ -741,6 +797,7 @@ jobs:
           helm history honua -n honua-smoke > /tmp/honua-smoke/helm-history.txt
           helm get notes honua -n honua-smoke > /tmp/honua-smoke/helm-notes.txt
           kubectl get configmap honua-honua-release-info -n honua-smoke -o yaml > /tmp/honua-smoke/release-info.yaml
+          kubectl get configmap honua-honua-deploy-target -n honua-smoke -o yaml > /tmp/honua-smoke/deploy-target.yaml
           kubectl get events -n honua-smoke --sort-by=.lastTimestamp > /tmp/honua-smoke/events.txt
           kubectl get pods -n honua-smoke -o wide > /tmp/honua-smoke/pods.txt
 

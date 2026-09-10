@@ -1,0 +1,27 @@
+{{- if .Values.controlPlane.deployTarget.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.deployTargetConfigMapName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+data:
+  # honua-server's ConfigurationDeployTargetRegistry binds
+  # ControlPlane__DeployTargets__0__* into a DeployTargetDefinition
+  # (Honua.Server.Features.ControlPlane.ControlPlaneOptions). TargetKind and
+  # Backend are the truthful identity of this chart's Deployment: Kubernetes,
+  # handed off to an external GitOps controller. That backend always reports
+  # SupportsRollback=false (GitOpsDeployBackendBase.RollbackAsync returns
+  # ManualInterventionRequired), so registering this target does not
+  # advertise automatic rollback -- recovery is `helm rollback` (see
+  # docs/contract.md).
+  ControlPlane__DeployTargets__0__TargetId: {{ include "honua.deployTargetId" . | quote }}
+  ControlPlane__DeployTargets__0__TargetKind: "Kubernetes"
+  ControlPlane__DeployTargets__0__Backend: {{ include "honua.deployTargetBackend" . | quote }}
+  ControlPlane__DeployTargets__0__Environment: {{ include "honua.deployTargetEnvironment" . | quote }}
+  ControlPlane__DeployTargets__0__TargetName: {{ include "honua.deployTargetName" . | quote }}
+  ControlPlane__DeployTargets__0__ArtifactReference: {{ include "honua.deployTargetArtifactReference" . | quote }}
+{{- end }}

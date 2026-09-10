@@ -455,6 +455,40 @@ metrics:
     # Optional pass-through spec.inhibitRules.
     inhibitRules: []
 
+# Registers this chart's installed Deployment as a stable target with Honua
+# Server's control plane, so the deploy/rollback surfaces
+# (/api/v1/admin/deploy/preflight, the deploy.rollback capability manifest)
+# see a target to plan against instead of finding nothing registered. This
+# does not add automatic rollback: the only backend this chart wires up is
+# the Honua GitOps hand-off backend, which always reports
+# SupportsRollback=false and requires an operator to recover out of band
+# (helm rollback, see docs/contract.md). See docs/contract.md for the full
+# registration and upgrade-safety contract.
+controlPlane:
+  deployTarget:
+    # Set to false to opt this installation out of target registration
+    # entirely (for example a preview namespace that should not appear in
+    # control-plane deploy tooling).
+    enabled: true
+    # Stable identifier used by the control-plane API and workers. Empty uses
+    # the chart's fullname so each release registers a distinct target.
+    targetId: ""
+    # Backend adapter that executes deploy/rollback operations for this
+    # target. Only "honua-gitops-kubernetes" is truthful for a plain chart
+    # install: it is a hand-off backend with SupportsRollback=false. The
+    # chart fails render if this is changed to any other value, because no
+    # other backend's prerequisites (RBAC, CRDs, controller) are wired up by
+    # this chart yet.
+    backend: "honua-gitops-kubernetes"
+    # Environment/stage label surfaced on the target. Empty uses
+    # config.env.ASPNETCORE_ENVIRONMENT (see honua.runtimeEnvironment).
+    environment: ""
+    # Human-readable target name. Empty uses the chart's fullname.
+    targetName: ""
+    # Stable artifact reference for this target. Empty uses the rendered
+    # image reference (repository:tag or repository@digest).
+    artifactReference: ""
+
 # Optional Bitnami PostgreSQL dependency. This is development-only because the
 # subchart does not include PostGIS; production should use an external
 # PostGIS-enabled database and provide ConnectionStrings__DefaultConnection.
