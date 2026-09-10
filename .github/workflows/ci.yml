@@ -452,7 +452,12 @@ jobs:
             cat /tmp/honua-rendered-deploy-target-backend-invalid.yaml
             exit 1
           fi
-          grep -q "must be one of the following: \"honua-gitops-kubernetes\"" /tmp/honua-rendered-deploy-target-backend-invalid.yaml
+          # Helm's JSON-schema error wording differs between v3
+          # ("controlPlane.deployTarget.backend: ... must be one of the
+          # following") and v4 ("at '/controlPlane/deployTarget/backend':
+          # value must be ..."); match both.
+          grep -qE "deployTarget[./]backend" /tmp/honua-rendered-deploy-target-backend-invalid.yaml
+          grep -q "honua-gitops-kubernetes" /tmp/honua-rendered-deploy-target-backend-invalid.yaml
 
       - name: Validate ASPNETCORE_URLS / targetPort mismatch guard fails invalid config
         run: |
