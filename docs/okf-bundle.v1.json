@@ -1,0 +1,40 @@
+{
+  "version": "honua.okf-bundle/v1",
+  "description": "Which honua-helm markdown is part of the Open Knowledge Format bundle. Consumed by scripts/check-okf-bundle.py.",
+  "spec": {
+    "name": "Open Knowledge Format",
+    "version": "0.2",
+    "url": "https://github.com/GoogleCloudPlatform/open-knowledge-format",
+    "note": "One markdown file is one concept; the file path is the concept's identity; relative markdown links are the graph edges. `type` is the only required frontmatter field."
+  },
+  "program": "https://github.com/honua-io/agent-delivery-spec/tree/trunk/.specifica/okf-knowledge-graph-agent-effective-docs",
+  "workstream": "WS9 — the other nine repositories. honua-helm is fifth.",
+  "root": "docs",
+  "conceptTypes": {
+    "index": "A section entry point. Enumerates what the directory holds so a reader or agent can choose before opening.",
+    "concept": "What a thing is and how it fits. No procedure.",
+    "guide": "A task someone performs, start to finish.",
+    "reference": "Lookup material: surfaces, options, contracts, matrices."
+  },
+  "excludedDirs": [],
+  "excludedFiles": [
+    {
+      "path": "docs/SUMMARY.md",
+      "why": "GitBook's table of contents, generated from this bundle by scripts/generate-summary.py. Navigation over the bundle, not a concept in it."
+    },
+    {
+      "path": "docs/operating-cadence.md",
+      "why": "The repeatable weekly operating rhythm for this repository's maintainers. Team process, not something an operator deploying the chart reads."
+    },
+    {
+      "path": "docs/smoke/ticket-2-helm-smoke.md",
+      "why": "Dated execution evidence from one smoke run (2026-05-06), kept for the record. Evidence rather than procedure; the reusable procedure is smoke/aks-chart-smoke.md, which is in the bundle."
+    }
+  ],
+  "includedFiles": [],
+  "rejectedFields": {
+    "timestamp": "Not an OKF field in any version. The trust family spells the build stamp `generated`."
+  },
+  "dateFields": ["generated", "verified", "stale_after"],
+  "boundaryNote": "A chart's documentation is almost entirely operator-facing: what it deploys, what values are stable, and how to verify an install. Only the maintainers' weekly cadence and one dated smoke receipt are out."
+}
