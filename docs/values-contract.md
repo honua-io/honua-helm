@@ -1,3 +1,9 @@
+---
+type: reference
+title: "values.yaml contract"
+description: "Which values are the customer-operated surface and therefore stable, and which are internal wiring that may change without a major bump."
+tags: [values, configuration, contract]
+---
 # Honua Helm Values Contract
 
 This chart keeps the customer-operated surface in these files:

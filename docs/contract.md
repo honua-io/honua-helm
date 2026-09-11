@@ -1,3 +1,9 @@
+---
+type: reference
+title: "Operator contract"
+description: "The operator-facing contract this chart honours: what is guaranteed across upgrades, what may change, and what an operator is responsible for."
+tags: [contract, operator, upgrades]
+---
 # Honua Helm Chart Operator Contract
 
 This document defines the operator-facing contract for the Honua Helm chart.

@@ -1,3 +1,9 @@
+---
+type: concept
+title: "Where the chart came from"
+description: "The chart's lineage and the upgrade path from earlier deployment shapes, for operators who did not start here."
+tags: [migration, upgrades, history]
+---
 # Migration: from `honua-server/infrastructure/helm/honua` to `honua-io/honua-helm`
 
 This page captures where the chart came from, the value-contract continuity
