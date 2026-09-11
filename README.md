@@ -90,6 +90,8 @@ within chart 0.x — see [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## Documentation
 
+- **[Full documentation index](docs/SUMMARY.md)** — every published page, generated from the documentation bundle so it cannot drift.
+
 - Chart usage and values reference: [honua/README.md](honua/README.md)
 - Honua Server Kubernetes deploy guide: [docs/guides/deploy/kubernetes.md](https://github.com/honua-io/honua-server/blob/trunk/docs/guides/deploy/kubernetes.md)
 - Hosted platform docs: <https://honua.gitbook.io/honuaio/>
