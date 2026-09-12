@@ -101,6 +101,48 @@
       "type": "object",
       "description": "Container lifecycle hooks for the honua container (e.g. a preStop sleep to drain Service endpoints during RollingUpdate / HPA scale-down)."
     },
+    "licensing": {
+      "type": "object",
+      "required": [
+        "mode",
+        "edition",
+        "licenseSecretRef"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "Disabled",
+            "Enabled"
+          ]
+        },
+        "edition": {
+          "type": "string",
+          "enum": [
+            "",
+            "Community",
+            "Pro",
+            "Enterprise"
+          ]
+        },
+        "licenseSecretRef": {
+          "type": "object",
+          "required": [
+            "name",
+            "key"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
     "preflight": {
       "type": "object",
       "properties": {
@@ -136,6 +178,27 @@
             "pullPolicy": {
               "type": "string",
               "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "licenseStatusImage": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
             }
           }
         },

@@ -155,3 +155,10 @@
 {{- if .Values.secret.create -}}
 {{- include "honua.validateSecretComplexity" . -}}
 {{- end -}}
+
+{{- /* Dedicated licensing values must remain authoritative over explicit env. */ -}}
+{{- range .Values.extraEnv }}
+{{- if or (eq .name "Licensing__Mode") (and $.Values.licensing.edition (eq .name "Licensing__Edition")) (and $.Values.licensing.licenseSecretRef.name (eq .name "Licensing__LicenseContent")) }}
+{{- fail (printf "%s must be configured through licensing values, not duplicated in extraEnv" .name) }}
+{{- end }}
+{{- end }}

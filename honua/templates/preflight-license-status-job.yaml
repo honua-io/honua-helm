@@ -1,0 +1,109 @@
+{{- if and .Values.preflight.enabled (eq .Values.licensing.mode "Disabled") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "honua.fullname" . }}-preflight-license-status
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+  annotations:
+    # A fresh install has no server for a pre-install API check. Verify the
+    # applied revision after readiness, never the old server during pre-upgrade.
+    "helm.sh/hook": post-install,post-upgrade,test
+    "helm.sh/hook-delete-policy": before-hook-creation
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 660
+  template:
+    metadata:
+      labels:
+        {{- include "honua.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: license-status
+          image: "{{ .Values.preflight.licenseStatusImage.repository }}:{{ .Values.preflight.licenseStatusImage.tag }}"
+          imagePullPolicy: {{ .Values.preflight.licenseStatusImage.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: HONUA_LICENSE_STATUS_URL
+              value: "http://{{ include "honua.fullname" . }}:{{ .Values.service.port }}/api/v1/admin/license/status"
+            - name: HONUA_LICENSE_STATUS_HOST
+              value: {{ if and .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) }}{{ (index .Values.ingress.hosts 0).host | quote }}{{ else }}""{{ end }}
+            - name: HONUA_LICENSE_STATUS_TIMEOUT
+              value: {{ .Values.preflight.timeoutSeconds | quote }}
+            - name: HONUA_LICENSE_STATUS_ATTEMPTS
+              value: "60"
+            - name: HONUA_LICENSE_STATUS_DELAY
+              value: "5"
+          envFrom:
+            {{- if or .Values.secret.create .Values.secret.name }}
+            - secretRef:
+                name: {{ include "honua.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          command:
+            - python3
+            - -c
+            - |
+              import json
+              import os
+              import sys
+              import time
+              import urllib.error
+              import urllib.request
+
+              def fail(message):
+                  sys.exit("license status preflight failed: " + message)
+
+              password = os.environ.get("HONUA_ADMIN_PASSWORD")
+              if not password:
+                  fail("missing HONUA_ADMIN_PASSWORD")
+              headers = {"X-API-Key": password}
+              if os.environ.get("HONUA_LICENSE_STATUS_HOST"):
+                  headers["Host"] = os.environ["HONUA_LICENSE_STATUS_HOST"]
+              request = urllib.request.Request(os.environ["HONUA_LICENSE_STATUS_URL"], headers=headers)
+              # Do not forward the admin credential through redirects or proxies.
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self, *args, **kwargs):
+                      return None
+              opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+              attempts = int(os.environ["HONUA_LICENSE_STATUS_ATTEMPTS"])
+              for attempt in range(attempts):
+                  try:
+                      with opener.open(request, timeout=int(os.environ["HONUA_LICENSE_STATUS_TIMEOUT"])) as response:
+                          if response.status != 200:
+                              fail("expected HTTP 200")
+                          payload = json.load(response)
+                      break
+                  except urllib.error.HTTPError as error:
+                      if error.code < 500:
+                          fail("HTTP " + str(error.code))
+                  except (urllib.error.URLError, TimeoutError):
+                      pass
+                  except (ValueError, UnicodeError):
+                      fail("invalid JSON response")
+                  if attempt + 1 == attempts:
+                      fail("endpoint unavailable after " + str(attempts) + " attempts")
+                  time.sleep(int(os.environ["HONUA_LICENSE_STATUS_DELAY"]))
+
+              if not isinstance(payload, dict) or payload.get("success") is not True:
+                  fail("expected a successful admin API response")
+              status = payload.get("data")
+              if not isinstance(status, dict) or status.get("mode") != "disabled":
+                  fail("expected data.mode=disabled; verify Licensing__Mode and the server image")
+              if status.get("validationState") != "Disabled" or status.get("isValid") is not True:
+                  fail("expected validationState=Disabled and isValid=true")
+              print("license status check passed: mode=disabled validationState=Disabled isValid=true")
+{{- end }}

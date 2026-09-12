@@ -600,3 +600,12 @@ Running `helm template honua honua` without a values file fails by design becaus
 the baseline contract leaves required runtime secrets empty.
 
 For ingress testing on a local Kubernetes cluster, see [K3d + Helm guide](https://github.com/honua-io/honua-server/blob/trunk/docs/internal/contributor/development/k3d-helm.md).
+
+### 2026.1 licensing default
+
+`licensing.mode: Disabled` explicitly sets `Licensing__Mode=Disabled`. With
+preflight enabled, an authenticated post-install/post-upgrade Job verifies the
+running server reports disabled licensing; `helm test` repeats the assertion.
+`licensing.edition` and `licensing.licenseSecretRef` preserve the 2026.2 re-enable
+path. See the [values contract](../docs/values-contract.md#licensing-in-20261-and-re-enabling-in-20262)
+for credentials, hook timing, private images, and the Enabled configuration.
