@@ -1,0 +1,7 @@
+# Future paid-edition wiring: the license is supplied by an existing Secret.
+licensing:
+  mode: Enabled
+  edition: Pro
+  licenseSecretRef:
+    name: honua-license
+    key: signed-license.json

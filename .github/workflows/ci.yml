@@ -47,6 +47,11 @@ jobs:
       - name: Build dependencies from Chart.lock
         run: helm dependency build honua
 
+      - name: Verify licensing defaults and execute status-hook fixtures
+        run: |
+          python3 -m pip install --require-hashes -r scripts/requirements-tests.txt
+          python3 scripts/test-licensing-contract.py
+
       - name: Lint chart
         run: helm lint honua -f honua/ci-values/base.yaml
 
@@ -746,12 +751,21 @@ jobs:
 
           helm install honua ./honua -n honua-smoke -f honua/ci-values/upgrade-base.yaml --wait --timeout 10m
           helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-install.log
+          # Helm --logs prints Pod hooks; collect the completed Job explicitly.
+          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status | tee -a /tmp/honua-smoke/test-install.log
+          grep -Fq "license status check passed: mode=disabled" /tmp/honua-smoke/test-install.log
 
           helm upgrade honua ./honua -n honua-smoke -f honua/ci-values/upgrade-target.yaml --wait --timeout 10m
           helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-upgrade.log
+          # Helm --logs prints Pod hooks; collect the completed Job explicitly.
+          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status | tee -a /tmp/honua-smoke/test-upgrade.log
+          grep -Fq "license status check passed: mode=disabled" /tmp/honua-smoke/test-upgrade.log
 
           helm rollback honua 1 -n honua-smoke --wait --timeout 10m
           helm test honua -n honua-smoke --logs --timeout 5m | tee /tmp/honua-smoke/test-rollback.log
+          # Helm --logs prints Pod hooks; collect the completed Job explicitly.
+          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status | tee -a /tmp/honua-smoke/test-rollback.log
+          grep -Fq "license status check passed: mode=disabled" /tmp/honua-smoke/test-rollback.log
 
       - name: Capture smoke evidence
         if: always()
@@ -761,6 +775,8 @@ jobs:
           helm history honua -n honua-smoke > /tmp/honua-smoke/helm-history.txt
           helm get notes honua -n honua-smoke > /tmp/honua-smoke/helm-notes.txt
           kubectl get configmap honua-honua-release-info -n honua-smoke -o yaml > /tmp/honua-smoke/release-info.yaml
+          kubectl logs -n honua-smoke deployment/honua-honua > /tmp/honua-smoke/server.log
+          kubectl logs -n honua-smoke job/honua-honua-preflight-license-status > /tmp/honua-smoke/license-status.log
           kubectl get events -n honua-smoke --sort-by=.lastTimestamp > /tmp/honua-smoke/events.txt
           kubectl get pods -n honua-smoke -o wide > /tmp/honua-smoke/pods.txt
 

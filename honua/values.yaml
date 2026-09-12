@@ -164,8 +164,26 @@ tmpVolume:
   # Optional emptyDir size cap, e.g. "1Gi". Empty means no limit.
   sizeLimit: ""
 
+# 2026.1 ships with licensing disabled. Re-enable explicitly for 2026.2.
+licensing:
+  mode: Disabled
+  # Empty preserves the server's edition/source inference when re-enabled.
+  edition: ""
+  # Optional Kubernetes Secret containing signed license JSON.
+  licenseSecretRef:
+    name: ""
+    key: license.json
+
 preflight:
   enabled: true
+  # Authenticated runtime assertion after install/upgrade, and during helm test.
+  # Override the Host header when runtime host settings live in external config.
+  # Otherwise use Public__BaseUrl's host, the first ingress host, or Service DNS.
+  licenseStatusHost: ""
+  licenseStatusImage:
+    repository: python
+    tag: "3.12-alpine"
+    pullPolicy: IfNotPresent
   image:
     repository: curlimages/curl
     tag: "8.5.0"

@@ -5,7 +5,10 @@
 # strategy switch to RollingUpdate, the release-metadata change, and the
 # config/secret checksum-driven rollout.
 replicaCount: 1
+# Verified amd64 AOT image from server#4725 (9f2f16a); includes Disabled mode.
 image:
+  tag: ""
+  digest: "sha256:51a3fac496dc2e422646603f8675c7517dadad13b1263909fe73c65fd29b445d"
   pullPolicy: IfNotPresent
 strategy:
   type: RollingUpdate
@@ -21,3 +24,8 @@ secret:
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
     ConnectionStrings__redis: "honua-redis:6379,password=ci-redis-password"
+
+# Exercise authenticated API calls through the Service with host validation on.
+config:
+  env:
+    Public__BaseUrl: "http://honua-honua"

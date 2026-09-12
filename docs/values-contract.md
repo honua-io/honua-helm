@@ -76,6 +76,59 @@ The Deployment loads environment data with `envFrom`:
 Empty string and null-like values in `config.env` and `secret.env` are omitted
 from rendered ConfigMap and Secret data before template-required checks run.
 
+## Licensing in 2026.1 and re-enabling in 2026.2
+
+`licensing.mode` defaults to `Disabled` and always renders the explicit Deployment
+environment variable `Licensing__Mode=Disabled`, including with external ConfigMaps
+and Secrets. No license file or signing key is required for 2026.1.
+Use a 2026.1 server image that supports Disabled mode
+([server#4721](https://github.com/honua-io/honua-server/issues/4721)); older images
+fail the status hook even when their health probes pass. All catalog
+entitlements are active and capacity metering is off; this does not promote Preview
+multi-tenancy, alerting, or offline sync to GA.
+
+With `preflight.enabled=true`, the license-status Job runs **post-install and
+post-upgrade**, after the new Deployment is ready. A pre-install API assertion
+cannot query a server that does not exist yet, and a pre-upgrade assertion would
+check the old revision. The Job authenticates with the runtime Secret's
+`HONUA_ADMIN_PASSWORD` and requires HTTP 200, `success=true`, `data.mode=disabled`,
+`data.validationState=Disabled`, and `data.isValid=true` from
+`/api/v1/admin/license/status`. Missing fields, authentication failures, and enabled
+licensing fail the hook. It also runs on `helm test`, including after rollback in
+the kind smoke. Hook logs are retained until the next invocation.
+The request Host uses `config.env.Public__BaseUrl`, then the first ingress host,
+then Service DNS. Configure that host in the server's public URL or host allowlist;
+health probes alone do not prove API host validation passes. Set
+`preflight.licenseStatusHost` when the allowed host is supplied through external
+configuration. The kind smoke declares its Service URL explicitly and keeps
+Production host validation enabled.
+`preflight.licenseStatusImage` defaults to `python:3.12-alpine`; mirror this image
+for private registries along with `preflight.image`, and supply `image.pullSecrets`
+when needed. The existing pre-install/pre-upgrade dependency checks stay in place.
+
+For the 2026.2 re-enable path, explicitly set the mode and edition, provision a
+valid signed license and the server's trusted signing keys, then upgrade/restart:
+
+```yaml
+licensing:
+  mode: Enabled
+  edition: Pro # Community, Pro, or Enterprise; empty preserves server inference
+  licenseSecretRef:
+    name: honua-license
+    key: signed-license.json
+```
+
+The Secret key is mapped to `Licensing__LicenseContent` using `secretKeyRef`;
+license contents are not stored in chart values. Existing `extraEnv`/`extraEnvFrom`
+license sources, trusted keys, and mounted `Licensing__LicensePath` remain usable.
+An empty `licensing.edition` or secret name emits no override for that setting.
+Dedicated licensing values take precedence over `envFrom`; duplicate explicit
+`extraEnv` entries for settings managed by `licensing` are rejected. In Enabled
+mode the disabled-status hook is absent, and the server enforces normal licensing:
+Pro/Enterprise require a valid, unexpired license at startup. See the
+[server licensing contract](https://github.com/honua-io/honua-server/blob/trunk/docs/concepts/editions-and-licensing.md)
+for license provisioning and renewal.
+
 ## Optional Values
 
 | Area | Values | Notes |
