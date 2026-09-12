@@ -45,6 +45,7 @@ helm upgrade --install honua ./honua \
 | Autoscaling (`autoscaling.enabled=true`) | `autoscaling.targetCPUUtilizationPercentage` or `autoscaling.targetMemoryUtilizationPercentage` greater than `0` | `honua/values.schema.json`, `honua/templates/hpa.yaml` |
 | Autoscaling (`autoscaling.enabled=true`) | `config.env.Deployment__Mode` must be `MultiNode` (not `SingleInstance`); MultiNode also requires `ConnectionStrings__redis` and a shared cloud `FileStorage:Provider` of `AwsS3` or `AzureBlob` (`Local` is rejected) | `honua/templates/validations.yaml` (chart-time); MultiNode runtime requirements enforced by Honua Server `ConfigurationValidationService` |
 | RollingUpdate (`strategy.type=RollingUpdate`) | At least one of `strategy.rollingUpdate.maxSurge` or `strategy.rollingUpdate.maxUnavailable` must be non-zero | `honua/values.schema.json` |
+| Deploy target registration (`controlPlane.deployTarget.enabled=true`, the default) | `controlPlane.deployTarget.backend` must be `honua-gitops-kubernetes`; resolved `targetId`/`targetName`/`environment` must be non-empty | `honua/values.schema.json`, `honua/templates/validations.yaml` |
 
 The PostgreSQL subchart is development-only. It does not include PostGIS, so
 production deployments must use an external PostGIS-enabled database and provide
@@ -92,6 +93,7 @@ from rendered ConfigMap and Secret data before template-required checks run.
 | Resources and probes | `resources`, `livenessProbe`, `readinessProbe`, `startupProbe`, `terminationGracePeriodSeconds` | Tune after observing workload behavior and migration duration. |
 | Extensions | `extraEnv`, `extraEnvFrom`, `extraVolumes`, `extraVolumeMounts` | Use for External Secrets Operator, CSI Secret Store, trust bundles, or Downward API. |
 | Dependencies | `postgresql.*`, `redis.*` | PostgreSQL subchart is dev-only; Redis can be chart-managed for smoke/dev or supplied externally for non-development durable event storage. |
+| Control plane | `controlPlane.deployTarget.*` | Registers this Deployment as a control-plane deploy target (see `docs/contract.md#deploy-target-registration`). `enabled=false` opts out; the registered backend always advertises manual-recovery-only rollback. |
 
 ## Environment Overlays
 
