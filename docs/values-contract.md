@@ -2,6 +2,7 @@
 type: reference
 title: "values.yaml contract"
 description: "Which values are the customer-operated surface and therefore stable, and which are internal wiring that may change without a major bump."
+resource: "https://github.com/honua-io/honua-helm/blob/trunk/honua/values.yaml"
 tags: [values, configuration, contract]
 ---
 # Honua Helm Values Contract

@@ -2,6 +2,7 @@
 type: guide
 title: "Smoke-test the chart on AKS"
 description: "The AKS-specific install and verification path, including what differs from a generic Kubernetes target."
+resource: "https://github.com/honua-io/honua-helm/blob/trunk/.github/workflows/aks-smoke.yml"
 tags: [aks, azure, smoke-test]
 ---
 # AKS Chart Smoke Runbook (honua-helm#10)
