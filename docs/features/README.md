@@ -2,6 +2,7 @@
 type: index
 title: "What this chart packages"
 description: "How Honua Server is packaged for Kubernetes: what the chart deploys, what it expects you to provide, and where the operator surface begins."
+resource: "https://github.com/honua-io/honua-helm/tree/trunk/honua"
 tags: [helm, kubernetes, packaging]
 ---
 # Honua Helm Feature Map

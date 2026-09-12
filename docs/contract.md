@@ -2,6 +2,7 @@
 type: reference
 title: "Operator contract"
 description: "The operator-facing contract this chart honours: what is guaranteed across upgrades, what may change, and what an operator is responsible for."
+resource: "https://github.com/honua-io/honua-helm/blob/trunk/honua/values.yaml"
 tags: [contract, operator, upgrades]
 ---
 # Honua Helm Chart Operator Contract
