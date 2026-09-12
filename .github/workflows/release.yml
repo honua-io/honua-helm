@@ -362,7 +362,6 @@ jobs:
       contents: read
     env:
       OCI_CHART: oci://ghcr.io/honua-io/charts/honua
-      HELM_REGISTRY_CONFIG: ${{ runner.temp }}/anonymous-registry-config.json
     steps:
       - name: Setup Helm
         uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
@@ -375,6 +374,7 @@ jobs:
 
       - name: Pull and verify without credentials
         env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/anonymous-registry-config.json
           CHART_VERSION: ${{ needs.package-and-publish.outputs.chart-version }}
           APP_VERSION: ${{ needs.package-and-publish.outputs.app-version }}
           ARTIFACT_NAME: ${{ needs.package-and-publish.outputs.artifact-name }}
