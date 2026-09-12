@@ -1,4 +1,7 @@
+# Verified amd64 AOT image from server#4725 (9f2f16a); includes Disabled mode.
 image:
+  tag: ""
+  digest: "sha256:51a3fac496dc2e422646603f8675c7517dadad13b1263909fe73c65fd29b445d"
   pullPolicy: IfNotPresent
 release:
   id: honua-ci-upgrade-base
