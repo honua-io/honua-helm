@@ -55,6 +55,9 @@ assert 'extraEnv' in render('--set', 'extraEnv[0].name=Licensing__Mode', '--set'
 
 hook = next(item for item in base if item['metadata']['name'].endswith('-preflight-license-status'))
 assert set(hook['metadata']['annotations']['helm.sh/hook'].split(',')) == {'post-install', 'post-upgrade', 'test'}
+service = next(item for item in base if item['kind'] == 'Service')
+assert not all(hook['spec']['template']['metadata']['labels'].get(key) == value
+               for key, value in service['spec']['selector'].items()), 'hook must not receive application traffic'
 hook_container = container(base, 'Job', '-preflight-license-status')
 assert hook_container['envFrom'] == [{'secretRef': {'name': 'honua-honua-secret'}}]
 private = container(render('--set', 'preflight.licenseStatusImage.repository=registry.example/python',

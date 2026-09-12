@@ -18,7 +18,9 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "honua.selectorLabels" . | nindent 8 }}
+        # Keep the checker out of the application's Service endpoints.
+        app.kubernetes.io/name: {{ include "honua.fullname" . }}-license-status
+        app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
