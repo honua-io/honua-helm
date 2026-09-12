@@ -21,3 +21,8 @@ secret:
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
     ConnectionStrings__redis: "honua-redis:6379,password=ci-redis-password"
+
+# Exercise authenticated API calls through the Service with host validation on.
+config:
+  env:
+    Public__BaseUrl: "http://honua-honua"

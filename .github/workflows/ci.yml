@@ -769,6 +769,7 @@ jobs:
           helm history honua -n honua-smoke > /tmp/honua-smoke/helm-history.txt
           helm get notes honua -n honua-smoke > /tmp/honua-smoke/helm-notes.txt
           kubectl get configmap honua-honua-release-info -n honua-smoke -o yaml > /tmp/honua-smoke/release-info.yaml
+          kubectl logs -n honua-smoke deployment/honua-honua > /tmp/honua-smoke/server.log
           kubectl logs -n honua-smoke job/honua-honua-preflight-license-status > /tmp/honua-smoke/license-status.log
           kubectl get events -n honua-smoke --sort-by=.lastTimestamp > /tmp/honua-smoke/events.txt
           kubectl get pods -n honua-smoke -o wide > /tmp/honua-smoke/pods.txt

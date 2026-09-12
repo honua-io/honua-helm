@@ -60,6 +60,14 @@ assert not all(hook['spec']['template']['metadata']['labels'].get(key) == value
                for key, value in service['spec']['selector'].items()), 'hook must not receive application traffic'
 hook_container = container(base, 'Job', '-preflight-license-status')
 assert hook_container['envFrom'] == [{'secretRef': {'name': 'honua-honua-secret'}}]
+for args, expected in [
+    (('--set', 'config.env.Public__BaseUrl=https://public.example:8443'), 'public.example:8443'),
+    (('--set', 'ingress.enabled=true', '--set', 'ingress.hosts[0].host=ingress.example'), 'ingress.example'),
+    (('--set', 'config.env.Public__BaseUrl=https://public.example', '--set', 'preflight.licenseStatusHost=allowed.example'), 'allowed.example'),
+    (('-f', 'honua/ci-values/upgrade-base.yaml'), 'honua-honua'),
+    (('-f', 'honua/ci-values/upgrade-target.yaml'), 'honua-honua'),
+]:
+    assert env_values(container(render(*args), 'Job', '-preflight-license-status'))['HONUA_LICENSE_STATUS_HOST'] == expected
 private = container(render('--set', 'preflight.licenseStatusImage.repository=registry.example/python',
                            '--set', 'image.pullSecrets[0].name=registry-key'), 'Job', '-preflight-license-status')
 assert private['image'] == 'registry.example/python:3.12-alpine'
@@ -120,7 +128,7 @@ try:
     for body in [{}, {'success': False, 'data': good['data']}, {'success': True, 'data': {}},
                  {'success': True, 'data': None}, [], 'not JSON']:
         run_case(f'invalid payload {body!r} rejected', 200, body)
-    for status in [204, 302, 401, 403, 404, 503]:
+    for status in [204, 302, 400, 401, 403, 404, 503]:
         run_case(f'HTTP {status} rejected', status, good)
     run_case('missing admin secret rejected', 200, good, missing_password=True)
 finally:

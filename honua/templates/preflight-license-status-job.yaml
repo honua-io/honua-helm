@@ -40,7 +40,14 @@ spec:
             - name: HONUA_LICENSE_STATUS_URL
               value: "http://{{ include "honua.fullname" . }}:{{ .Values.service.port }}/api/v1/admin/license/status"
             - name: HONUA_LICENSE_STATUS_HOST
-              value: {{ if and .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) }}{{ (index .Values.ingress.hosts 0).host | quote }}{{ else }}""{{ end }}
+              {{- $statusHost := .Values.preflight.licenseStatusHost }}
+              {{- if and (not $statusHost) .Values.config.env.Public__BaseUrl }}
+              {{- $statusHost = (urlParse .Values.config.env.Public__BaseUrl).host }}
+              {{- end }}
+              {{- if and (not $statusHost) .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) }}
+              {{- $statusHost = (index .Values.ingress.hosts 0).host }}
+              {{- end }}
+              value: {{ $statusHost | quote }}
             - name: HONUA_LICENSE_STATUS_TIMEOUT
               value: {{ .Values.preflight.timeoutSeconds | quote }}
             - name: HONUA_LICENSE_STATUS_ATTEMPTS

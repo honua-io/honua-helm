@@ -93,6 +93,12 @@ check the old revision. The Job authenticates with the runtime Secret's
 `/api/v1/admin/license/status`. Missing fields, authentication failures, and enabled
 licensing fail the hook. It also runs on `helm test`, including after rollback in
 the kind smoke. Hook logs are retained until the next invocation.
+The request Host uses `config.env.Public__BaseUrl`, then the first ingress host,
+then Service DNS. Configure that host in the server's public URL or host allowlist;
+health probes alone do not prove API host validation passes. Set
+`preflight.licenseStatusHost` when the allowed host is supplied through external
+configuration. The kind smoke declares its Service URL explicitly and keeps
+Production host validation enabled.
 `preflight.licenseStatusImage` defaults to `python:3.12-alpine`; mirror this image
 for private registries along with `preflight.image`, and supply `image.pullSecrets`
 when needed. The existing pre-install/pre-upgrade dependency checks stay in place.

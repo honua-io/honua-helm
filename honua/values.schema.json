@@ -181,6 +181,7 @@
             }
           }
         },
+        "licenseStatusHost": { "type": "string" },
         "licenseStatusImage": {
           "type": "object",
           "properties": {

@@ -177,6 +177,9 @@ licensing:
 preflight:
   enabled: true
   # Authenticated runtime assertion after install/upgrade, and during helm test.
+  # Override the Host header when runtime host settings live in external config.
+  # Otherwise use Public__BaseUrl's host, the first ingress host, or Service DNS.
+  licenseStatusHost: ""
   licenseStatusImage:
     repository: python
     tag: "3.12-alpine"
