@@ -2,7 +2,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "honua.fullname" . }}-preflight-license-status
+  name: {{ include "honua.fullname" . | trunc 38 | trimSuffix "-" }}-preflight-license-status
   labels:
     {{- include "honua.labels" . | nindent 4 }}
     {{- include "honua.releaseLabels" . | nindent 4 }}
@@ -19,7 +19,7 @@ spec:
     metadata:
       labels:
         # Keep the checker out of the application's Service endpoints.
-        app.kubernetes.io/name: {{ include "honua.fullname" . }}-license-status
+        app.kubernetes.io/component: license-status
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       restartPolicy: Never

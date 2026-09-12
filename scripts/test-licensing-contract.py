@@ -55,6 +55,10 @@ assert 'extraEnv' in render('--set', 'extraEnv[0].name=Licensing__Mode', '--set'
 
 hook = next(item for item in base if item['metadata']['name'].endswith('-preflight-license-status'))
 assert set(hook['metadata']['annotations']['helm.sh/hook'].split(',')) == {'post-install', 'post-upgrade', 'test'}
+long_name = render('--set', 'fullnameOverride=' + 'h' * 50)
+long_hook = next(item for item in long_name if item['metadata']['name'].endswith('-preflight-license-status'))
+assert len(long_hook['metadata']['name']) <= 63
+assert all(len(value) <= 63 for value in long_hook['spec']['template']['metadata']['labels'].values())
 service = next(item for item in base if item['kind'] == 'Service')
 assert not all(hook['spec']['template']['metadata']['labels'].get(key) == value
                for key, value in service['spec']['selector'].items()), 'hook must not receive application traffic'

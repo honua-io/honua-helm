@@ -80,7 +80,10 @@ from rendered ConfigMap and Secret data before template-required checks run.
 
 `licensing.mode` defaults to `Disabled` and always renders the explicit Deployment
 environment variable `Licensing__Mode=Disabled`, including with external ConfigMaps
-and Secrets. No license file or signing key is required for 2026.1. All catalog
+and Secrets. No license file or signing key is required for 2026.1.
+Use a 2026.1 server image that supports Disabled mode
+([server#4721](https://github.com/honua-io/honua-server/issues/4721)); older images
+fail the status hook even when their health probes pass. All catalog
 entitlements are active and capacity metering is off; this does not promote Preview
 multi-tenancy, alerting, or offline sync to GA.
 
