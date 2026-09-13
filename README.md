@@ -104,7 +104,7 @@ within chart 0.x — see [docs/MIGRATION.md](docs/MIGRATION.md).
 | [honua-console](https://github.com/honua-io/honua-console) | Unified web console (Studio, Catalog, Operate, Share) |
 | [honua-sdk-js](https://github.com/honua-io/honua-sdk-js) | JavaScript/TypeScript SDKs + MCP server |
 | [honua-sdk-python](https://github.com/honua-io/honua-sdk-python) | Python SDK |
-| [honua-esri-assess](https://github.com/honua-io/honua-esri-assess) | Esri footprint assessment CLI for migration discovery |
+| [honua-migrate](https://github.com/honua-io/honua-migrate) | Esri migration CLI suite — read-only footprint assessment, service and content migration, codemods, durable runs, reconciliation |
 
 ## Security
 
