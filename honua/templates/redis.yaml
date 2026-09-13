@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "honua.fullname" . }}-redis
+  name: {{ include "honua.redisHost" . }}
 type: Opaque
 stringData:
   password: {{ required "redis.auth.password is required when redis.enabled is true." .Values.redis.auth.password | quote }}
@@ -10,7 +10,7 @@ stringData:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "honua.fullname" . }}-redis
+  name: {{ include "honua.redisHost" . }}
   labels:
     {{- include "honua.labels" . | nindent 4 }}
     app.kubernetes.io/component: redis
@@ -24,20 +24,29 @@ spec:
       app.kubernetes.io/component: redis
   template:
     metadata:
+      annotations:
+        checksum/redis-password: {{ .Values.redis.auth.password | sha256sum | quote }}
       labels:
         {{- include "honua.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "honua.redisHost" . }}
       containers:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
           args: ["redis-server", "--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
           env:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "honua.fullname" . }}-redis
+                  name: {{ include "honua.redisHost" . }}
                   key: password
           ports:
             - name: redis
@@ -50,9 +59,22 @@ spec:
               command: ["sh", "-c", "redis-cli --no-auth-warning -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
 ---
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "honua.redisHost" . }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if ne .Values.redis.persistence.storageClass "" }}
+  storageClassName: {{ .Values.redis.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size | quote }}
+---
+apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "honua.fullname" . }}-redis
+  name: {{ include "honua.redisHost" . }}
 spec:
   selector:
     {{- include "honua.selectorLabels" . | nindent 4 }}

@@ -467,10 +467,14 @@ postgresql:
 
 # Optional chart-managed Redis using the Docker Official Image. SingleInstance
 # deployments do not require Redis; MultiNode deployments do. With chart-managed
-# secrets, either set secret.env.ConnectionStrings__redis or provide
-# redis.auth.password so the chart can derive the Redis connection string.
+# Redis always requires redis.auth.password, including with an explicit client
+# connection string. Chart-managed secrets derive the connection string by default.
 redis:
   enabled: false
+  persistence:
+    size: 8Gi
+    # Empty uses the cluster default StorageClass.
+    storageClass: ""
   image:
     repository: redis
     tag: "7.4-alpine"

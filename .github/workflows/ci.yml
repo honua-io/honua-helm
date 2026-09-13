@@ -92,6 +92,9 @@ jobs:
       - name: Render templates (redis auth)
         run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
 
+      - name: Verify managed Redis review regressions
+        run: python3 scripts/test-redis-review.py
+
       - name: Prove Redis-free Production and maintained bundled Redis
         run: |
           set -euo pipefail

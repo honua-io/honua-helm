@@ -153,7 +153,8 @@ true
 {{- end -}}
 
 {{- define "honua.preflightRedisCheck" -}}
-{{- if and .Release.IsInstall .Values.redis.enabled -}}
+{{- $managed := eq (include "honua.usesChartManagedRedisConnection" .) "true" -}}
+{{- if and $managed (or .Release.IsInstall (not (lookup "v1" "Service" .Release.Namespace (include "honua.redisHost" .)))) -}}
 false
 {{- else -}}
 true
@@ -297,7 +298,7 @@ true
 {{- end -}}
 
 {{- define "honua.redisHost" -}}
-{{- printf "%s-redis" (include "honua.fullname" .) -}}
+{{- printf "%s-redis" (include "honua.fullname" . | trunc 57 | trimSuffix "-") -}}
 {{- end -}}
 
 {{- define "honua.redisPort" -}}

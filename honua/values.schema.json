@@ -498,6 +498,14 @@
         "enabled": {
           "type": "boolean"
         },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "size": { "type": "string", "minLength": 1 },
+            "storageClass": { "type": "string" }
+          },
+          "required": ["size", "storageClass"]
+        },
         "image": {
           "type": "object",
           "properties": {
@@ -747,9 +755,10 @@
                 "properties": {
                   "enabled": {
                     "const": true
-                  }
+                  },
+                  "password": { "type": "string", "minLength": 1 }
                 },
-                "required": ["enabled"]
+                "required": ["enabled", "password"]
               }
             },
             "required": ["auth"]
