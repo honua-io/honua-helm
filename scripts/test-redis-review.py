@@ -1,6 +1,5 @@
 """Render regressions for managed Redis storage, rotation, naming and preflight."""
 import base64
-import json
 import subprocess
 
 
