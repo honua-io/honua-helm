@@ -223,8 +223,9 @@ helm upgrade --install honua honua \
   --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
 
-The dev-only PostgreSQL subchart example runs in `Development` so it does not
-require Redis. For non-development environments, enable Redis (below) or supply
+The dev-only PostgreSQL subchart example runs in `Development`. Production
+SingleInstance deployments are also legitimately Redis-free. MultiNode
+deployments must enable chart-managed Redis (below) or supply
 `secret.env.ConnectionStrings__redis`.
 
 When `postgresql.enabled=true`, `postgresql.auth.username`,
@@ -236,7 +237,7 @@ skips PostgreSQL TCP reachability because Helm pre-install hooks run before
 subchart Services and Pods are created. Pre-upgrade hooks check the existing
 PostgreSQL endpoint.
 
-## Redis subchart
+## Optional chart-managed Redis
 
 ```bash
 helm upgrade --install honua honua \
@@ -248,13 +249,23 @@ helm upgrade --install honua honua \
   --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
 
-When `redis.enabled=true`, `redis.auth.enabled` must remain true. In
+When `redis.enabled=true`, `redis.auth.enabled` must remain true and
+`redis.auth.password` must be nonempty, even with an explicit client connection
+string. Delimiter-containing passwords require both the server password and an
+explicit, correctly escaped client connection string. In
 chart-managed-secret mode, the chart auto-populates `ConnectionStrings__redis`
 from `redis.auth.password` unless you set `secret.env.ConnectionStrings__redis`
 yourself. Non-development deployments require Redis-backed durable
 feature-change event storage, so existing-secret mode must provide the runtime
 environment key through the named Secret or `extraEnvFrom`; the chart does not
 create it.
+
+Redis stores its append-only data on an 8Gi ReadWriteOnce PVC mounted at `/data`.
+Set `redis.persistence.size` and `redis.persistence.storageClass` before installing
+(empty storage class uses the cluster default). Pod replacement and image upgrades
+reuse the claim; password changes roll the Redis pod. This single-node deployment
+has downtime during restarts. Migrating from the former Bitnami subchart creates a
+new claim: back up and restore the old Redis data separately before serving traffic.
 
 ## AOT vs JIT images
 
@@ -303,7 +314,7 @@ Readiness at `/healthz/ready` is the chart signal that startup and migrations co
 
 `preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, Redis TCP reachability for non-development deployments, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
 
-For the dev-only PostgreSQL subchart or chart-managed Redis, the initial install preflight validates required secret keys and registry reachability but defers TCP reachability only when the chart auto-generates the subchart connection string. Pre-upgrade hooks, and installs with a supplied connection string, check the configured endpoint.
+For the dev-only PostgreSQL subchart or chart-managed Redis, the initial install preflight validates required secret keys and registry reachability but defers TCP reachability only when the chart auto-generates the subchart connection string. Redis pre-upgrade hooks defer the derived-endpoint probe if the new Service does not yet exist, including migration from the former Bitnami dependency. Once the Service exists, upgrades check it. Supplied connection strings are always checked.
 
 Disable only when an external controller or restricted network policy prevents the hook from reaching the database or registry:
 
@@ -421,7 +432,7 @@ characters. For non-development deployments, it also fails if
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
-| `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+| `redis.enabled` | false | Enable single-node Redis from the Docker Official Image. Requires `redis.auth.enabled=true`; chart-managed secrets derive the Redis connection string from `redis.auth.password`. MultiNode installs need either this or an external `ConnectionStrings__redis`. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 

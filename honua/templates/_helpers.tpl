@@ -110,11 +110,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "honua.requiresRedisConnection" -}}
-{{- $environment := lower (trim (include "honua.runtimeEnvironment" .)) -}}
-{{- if or (eq $environment "development") (eq $environment "test") -}}
-false
-{{- else -}}
+{{- $mode := lower (trim (default "SingleInstance" (get (.Values.config.env | default dict) "Deployment__Mode"))) -}}
+{{- if or .Values.redis.enabled (eq $mode "multinode") -}}
 true
+{{- else -}}
+false
 {{- end -}}
 {{- end -}}
 
@@ -153,7 +153,8 @@ true
 {{- end -}}
 
 {{- define "honua.preflightRedisCheck" -}}
-{{- if and .Release.IsInstall (eq (include "honua.usesChartManagedRedisConnection" .) "true") -}}
+{{- $managed := eq (include "honua.usesChartManagedRedisConnection" .) "true" -}}
+{{- if and $managed (or .Release.IsInstall (not (lookup "v1" "Service" .Release.Namespace (include "honua.redisHost" .)))) -}}
 false
 {{- else -}}
 true
@@ -297,31 +298,9 @@ true
 {{- end -}}
 
 {{- define "honua.redisHost" -}}
-{{- $redisBase := include "honua.dependencyFullname" (dict "chartName" "redis" "chartValues" .Values.redis "context" .) -}}
-{{- $redisValues := .Values.redis | default dict -}}
-{{- $redisArchitecture := default "standalone" (get $redisValues "architecture") -}}
-{{- $redisSentinelValues := get $redisValues "sentinel" | default dict -}}
-{{- $redisSentinelEnabled := default false (get $redisSentinelValues "enabled") -}}
-{{- if and (eq $redisArchitecture "replication") $redisSentinelEnabled -}}
-{{- $redisBase -}}
-{{- else -}}
-{{- printf "%s-master" $redisBase -}}
-{{- end -}}
+{{- printf "%s-redis" (include "honua.fullname" . | trunc 57 | trimSuffix "-") -}}
 {{- end -}}
 
 {{- define "honua.redisPort" -}}
-{{- $redisValues := .Values.redis | default dict -}}
-{{- $redisArchitecture := default "standalone" (get $redisValues "architecture") -}}
-{{- $redisSentinelValues := get $redisValues "sentinel" | default dict -}}
-{{- $redisSentinelEnabled := default false (get $redisSentinelValues "enabled") -}}
-{{- if and (eq $redisArchitecture "replication") $redisSentinelEnabled -}}
-{{- $redisSentinelServiceValues := get $redisSentinelValues "service" | default dict -}}
-{{- $redisSentinelPortsValues := get $redisSentinelServiceValues "ports" | default dict -}}
-{{- default 6379 (get $redisSentinelPortsValues "redis") -}}
-{{- else -}}
-{{- $redisMasterValues := get $redisValues "master" | default dict -}}
-{{- $redisMasterServiceValues := get $redisMasterValues "service" | default dict -}}
-{{- $redisMasterPortsValues := get $redisMasterServiceValues "ports" | default dict -}}
-{{- default 6379 (get $redisMasterPortsValues "redis") -}}
-{{- end -}}
+6379
 {{- end -}}

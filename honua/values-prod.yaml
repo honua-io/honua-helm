@@ -1,8 +1,8 @@
 # Production overlay for customer-operated deployments.
 # Pair this file with a site-specific override for DNS, TLS, image.tag, secret
 # name, and provider-specific ingress annotations. The runtime secret must
-# contain ConnectionStrings__DefaultConnection, HONUA_ADMIN_PASSWORD,
-# Security__ConnectionEncryption__MasterKey, and ConnectionStrings__redis.
+# contain ConnectionStrings__DefaultConnection, HONUA_ADMIN_PASSWORD, and
+# Security__ConnectionEncryption__MasterKey. Redis is required only for MultiNode.
 #
 # This overlay ships a single-instance deployment (replicaCount: 1,
 # Deployment__Mode=SingleInstance) so it is internally consistent and works out

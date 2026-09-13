@@ -557,10 +557,27 @@
     },
     "redis": {
       "type": "object",
-      "description": "Optional Bitnami Redis dependency settings.",
+      "description": "Optional chart-managed Redis settings using the Docker Official Image.",
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "size": { "type": "string", "minLength": 1 },
+            "storageClass": { "type": "string" }
+          },
+          "required": ["size", "storageClass"]
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          },
+          "required": ["repository", "tag", "pullPolicy"]
         },
         "auth": {
           "type": "object",
@@ -802,9 +819,10 @@
                 "properties": {
                   "enabled": {
                     "const": true
-                  }
+                  },
+                  "password": { "type": "string", "minLength": 1 }
                 },
-                "required": ["enabled"]
+                "required": ["enabled", "password"]
               }
             },
             "required": ["auth"]

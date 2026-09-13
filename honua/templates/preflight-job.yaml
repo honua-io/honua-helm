@@ -230,7 +230,7 @@ spec:
                     fail "Redis endpoint ${redis_host}:${redis_port} is not reachable after ${HONUA_PREFLIGHT_RETRIES} attempt(s)"
                   fi
                 else
-                  echo "Skipping Redis TCP reachability check during initial chart-managed Redis install; pre-upgrade checks run after Redis exists."
+                  echo "Skipping Redis TCP reachability check until the chart-managed Redis Service exists (initial install or dependency migration)."
                 fi
               fi
 
