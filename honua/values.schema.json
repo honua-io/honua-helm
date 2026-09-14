@@ -67,6 +67,27 @@
         }
       }
     },
+    "controlPlane": {
+      "type": "object",
+      "properties": {
+        "deployTarget": {
+          "type": "object",
+          "description": "Registers this chart's installed Deployment as a stable target with Honua Server's control plane. See docs/contract.md for the registration and upgrade-safety contract.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "targetId": { "type": "string" },
+            "backend": {
+              "type": "string",
+              "enum": ["honua-gitops-kubernetes"],
+              "description": "Only the truthful hand-off backend (SupportsRollback=false) is supported by this chart."
+            },
+            "environment": { "type": "string" },
+            "targetName": { "type": "string" },
+            "artifactReference": { "type": "string" }
+          }
+        }
+      }
+    },
     "strategy": {
       "type": "object",
       "properties": {
