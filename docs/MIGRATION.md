@@ -73,17 +73,26 @@ operator or release lane.
 ## Upgrade path from a monorepo install
 
 If your existing release was installed from
-`honua-server/infrastructure/helm/honua`, switch to the published chart with:
+`honua-server/infrastructure/helm/honua`, switch to this chart:
 
 ```bash
-helm registry login ghcr.io
-helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z \
+git clone https://github.com/honua-io/honua-helm
+helm upgrade --install honua ./honua-helm/honua \
   -f your-existing-values.yaml
 ```
 
-No value-key changes are required within chart `0.x`. Pin `image.tag` to a
-concrete `vX.Y.Z-aot` server release. Published chart packages stamp
-`image.tag` at package time; see [`../RELEASING.md`](../RELEASING.md).
+> **The chart is not published to a registry yet.** `release.yml` packages and
+> pushes to `oci://ghcr.io/honua-io/charts/honua` on a `chart-v*` tag, and no such
+> tag has been cut - the OCI reference refuses even an anonymous pull token today.
+> Install from a checkout until the first release. When it lands, the same upgrade
+> works as `helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua
+> --version X.Y.Z` after `helm registry login ghcr.io`.
+
+No value-key changes are required within chart `0.x`. Pin `image.tag` to an
+immutable server image. No `v*` server release tag has been cut either, so
+`vX.Y.Z-aot` has no value to substitute yet - use a digest, or a dated
+`nightly-YYYYMMDD-aot` tag. Published chart packages stamp `image.tag` at package
+time; see [`../RELEASING.md`](../RELEASING.md).
 
 ## Chart 0.2.0 Upgrade Notes
 
