@@ -182,9 +182,5 @@ Historical ticket #2 smoke evidence is captured in
 `docs/smoke/ticket-2-helm-smoke.md`. Ticket #6 evidence is produced by the
 current CI workflow's `honua-smoke-evidence` artifact.
 
-Cross-repository release-lane work remains bounded to the owning repos:
-
-- Terraform AWS and Azure end-to-end validation: `honua-terraform#1`, `honua-terraform#2`.
-- Marketplace listing packages, private-offer assets, license/entitlement activation, and validation evidence: `honua-marketplace#1`, `honua-marketplace#2`, `honua-marketplace#4`, `honua-marketplace#5`.
-- Sales offers aligned to validated marketplace packages: `honua-sales#33`, `honua-sales#34`.
-- Helm release-lane coordination outside this values contract: `honua-helm#1`, `honua-helm#6`.
+Terraform provisioning, marketplace packaging and commercial offers are owned
+by their own repositories and are outside this values contract.
