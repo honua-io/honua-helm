@@ -8,9 +8,7 @@ tags: [aks, azure, smoke-test]
 # AKS Chart Smoke Runbook (honua-helm#10)
 
 This runbook covers the **AKS-specific** install + upgrade smoke for the Honua
-Helm chart, on the Azure Marketplace customer-operated deployment path. It is
-the AKS-specific tracker referenced by
-`honua-sales/docs/user/AZURE_MARKETPLACE_DEPLOYMENT_PATH.md`.
+Helm chart, on the Azure Marketplace customer-operated deployment path.
 
 The generic cross-provider install/upgrade/rollback smoke runs in CI on `kind`
 (`.github/workflows/ci.yml`, job `install-upgrade-rollback-smoke`). This runbook
