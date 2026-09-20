@@ -480,6 +480,9 @@ characters. For non-development deployments, it also fails if
 | `secret.env.*` | N/A | Secret environment variables stored in a chart-managed Secret. |
 | `secret.create` | true | Create the runtime Secret and preflight hook Secret from `secret.env`. |
 | `secret.name` | `""` | Reference an existing secret instead of chart-managed secret data. Required when `secret.create=false` unless `extraEnvFrom` supplies the required variables. |
+| `security.requestSecretReferences.allowedEnvironmentVariables` | `[]` | Exact environment variable names a request may name as `env:NAME`. Renders `Security__RequestSecretReferences__AllowedEnvironmentVariables__<n>`. |
+| `security.requestSecretReferences.allowedEnvironmentVariablePrefixes` | `[]` | Environment variable name prefixes a request may name as `env:NAME` (never matches a name containing `__`). Renders `Security__RequestSecretReferences__AllowedEnvironmentVariablePrefixes__<n>`. |
+| `security.requestSecretReferences.allowedSecretReferencePrefixes` | `[]` | Whole-reference prefixes for the other providers, including the provider segment (e.g. `aws:secretsmanager:honua/imports/`). Renders `Security__RequestSecretReferences__AllowedSecretReferencePrefixes__<n>`. Empty lists keep the server's deny-by-default policy; see the [values contract](../docs/values-contract.md#request-supplied-secret-references). |
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |

@@ -226,6 +226,36 @@ jobs:
       - name: Render templates (digest image)
         run: helm template honua ./honua -f honua/ci-values/digest.yaml > /tmp/honua-rendered-digest.yaml
 
+      - name: Verify request secret reference allowlist rendering
+        run: |
+          # Default: deny-by-default is preserved, no allowlist variable renders.
+          if grep -q 'Security__RequestSecretReferences__' /tmp/honua-rendered-base.yaml; then
+            echo "Default render unexpectedly carries a request secret reference allowlist entry."
+            exit 1
+          fi
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            -f honua/ci-values/request-secret-references.yaml \
+            > /tmp/honua-rendered-request-secret-references.yaml
+          rendered=/tmp/honua-rendered-request-secret-references.yaml
+          grep -A1 'name: Security__RequestSecretReferences__AllowedEnvironmentVariables__0$' "${rendered}" | grep -q 'value: "HONUA_IMPORT_ARCGIS_TOKEN"'
+          grep -A1 'name: Security__RequestSecretReferences__AllowedEnvironmentVariablePrefixes__0$' "${rendered}" | grep -q 'value: "HONUA_IMPORT_"'
+          grep -A1 'name: Security__RequestSecretReferences__AllowedSecretReferencePrefixes__0$' "${rendered}" | grep -q 'value: "aws:secretsmanager:honua/imports/"'
+          grep -A1 'name: Security__RequestSecretReferences__AllowedSecretReferencePrefixes__1$' "${rendered}" | grep -q 'value: "azure:keyvault:honua-imports:"'
+          test "$(grep -c 'name: Security__RequestSecretReferences__' "${rendered}")" -eq 4
+          # The schema rejects an env: entry in the whole-reference list, and the
+          # chart rejects a second source for the same indexed list.
+          for invalid in \
+            "--set security.requestSecretReferences.allowedSecretReferencePrefixes[0]=env:HOME" \
+            "--set security.requestSecretReferences.allowedEnvironmentVariablePrefixes[0]=NOT-A-NAME" \
+            "-f honua/ci-values/request-secret-references.yaml --set extraEnv[0].name=Security__RequestSecretReferences__AllowedEnvironmentVariables__1 --set extraEnv[0].value=OTHER"; do
+            # shellcheck disable=SC2086
+            if helm template honua ./honua -f honua/ci-values/base.yaml ${invalid} > /dev/null 2>&1; then
+              echo "Expected render to fail for: ${invalid}"
+              exit 1
+            fi
+          done
+
       - name: Render templates (rolling update)
         run: helm template honua ./honua -f honua/ci-values/rolling-update.yaml > /tmp/honua-rendered-rolling-update.yaml
 

@@ -122,6 +122,50 @@
       "type": "object",
       "description": "Container lifecycle hooks for the honua container (e.g. a preStop sleep to drain Service endpoints during RollingUpdate / HPA scale-down)."
     },
+    "security": {
+      "type": "object",
+      "description": "Server security policy settings rendered as Deployment environment variables.",
+      "properties": {
+        "requestSecretReferences": {
+          "type": "object",
+          "description": "Allowlist for request-supplied secret references (Security:RequestSecretReferences). Deny-by-default: empty lists permit nothing.",
+          "additionalProperties": false,
+          "properties": {
+            "allowedEnvironmentVariables": {
+              "type": "array",
+              "description": "Exact environment variable names a request may name as env:NAME.",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            },
+            "allowedEnvironmentVariablePrefixes": {
+              "type": "array",
+              "description": "Environment variable name prefixes a request may name as env:NAME. Never matches a name containing a double underscore.",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            },
+            "allowedSecretReferencePrefixes": {
+              "type": "array",
+              "description": "Whole-reference prefixes for non-environment providers, including the provider segment, for example aws:secretsmanager:honua/imports/.",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}:[^\\s{}$;]+$",
+                "not": {
+                  "pattern": "^[Ee][Nn][Vv]:"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "licensing": {
       "type": "object",
       "required": [
