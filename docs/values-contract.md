@@ -164,7 +164,7 @@ stored by secret name needs a name-form entry. Keep entries as narrow as the
 deployment allows and give imports and connections their own variables or secret
 path rather than listing the server's own credentials. The schema rejects invalid
 names and `env:` entries in `allowedSecretReferencePrefixes`. When any list is
-set, `extraEnv` entries named `Security__RequestSecretReferences__*` are rejected
+set, `extraEnv`, `config.env` and `secret.env` entries named `Security__RequestSecretReferences__*` are rejected
 so one source owns the indexes; do not also set those keys in `config.env`.
 
 Server images that predate the setting ignore these variables, so the values can
