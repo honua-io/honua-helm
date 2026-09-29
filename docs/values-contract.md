@@ -86,7 +86,7 @@ Use a 2026.1 server image that supports Disabled mode
 ([server#4721](https://github.com/honua-io/honua-server/issues/4721)); older images
 fail the status hook even when their health probes pass. All catalog
 entitlements are active and capacity metering is off; this does not promote Preview
-multi-tenancy, alerting, or offline sync to GA.
+alerting or offline sync to GA.
 
 With `preflight.enabled=true`, the license-status Job runs **post-install and
 post-upgrade**, after the new Deployment is ready. A pre-install API assertion
