@@ -262,6 +262,30 @@ tolerations: []
 # an explicit affinity here to fully override that default.
 affinity: {}
 
+# Allowlist for request-supplied secret references (honua-server #5055).
+# Binds the server's Security:RequestSecretReferences section. The server policy
+# is deny-by-default: with all three lists empty no secret reference named in a
+# request (import credentials, workflow source steps, secure-connection
+# registration) is resolved, and a reference already stored on a secure
+# connection is not resolved at runtime either. Each entry renders as an indexed
+# Deployment environment variable
+# (Security__RequestSecretReferences__<List>__<n>). Server images that predate
+# the setting ignore these variables.
+security:
+  requestSecretReferences:
+    # Exact environment variable names a request may name as env:NAME
+    # (case-sensitive), e.g. ["HONUA_IMPORT_ARCGIS_TOKEN"].
+    allowedEnvironmentVariables: []
+    # Environment variable name prefixes a request may name as env:NAME, e.g.
+    # ["HONUA_IMPORT_"]. A prefix never matches a name containing "__".
+    allowedEnvironmentVariablePrefixes: []
+    # Whole-reference prefixes for the other providers, including the provider
+    # segment, e.g. ["aws:secretsmanager:honua/imports/"] or
+    # ["azure:keyvault:honua-imports:"]. The text after the first colon is
+    # matched as a case-sensitive prefix of the reference, so a secret stored by
+    # full ARN needs an ARN-form entry and one stored by name a name-form entry.
+    allowedSecretReferencePrefixes: []
+
 # Chart-managed ConfigMap. Set config.create=false and config.name to reference
 # an externally managed ConfigMap instead.
 config:

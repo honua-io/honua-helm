@@ -130,6 +130,49 @@ Pro/Enterprise require a valid, unexpired license at startup. See the
 [server licensing contract](https://github.com/honua-io/honua-server/blob/trunk/docs/concepts/editions-and-licensing.md)
 for license provisioning and renewal.
 
+## Request-supplied secret references
+
+`security.requestSecretReferences` is the allowlist for request-supplied secret
+references (honua-server #5055) and binds the server's
+`Security:RequestSecretReferences` section. The server policy is deny-by-default:
+while all three lists are empty, no secret reference named in a request (import
+credentials, workflow source steps, secure-connection registration) is resolved,
+and a secure connection that stores a `secretReference` does not resolve it at
+runtime. Connections stored with an encrypted password are unaffected, and secret
+references in the server's own configuration are not governed by this policy.
+
+| Value | Rendered variable | Matching |
+| --- | --- | --- |
+| `allowedEnvironmentVariables` | `Security__RequestSecretReferences__AllowedEnvironmentVariables__<n>` | Exact, case-sensitive name for `env:NAME`. |
+| `allowedEnvironmentVariablePrefixes` | `Security__RequestSecretReferences__AllowedEnvironmentVariablePrefixes__<n>` | Name prefix for `env:NAME`; never matches a name containing `__`. |
+| `allowedSecretReferencePrefixes` | `Security__RequestSecretReferences__AllowedSecretReferencePrefixes__<n>` | Whole-reference prefix including the provider segment. The provider (text before the first colon) is case-insensitive; the remainder is a case-sensitive prefix of the reference. |
+
+```yaml
+security:
+  requestSecretReferences:
+    allowedEnvironmentVariablePrefixes:
+      - HONUA_IMPORT_
+    allowedSecretReferencePrefixes:
+      - "aws:secretsmanager:honua/imports/"
+```
+
+Entries render as indexed Deployment environment variables in list order, so they
+take precedence over `envFrom` sources; defaults render nothing. Because the match
+is a prefix of the stored text, a reference stored as a full ARN
+(`aws:secretsmanager:arn:aws:secretsmanager:...`) needs an ARN-form entry and one
+stored by secret name needs a name-form entry. Keep entries as narrow as the
+deployment allows and give imports and connections their own variables or secret
+path rather than listing the server's own credentials. The schema rejects invalid
+names and `env:` entries in `allowedSecretReferencePrefixes`. When any list is
+set, `extraEnv`, `config.env` and `secret.env` entries named `Security__RequestSecretReferences__*` are rejected
+so one source owns the indexes; do not also set those keys in `config.env`.
+
+Server images that predate the setting ignore these variables, so the values can
+be set before upgrading. Deployments that already rely on request-supplied
+references should set matching entries before moving to an image that includes the
+setting. See the
+[server configuration guide](https://github.com/honua-io/honua-server/blob/trunk/docs/guides/deploy/configuration.md).
+
 ## Optional Values
 
 | Area | Values | Notes |
@@ -140,6 +183,7 @@ for license provisioning and renewal.
 | Naming | `nameOverride`, `fullnameOverride` | Use only for DNS length constraints or platform naming standards. |
 | ServiceAccount | `serviceAccount.*` | Token automount stays disabled by default. |
 | Routing | `service.*`, `ingress.*` | Ingress class, DNS, TLS, and annotations are platform-specific. |
+| Secret reference allowlist | `security.requestSecretReferences.*` | Deny-by-default allowlist for request-supplied secret references; see [Request-supplied secret references](#request-supplied-secret-references). |
 | Runtime config | `config.create`, `config.name`, `config.env.*` | Non-secret application settings are stored in a ConfigMap unless an external ConfigMap is named. |
 | Scheduling | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | Platform placement and metadata hooks. |
 | Security | `podSecurityContext`, `securityContext` | Defaults are restricted and should remain the baseline. |

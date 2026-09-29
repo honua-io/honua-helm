@@ -101,6 +101,13 @@ spec:
                   name: {{ .Values.licensing.licenseSecretRef.name | quote }}
                   key: {{ .Values.licensing.licenseSecretRef.key | quote }}
             {{- end }}
+            {{- $requestSecretReferences := dig "requestSecretReferences" dict (.Values.security | default dict) }}
+            {{- range $list := list "AllowedEnvironmentVariables" "AllowedEnvironmentVariablePrefixes" "AllowedSecretReferencePrefixes" }}
+            {{- range $index, $entry := (get $requestSecretReferences (untitle $list)) | default list }}
+            - name: {{ printf "Security__RequestSecretReferences__%s__%d" $list $index }}
+              value: {{ $entry | quote }}
+            {{- end }}
+            {{- end }}
             {{- if $otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ $otlpEndpoint | quote }}

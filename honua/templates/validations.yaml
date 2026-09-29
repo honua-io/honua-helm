@@ -181,6 +181,26 @@
 {{- include "honua.validateSecretComplexity" . -}}
 {{- end -}}
 
+{{- /* One source for the request secret reference allowlist: indexed entries from extraEnv would interleave with the chart-rendered list. */ -}}
+{{- $requestSecretReferences := dig "requestSecretReferences" dict (.Values.security | default dict) }}
+{{- if or $requestSecretReferences.allowedEnvironmentVariables $requestSecretReferences.allowedEnvironmentVariablePrefixes $requestSecretReferences.allowedSecretReferencePrefixes }}
+{{- range .Values.extraEnv }}
+{{- if hasPrefix "Security__RequestSecretReferences__" (.name | default "") }}
+{{- fail (printf "%s must be configured through security.requestSecretReferences values, not duplicated in extraEnv" .name) }}
+{{- end }}
+{{- end }}
+{{- range $key, $_ := ((.Values.config).env | default dict) }}
+{{- if hasPrefix "Security__RequestSecretReferences__" $key }}
+{{- fail (printf "%s must be configured through security.requestSecretReferences values, not duplicated in config.env" $key) }}
+{{- end }}
+{{- end }}
+{{- range $key, $_ := ((.Values.secret).env | default dict) }}
+{{- if hasPrefix "Security__RequestSecretReferences__" $key }}
+{{- fail (printf "%s must be configured through security.requestSecretReferences values, not duplicated in secret.env" $key) }}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- /* Dedicated licensing values must remain authoritative over explicit env. */ -}}
 {{- range .Values.extraEnv }}
 {{- if or (eq .name "Licensing__Mode") (and $.Values.licensing.edition (eq .name "Licensing__Edition")) (and $.Values.licensing.licenseSecretRef.name (eq .name "Licensing__LicenseContent")) }}
