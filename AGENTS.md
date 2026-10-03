@@ -128,7 +128,7 @@ honua/                     Chart source
   ci-values/               Value files exercised by CI (base, digest, postgresql, ...)
   README.md                Detailed chart usage + full values reference
 docs/                      contract.md, values-contract.md, MIGRATION.md, features/, smoke/
-.github/workflows/         ci.yml (lint+render+smoke), release.yml (package+publish)
+.github/workflows/         ci.yml (lint+render+smoke), release.yml (tag cut), chart-nightly.yml (publish by digest)
 RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
 ```
 
@@ -159,6 +159,19 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
   refuses an existing OCI version, and requires an anonymous byte-identical pull
   before creating the GitHub Release. Manual dispatch is dry-run only.
   See `RELEASING.md`.
+- Nightly publication (`.github/workflows/chart-nightly.yml`, ruling R31) is a separate path from
+  the tag cut. It works as follows:
+  - It stamps `version`/`appVersion` = platform version and `image.digest` = server digest into
+    its job checkout only. It pushes by digest, signs keyless with cosign (no key), and attests an
+    SBOM and SLSA provenance.
+  - It pulls the chart back by digest and re-hashes it.
+  - It writes `chart-publication.json`, which the release resolver reads.
+  - Its decisions live in `scripts/chart_publication.py`, tested by
+    `scripts/test-chart-publication.py` in `lint-chart`.
+  - A branch can prove it only with `proof: true`, which publishes to
+    `charts/honua-ci-proof/honua` and then deletes it.
+
+  See `docs/release/CHART-PUBLICATION.md`.
 - When changing pinned subchart versions, update both `Chart.yaml` ranges and
   `Chart.lock` (`helm dependency update`), since CI builds from the lock.
 - Do not build/run the project as part of documentation work; CI requires
