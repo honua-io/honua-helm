@@ -52,6 +52,11 @@ jobs:
           python3 -m pip install --require-hashes -r scripts/requirements-tests.txt
           python3 scripts/test-licensing-contract.py
 
+      # Stamps, lints, renders and packages the real chart the way chart-nightly.yml does, and
+      # pins every publication refusal (R22 version, trunk identity, digest binding, receipt).
+      - name: Verify nightly chart publication helpers
+        run: python3 scripts/test-chart-publication.py
+
       - name: Lint chart
         run: helm lint honua -f honua/ci-values/base.yaml
 

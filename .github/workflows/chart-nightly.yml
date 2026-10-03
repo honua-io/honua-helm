@@ -1,0 +1,477 @@
+# Nightly chart publication by digest (ruling R31, honua-release#376; honua-release#231 WI-6).
+#
+# Packages the chart with `version` and `appVersion` set to the platform version (R22:
+# 2026.1.0-rc.N) and the server image digest stamped into the package, pushes it once to
+# oci://ghcr.io/honua-io/charts/honua, signs it keyless (GitHub OIDC -> Fulcio, no key), attaches
+# a CycloneDX SBOM and SLSA provenance attestation, pulls it back by digest and re-hashes it, and
+# emits the digest, package sha256, source revision and platform set as outputs and a receipt.
+# Trunk's Chart.yaml is never edited. No floating or channel tag is moved: the only tag written is
+# the immutable chart version, refused if it already names different bytes. Channel tags belong to
+# promotion. docs/release/CHART-PUBLICATION.md is the contract the release resolver reads.
+
+name: Nightly Chart Publication
+
+on:
+  schedule:
+    # After honua-release's nightly-certification (11:15 UTC) has had time to resolve and stamp
+    # its candidate. The schedule supplies no inputs: it publishes the newest stamped candidate.
+    - cron: "45 13 * * *"
+  workflow_call:
+    inputs:
+      server_image_digest:
+        description: "honua-server image index digest (sha256:<64 hex>) the chart's appVersion binds"
+        required: true
+        type: string
+      platform_version:
+        description: "R22 platform version, e.g. 2026.1.0-rc.3; becomes the chart version and appVersion"
+        required: true
+        type: string
+      chart_revision:
+        description: "honua-helm commit to package, on trunk (default: honua-helm default-branch head)"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      chart_reference:
+        description: "ghcr.io/honua-io/charts/honua@sha256:..."
+        value: ${{ jobs.publish.outputs.chart_reference }}
+      chart_digest:
+        description: "OCI manifest digest of the published chart"
+        value: ${{ jobs.publish.outputs.chart_digest }}
+      chart_sha256:
+        description: "sha256 of the chart package pulled back by digest"
+        value: ${{ jobs.publish.outputs.chart_sha256 }}
+      chart_version:
+        description: "Chart version (= platform version)"
+        value: ${{ jobs.publish.outputs.chart_version }}
+      source_revision:
+        description: "honua-helm commit the package was built from"
+        value: ${{ jobs.publish.outputs.source_revision }}
+      architectures:
+        description: "JSON array of the platform set, e.g. [\"amd64\",\"arm64\"]"
+        value: ${{ jobs.publish.outputs.architectures }}
+      receipt_artifact:
+        description: "Name of the artifact holding chart-publication.json"
+        value: ${{ jobs.publish.outputs.receipt_artifact }}
+  workflow_dispatch:
+    inputs:
+      server_image_digest:
+        description: "honua-server image index digest (sha256:<64 hex>)"
+        required: true
+        type: string
+      platform_version:
+        description: "R22 platform version, e.g. 2026.1.0-rc.3"
+        required: true
+        type: string
+      chart_revision:
+        description: "honua-helm commit to package (default: honua-helm default-branch head; a branch proof passes its head)"
+        required: false
+        type: string
+        default: ""
+      proof:
+        description: "Publish to the throwaway charts/honua-ci-proof namespace and delete it afterwards"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chart-nightly-${{ inputs.proof && 'proof' || 'release' }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish chart by digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write       # helm push and cosign signatures/attestations in GHCR
+      id-token: write       # keyless signing: the job's OIDC identity is the signing identity
+      attestations: write   # SLSA provenance via actions/attest-build-provenance
+    outputs:
+      chart_reference: ${{ steps.receipt.outputs.chart_reference }}
+      chart_digest: ${{ steps.digest.outputs.digest }}
+      chart_sha256: ${{ steps.verify.outputs.sha256 }}
+      chart_version: ${{ steps.resolve.outputs.platform_version }}
+      source_revision: ${{ steps.resolve.outputs.source_revision }}
+      architectures: ${{ steps.server.outputs.architectures }}
+      receipt_artifact: ${{ steps.receipt.outputs.artifact }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      # In a reusable workflow github.event_name, github.ref and github.sha are the CALLER's, so
+      # nothing here reads them. The mode is the inputs: a server_image_digest publishes exactly that
+      # request; no inputs is this workflow's own nightly, which publishes the newest stamped
+      # candidate. The revision is chart_revision, or honua-helm's default-branch head read from the
+      # API. It is authorized here, by this workflow's own code, before any checked-out file runs:
+      # the trunk workflow's identity only ever executes trunk commits, proof or not.
+      - name: Choose and authorize the honua-helm revision to check out
+        id: source
+        shell: bash
+        env:
+          INPUT_SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
+          INPUT_CHART_REVISION: ${{ inputs.chart_revision }}
+          TRUNK_WORKFLOW_REF: honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
+        run: |
+          set -euo pipefail
+          api() {
+            local delay output
+            for delay in 0 10 30 60 120; do
+              sleep "${delay}"
+              if output="$(gh api "$@" 2>"${RUNNER_TEMP}/gh-api.err")"; then
+                printf '%s\n' "${output}"
+                return 0
+              fi
+              if ! grep -qiE 'error connecting|could not resolve host|connection reset|timed? ?out|tls|HTTP 5[0-9][0-9]' \
+                "${RUNNER_TEMP}/gh-api.err"; then
+                cat "${RUNNER_TEMP}/gh-api.err" >&2
+                return 1
+              fi
+            done
+            cat "${RUNNER_TEMP}/gh-api.err" >&2
+            return 1
+          }
+          if [[ -n "${INPUT_SERVER_IMAGE_DIGEST}" ]]; then mode=inputs; else mode=nightly-candidate; fi
+          default_branch="$(api repos/honua-io/honua-helm --jq .default_branch)"
+          revision="${INPUT_CHART_REVISION}"
+          if [[ -z "${revision}" ]]; then
+            revision="$(api "repos/honua-io/honua-helm/commits/${default_branch}" --jq .sha)"
+          fi
+          if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::chart_revision '${revision}' is not a 40-hex honua-helm commit" >&2
+            exit 1
+          fi
+          job_workflow_ref="$(curl --silent --show-error --fail --retry 5 --retry-all-errors \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | python3 -c '
+          import base64, json, sys
+          payload = json.load(sys.stdin)["value"].split(".")[1]
+          print(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["job_workflow_ref"])')"
+          if [[ "${job_workflow_ref}" == "${TRUNK_WORKFLOW_REF}" ]]; then
+            # compare/<revision>...<trunk>: "identical" or "ahead" means the revision is on trunk.
+            status="$(api "repos/honua-io/honua-helm/compare/${revision}...${default_branch}" --jq .status)"
+            if [[ "${status}" != "identical" && "${status}" != "ahead" ]]; then
+              echo "::error::honua-helm ${revision} is not on ${default_branch} (${status}); ${TRUNK_WORKFLOW_REF} runs only trunk code" >&2
+              exit 1
+            fi
+          fi
+          {
+            echo "mode=${mode}"
+            echo "revision=${revision}"
+            echo "default_branch=${default_branch}"
+            echo "job_workflow_ref=${job_workflow_ref}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: honua-io/honua-helm
+          ref: ${{ steps.source.outputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the publication helper's dependency
+        run: python3 -m pip install --require-hashes -r scripts/requirements-tests.txt
+
+      - name: Select the newest stamped nightly candidate
+        id: candidate
+        if: steps.source.outputs.mode == 'nightly-candidate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/chart_publication.py candidate \
+            --workdir "${RUNNER_TEMP}/release-candidates" --out "${RUNNER_TEMP}/candidate.json"
+
+      - name: Check out the candidate's pinned honua-helm revision
+        if: steps.source.outputs.mode == 'nightly-candidate'
+        shell: bash
+        env:
+          REVISION: ${{ steps.candidate.outputs.source_revision }}
+          DEFAULT_BRANCH: ${{ steps.source.outputs.default_branch }}
+          JOB_WORKFLOW_REF: ${{ steps.source.outputs.job_workflow_ref }}
+          TRUNK_WORKFLOW_REF: honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
+        run: |
+          set -euo pipefail
+          if [[ ! "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the candidate pins honua-helm '${REVISION}', not a 40-hex commit" >&2
+            exit 1
+          fi
+          # Authorized before the candidate's files run, like the revision above.
+          if [[ "${JOB_WORKFLOW_REF}" == "${TRUNK_WORKFLOW_REF}" ]] \
+            && ! git merge-base --is-ancestor "${REVISION}" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::the candidate pins honua-helm ${REVISION}, which is not on ${DEFAULT_BRANCH}" >&2
+            exit 1
+          fi
+          git checkout --quiet --detach "${REVISION}"
+          if [[ ! -f scripts/chart_publication.py ]]; then
+            echo "::error::honua-helm ${REVISION} predates chart publication; it cannot be packaged by its own tooling" >&2
+            exit 1
+          fi
+
+      # Every refusal happens here, before anything is pushed: the version form, the digest form,
+      # the source revision being on trunk, and the OIDC identity Fulcio will certify.
+      - name: Resolve and authorize the publication request
+        id: resolve
+        shell: bash
+        env:
+          INPUT_SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
+          INPUT_PLATFORM_VERSION: ${{ inputs.platform_version }}
+          INPUT_CHART_REVISION: ${{ inputs.chart_revision }}
+          INPUT_PROOF: ${{ inputs.proof }}
+          MODE: ${{ steps.source.outputs.mode }}
+        run: |
+          set -euo pipefail
+          candidate=()
+          if [[ "${MODE}" == "nightly-candidate" ]]; then
+            candidate=(--candidate "${RUNNER_TEMP}/candidate.json")
+          fi
+          python3 scripts/chart_publication.py resolve "${candidate[@]}" --out "${RUNNER_TEMP}/request.json"
+
+      - name: Read the server image's platform set
+        id: server
+        run: python3 scripts/chart_publication.py inspect-server --request "${RUNNER_TEMP}/request.json" --out "${RUNNER_TEMP}/server.json"
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Build dependencies from Chart.lock
+        run: |
+          scripts/retry-transient.sh helm repo add bitnami https://charts.bitnami.com/bitnami
+          scripts/retry-transient.sh helm dependency build honua
+
+      - name: Stamp version, appVersion and the server digest (job checkout only)
+        run: python3 scripts/chart_publication.py stamp --request "${RUNNER_TEMP}/request.json" --chart honua
+
+      - name: Lint the stamped chart
+        run: helm lint honua -f honua/ci-values/base.yaml
+
+      - name: Render the stamped chart and require the server digest
+        shell: bash
+        env:
+          SERVER_IMAGE_DIGEST: ${{ steps.resolve.outputs.server_image_digest }}
+          PLATFORM_VERSION: ${{ steps.resolve.outputs.platform_version }}
+        run: |
+          set -euo pipefail
+          rendered="${RUNNER_TEMP}/rendered-stamped.yaml"
+          helm template honua ./honua -f honua/ci-values/base.yaml > "${rendered}"
+          grep -qF "image: \"ghcr.io/honua-io/honua-server@${SERVER_IMAGE_DIGEST}\"" "${rendered}"
+          grep -qF "app.kubernetes.io/version: \"${PLATFORM_VERSION}\"" "${rendered}"
+
+      - name: Package chart
+        id: package
+        shell: bash
+        env:
+          PLATFORM_VERSION: ${{ steps.resolve.outputs.platform_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          helm package honua --destination dist/
+          artifact="dist/honua-${PLATFORM_VERSION}.tgz"
+          test -f "${artifact}"
+          echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=sha256:$(sha256sum "${artifact}" | cut -d' ' -f1)" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${GH_TOKEN}" | scripts/retry-transient.sh helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      # Absent (404) publishes. Present with the same binding (an earlier run, or the train's call
+      # for the same candidate) is re-verified and re-recorded, never re-pushed. Present with any
+      # other binding refuses: chart versions are immutable.
+      - name: Prove the chart version absent, or already bound to this request
+        id: lookup
+        run: python3 scripts/chart_publication.py lookup --request "${RUNNER_TEMP}/request.json"
+
+      - name: Push the chart once
+        id: push
+        if: steps.lookup.outputs.state == 'absent'
+        shell: bash
+        env:
+          ARTIFACT: ${{ steps.package.outputs.artifact }}
+          OCI_NAMESPACE: ${{ steps.resolve.outputs.oci_namespace }}
+        run: |
+          set -euo pipefail
+          log="$(scripts/retry-transient.sh helm push "${ARTIFACT}" "oci://ghcr.io/${OCI_NAMESPACE}" 2>&1)"
+          printf '%s\n' "${log}"
+          echo "digest=$(printf '%s\n' "${log}" | awk '/^Digest:/ {print $2; exit}')" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve the published digest from the registry
+        id: digest
+        shell: bash
+        env:
+          EXISTING: ${{ steps.lookup.outputs.digest }}
+          PUSHED: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${EXISTING}" ]]; then
+            digest="${EXISTING}"
+          else
+            # The registry, not helm's console output, is the source of truth for the digest.
+            digest="$(python3 scripts/chart_publication.py lookup --request "${RUNNER_TEMP}/request.json" | awk -F= '$1 == "digest" {print $2}')"
+            if [[ -n "${PUSHED}" && "${PUSHED}" != "${digest}" ]]; then
+              echo "::error::helm push reported ${PUSHED}, the registry tag names ${digest}" >&2
+              exit 1
+            fi
+          fi
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Pull by digest and re-hash
+        id: verify
+        shell: bash
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+          PACKAGED: ${{ steps.lookup.outputs.state == 'absent' && steps.package.outputs.artifact || '' }}
+        run: |
+          set -euo pipefail
+          packaged=()
+          if [[ -n "${PACKAGED}" ]]; then
+            packaged=(--packaged "${PACKAGED}")
+          fi
+          python3 scripts/chart_publication.py verify --request "${RUNNER_TEMP}/request.json" \
+            --digest "${DIGEST}" "${packaged[@]}" --out "${RUNNER_TEMP}/pulled.tgz"
+
+      - name: Generate the SBOM from the pulled bytes
+        shell: bash
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          helm template honua "${RUNNER_TEMP}/pulled.tgz" -f honua/ci-values/base.yaml > "${RUNNER_TEMP}/rendered-base.yaml"
+          helm template honua "${RUNNER_TEMP}/pulled.tgz" -f honua/ci-values/postgresql.yaml > "${RUNNER_TEMP}/rendered-postgresql.yaml"
+          mkdir -p receipt
+          python3 scripts/chart_publication.py sbom --request "${RUNNER_TEMP}/request.json" \
+            --package "${RUNNER_TEMP}/pulled.tgz" --digest "${DIGEST}" \
+            --rendered "${RUNNER_TEMP}/rendered-base.yaml" "${RUNNER_TEMP}/rendered-postgresql.yaml" \
+            --out receipt/sbom.cdx.json
+
+      - name: Sign keyless and attach the SBOM attestation
+        shell: bash
+        env:
+          REFERENCE: ${{ steps.resolve.outputs.repository }}@${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          scripts/retry-transient.sh cosign sign --yes "${REFERENCE}"
+          scripts/retry-transient.sh cosign attest --yes --type cyclonedx --predicate receipt/sbom.cdx.json "${REFERENCE}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ steps.resolve.outputs.repository }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      # The identity is exact: https://github.com/<job_workflow_ref>. For the release repository
+      # resolve_request admitted only .../chart-nightly.yml@refs/heads/trunk.
+      - name: Verify the signature and attestations
+        shell: bash
+        env:
+          REFERENCE: ${{ steps.resolve.outputs.repository }}@${{ steps.digest.outputs.digest }}
+          IDENTITY: ${{ steps.resolve.outputs.signing_identity }}
+        run: |
+          set -euo pipefail
+          scripts/retry-transient.sh cosign verify "${REFERENCE}" \
+            --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            > receipt/cosign-verify.json 2> receipt/cosign-verify.txt
+          scripts/retry-transient.sh cosign verify-attestation "${REFERENCE}" --type cyclonedx \
+            --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            > receipt/cosign-verify-sbom.json 2> receipt/cosign-verify-sbom.txt
+          scripts/retry-transient.sh gh attestation verify "oci://${REFERENCE}" --owner honua-io \
+            --signer-workflow honua-io/honua-helm/.github/workflows/chart-nightly.yml \
+            --predicate-type https://slsa.dev/provenance/v1 --format json > receipt/gh-attestation-verify.json
+          cat receipt/cosign-verify.txt receipt/cosign-verify-sbom.txt
+          jq . receipt/cosign-verify.json
+
+      - name: Write the publication receipt
+        id: receipt
+        shell: bash
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+          SHA256: ${{ steps.verify.outputs.sha256 }}
+          PUBLICATION: ${{ steps.lookup.outputs.state == 'absent' && 'pushed' || 'existing' }}
+          REPOSITORY: ${{ steps.resolve.outputs.repository }}
+          PLATFORM_VERSION: ${{ steps.resolve.outputs.platform_version }}
+          PROOF: ${{ steps.resolve.outputs.proof }}
+        run: |
+          set -euo pipefail
+          python3 scripts/chart_publication.py receipt --request "${RUNNER_TEMP}/request.json" \
+            --server "${RUNNER_TEMP}/server.json" --digest "${DIGEST}" --sha256 "${SHA256}" \
+            --publication "${PUBLICATION}" \
+            --cosign-verify receipt/cosign-verify.json --cosign-verify-sbom receipt/cosign-verify-sbom.json \
+            --gh-attestation-verify receipt/gh-attestation-verify.json \
+            --out receipt/chart-publication.json
+          cp "${RUNNER_TEMP}/request.json" "${RUNNER_TEMP}/server.json" receipt/
+          cp "${RUNNER_TEMP}/pulled.tgz" "receipt/honua-${PLATFORM_VERSION}.tgz"
+          prefix="chart-publication"
+          if [[ "${PROOF}" == "true" ]]; then prefix="chart-publication-proof"; fi
+          echo "artifact=${prefix}-${PLATFORM_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "chart_reference=${REPOSITORY}@${DIGEST}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Chart published by digest"
+            echo ""
+            echo "- Reference: \`${REPOSITORY}@${DIGEST}\` (${PUBLICATION})"
+            echo "- Version / appVersion: \`${PLATFORM_VERSION}\`"
+            echo "- Package sha256 (pulled by digest): \`${SHA256}\`"
+            echo ""
+            echo '```json'
+            jq '.platformManifest' receipt/chart-publication.json
+            echo '```'
+            echo ""
+            echo "### cosign verify"
+            echo '```'
+            cat receipt/cosign-verify.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.receipt.outputs.artifact }}
+          path: receipt/
+          if-no-files-found: error
+          retention-days: 90
+
+  # A proof run leaves nothing behind in the registry: the throwaway package, its signatures and
+  # attestations go with it. Rekor and the GitHub attestation log are append-only by design.
+  delete-proof:
+    name: Delete the throwaway proof package
+    needs: publish
+    if: ${{ always() && inputs.proof == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE: charts%2Fhonua-ci-proof%2Fhonua
+    steps:
+      - name: Delete charts/honua-ci-proof/honua
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="${GITHUB_API_URL}/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}"
+          call() {
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' --retry 5 --retry-all-errors \
+              --header "Authorization: Bearer ${GH_TOKEN}" --header 'Accept: application/vnd.github+json' "$@" "${url}"
+          }
+          deleted="$(call --request DELETE)"
+          echo "DELETE ${url} -> HTTP ${deleted}"
+          if [[ "${deleted}" != "204" && "${deleted}" != "404" ]]; then
+            echo "::error::could not delete charts/honua-ci-proof/honua (HTTP ${deleted})" >&2
+            exit 1
+          fi
+          remaining="$(call)"
+          echo "GET ${url} -> HTTP ${remaining}"
+          if [[ "${remaining}" != "404" ]]; then
+            echo "::error::charts/honua-ci-proof/honua still answers HTTP ${remaining} after deletion" >&2
+            exit 1
+          fi

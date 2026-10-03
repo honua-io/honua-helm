@@ -27,6 +27,17 @@ OCI chart without overrides gets an immutable, version-pinned image. AOT is the
 chart's default posture; operators that need JIT can override `image.tag` at
 install time.
 
+## Nightly publication by digest
+
+Platform candidates do not use this tag-triggered cut. Each platform candidate gets its chart from
+[`.github/workflows/chart-nightly.yml`](.github/workflows/chart-nightly.yml) instead. That
+workflow sets the chart `version` and `appVersion` to the platform version (for example
+`2026.1.0-rc.3`) and stamps the honua-server image digest into the package. It pushes the chart to
+`oci://ghcr.io/honua-io/charts/honua`, signs it keyless with the job's OIDC identity, and verifies
+it by digest. It writes the receipt the platform release resolver reads. Nothing is hand-edited
+into `honua/Chart.yaml`, and no signing key is involved. See
+[docs/release/CHART-PUBLICATION.md](docs/release/CHART-PUBLICATION.md).
+
 ## Cut procedure
 
 The canonical public release path is the tag-triggered run, which publishes to
