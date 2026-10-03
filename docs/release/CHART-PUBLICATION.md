@@ -23,7 +23,19 @@ path, and this job does not change it.
 
 ## What one run does
 
-1. **Resolve and authorize.** The job decides what it may publish before it pushes anything:
+1. **Resolve and authorize.** The job decides what it may publish before it pushes anything.
+   The mode comes from the inputs, never from the event name. In a reusable workflow
+   `github.event_name`, `github.ref` and `github.sha` belong to the caller:
+   - A non-empty `server_image_digest` publishes exactly that request. `platform_version` is then
+     required, and `chart_revision` is optional.
+   - No inputs is this workflow's own scheduled nightly, which publishes the newest stamped
+     candidate. A caller that passes no inputs is refused. So is half a request, such as a
+     `platform_version` or `chart_revision` without a digest.
+   - The revision checked out is `chart_revision`, or honua-helm's default-branch head read from the
+     GitHub API. When the trunk workflow runs, the revision must be on `trunk`. The workflow's own
+     steps check this before any checked-out file runs, for proof runs too.
+
+   The request must also pass these checks:
    - `platform_version` must have the R22 form `YYYY.N.P[-rc.N]`, for example `2026.1.0-rc.3`.
    - `server_image_digest` must be `sha256:<64 hex>`.
    - For the release repository, the source revision must be on honua-helm `trunk`.
@@ -73,8 +85,8 @@ path, and this job does not change it.
 | Trigger | Inputs | Publishes |
 | --- | --- | --- |
 | `schedule`, 13:45 UTC daily | none | The newest stamped release-train candidate: the `refs/nightly-candidates/*` snapshot in honua-release with the newest commit date. The chart version is that snapshot's `platformRelease` label (`2026.1-rc.N` → `2026.1.0-rc.N`). The server digest is its `components.honua-server` image digest. The source revision is its `components.honua-helm.sha`. If no candidate is stamped, the run fails and publishes nothing. It never invents a version. |
-| `workflow_call` | `server_image_digest`, `platform_version`, optional `source_revision` (default: honua-helm `trunk` head) | The release repository. Call it as `uses: honua-io/honua-helm/.github/workflows/chart-nightly.yml@trunk`. The caller job needs `contents: read`, `packages: write`, `id-token: write` and `attestations: write`. Its token must have write access to the `charts/honua` package. |
-| `workflow_dispatch` | as `workflow_call`, plus `proof` | With `proof: false`, from `trunk` only: the release repository. With `proof: true`, from any branch: the throwaway `ghcr.io/honua-io/charts/honua-ci-proof/honua`, which the `delete-proof` job deletes once the run finishes. |
+| `workflow_call` | `server_image_digest`, `platform_version`, optional `chart_revision` (default: honua-helm default-branch head, read from the API) | Exactly that request, to the release repository, whatever event started the caller. Call it as `uses: honua-io/honua-helm/.github/workflows/chart-nightly.yml@trunk`. The caller job needs `contents: read`, `packages: write`, `id-token: write` and `attestations: write`. Its token must have write access to the `charts/honua` package. |
+| `workflow_dispatch` | as `workflow_call`, plus `proof` | With `proof: false`, from `trunk` only: the release repository. With `proof: true`, from any branch: the throwaway `ghcr.io/honua-io/charts/honua-ci-proof/honua`, which the `delete-proof` job deletes once the run finishes. A branch proof must pass its own head as `chart_revision`, because the default is the default-branch head. |
 
 ## What the release resolver reads
 
@@ -125,6 +137,26 @@ The same values are job outputs, so a calling workflow does not have to download
 - `receipt_artifact`
 
 ## Verifying a published chart
+
+### At pull time
+
+Before you install or mirror a chart, resolve its version to a digest and verify the signature on
+that digest. The identity is exact. Do not use `--certificate-identity-regexp`, because a regular
+expression would also accept a branch run of the same workflow:
+
+```bash
+digest=$(oras resolve ghcr.io/honua-io/charts/honua:<version>)   # or the receipt's chart.digest
+cosign verify "ghcr.io/honua-io/charts/honua@${digest}" \
+  --certificate-identity https://github.com/honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+helm pull oci://ghcr.io/honua-io/charts/honua --version <version>
+sha256sum honua-<version>.tgz   # must equal the receipt's platformManifest.artifactSha256
+```
+
+The signing identity is always the trunk workflow, including when the release train calls it as
+a reusable workflow. The certificate names the called workflow, not the caller's workflow.
+
+### Full verification
 
 Every check below runs against the digest, never the version tag:
 

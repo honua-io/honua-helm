@@ -25,6 +25,7 @@ OTHER = 'sha256:' + '2' * 64
 REVISION = 'a' * 40
 TRUNK = cp.TRUNK_WORKFLOW_REF
 BRANCH = cp.WORKFLOW_PATH + '@refs/heads/feat/x'
+CALLER = 'honua-io/honua-release/.github/workflows/nightly-certification.yml@refs/heads/trunk'
 
 
 def refused(action, needle):
@@ -37,9 +38,8 @@ def refused(action, needle):
 
 
 def resolve(**overrides):
-    arguments = dict(event='workflow_call', ref='refs/heads/trunk',
-                     inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3'},
-                     workflow_ref=TRUNK, source_revision=REVISION, on_trunk=True)
+    arguments = dict(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3'},
+                     workflow_ref=TRUNK, run_workflow_ref=CALLER, source_revision=REVISION, on_trunk=True)
     arguments.update(overrides)
     return cp.resolve_request(**arguments)
 
@@ -62,15 +62,16 @@ for label in ('', None, 'honua-2026.1-rc.3', '2026.1-rc.03', '2026.1-nightly.1')
 # The release repository: trunk workflow identity, trunk source, R22 version, sha256 digest.
 request = resolve()
 assert request['repository'] == 'ghcr.io/honua-io/charts/honua' and request['proof'] is False
-assert request['ociNamespace'] == 'honua-io/charts'
+assert request['ociNamespace'] == 'honua-io/charts' and request['mode'] == 'inputs'
 assert request['signingIdentity'] == 'https://github.com/' + TRUNK
 assert (request['platformVersion'], request['serverImageDigest']) == ('2026.1.0-rc.3', SERVER)
 assert resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0'})['platformVersion'] == '2026.1.0'
+assert resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3',
+                       'chart_revision': REVISION})['sourceRevision'] == REVISION
 refused(lambda: resolve(workflow_ref=BRANCH), 'only ' + TRUNK)
 refused(lambda: resolve(workflow_ref='honua-io/honua-release/.github/workflows/x.yml@refs/heads/trunk'),
         'is not ' + cp.WORKFLOW_PATH)
 refused(lambda: resolve(on_trunk=False), 'is not on honua-helm trunk')
-refused(lambda: resolve(event='workflow_dispatch', ref='refs/heads/feat/x'), 'must run on refs/heads/trunk')
 refused(lambda: resolve(inputs={'server_image_digest': 'sha256:' + 'A' * 64, 'platform_version': '2026.1.0-rc.3'}),
         'is not sha256:')
 refused(lambda: resolve(inputs={'server_image_digest': f'ghcr.io/honua-io/honua-server@{SERVER}',
@@ -78,27 +79,48 @@ refused(lambda: resolve(inputs={'server_image_digest': f'ghcr.io/honua-io/honua-
 for version in ('2026.1-rc.3', '0.4.0-nightly', 'v2026.1.0-rc.3', '2026.1.0-rc.3+build', '2026.01.0-rc.3'):
     refused(lambda: resolve(inputs={'server_image_digest': SERVER, 'platform_version': version}), 'R22 form')
 refused(lambda: resolve(source_revision='abc'), 'is not a 40-hex commit')
-refused(lambda: resolve(event='push'), "does not publish a chart")
-# `proof` is a dispatch-only switch: a caller cannot redirect a release publication.
-assert resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3', 'proof': 'true'})['proof'] is False
+# Malformed requests: half a request, a bad revision, or a revision other than the one checked out.
+refused(lambda: resolve(inputs={'server_image_digest': SERVER}), 'without platform_version')
+refused(lambda: resolve(inputs={'platform_version': '2026.1.0-rc.3'}), 'without server_image_digest')
+refused(lambda: resolve(inputs={'chart_revision': REVISION}), 'without server_image_digest')
+refused(lambda: resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3',
+                                'chart_revision': 'trunk'}), 'is not a 40-hex honua-helm commit')
+refused(lambda: resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3',
+                                'chart_revision': 'b' * 40}), 'was requested but')
+refused(lambda: resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3'},
+                        candidate=candidate()), 'not a nightly candidate')
+# A caller that names nothing is refused: it never falls through to "the newest candidate".
+refused(lambda: resolve(inputs={'server_image_digest': '', 'platform_version': ''}, candidate=candidate()),
+        'called this workflow without server_image_digest')
+# `proof` is a dispatch-only input; workflow_call does not declare it, so a caller's run has none.
+assert resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3'})['proof'] is False
 
 # A proof dispatch may run a branch, from a branch revision, and lands only in the throwaway namespace.
-proof = resolve(event='workflow_dispatch', ref='refs/heads/feat/x', workflow_ref=BRANCH, on_trunk=False,
+proof = resolve(workflow_ref=BRANCH, run_workflow_ref=BRANCH, on_trunk=False,
                 inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.0', 'proof': 'true'})
 assert proof['proof'] is True and proof['repository'] == 'ghcr.io/honua-io/charts/honua-ci-proof/honua'
 assert proof['signingIdentity'] == 'https://github.com/' + BRANCH
+# The trunk workflow's identity never runs code from off trunk, not even for a proof.
+refused(lambda: resolve(run_workflow_ref=TRUNK, on_trunk=False,
+                        inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.0', 'proof': 'true'}),
+        'is not on honua-helm trunk')
 
-# Schedule: the newest stamped train candidate supplies version, server digest and helm revision.
-scheduled = resolve(event='schedule', inputs={}, candidate=candidate())
+# The self-scheduled nightly (no inputs, not called): the newest stamped train candidate supplies
+# version, server digest and helm revision.
+def nightly(**overrides):
+    return resolve(inputs={}, run_workflow_ref=TRUNK, **overrides)
+
+
+scheduled = nightly(candidate=candidate())
 assert (scheduled['platformVersion'], scheduled['serverImageDigest']) == ('2026.1.0-rc.4', SERVER)
-assert scheduled['candidateRef'].startswith('refs/nightly-candidates/')
-assert resolve(event='schedule', inputs={}, candidate=candidate(digest=None))['serverImageDigest'] == SERVER
-refused(lambda: resolve(event='schedule', inputs={}, candidate=None), 'no honua-release nightly candidate')
-refused(lambda: resolve(event='schedule', inputs={}, candidate=candidate(helm='b' * 40)), 'pins honua-helm')
-refused(lambda: resolve(event='schedule', inputs={}, candidate=candidate(digest=OTHER)), 'disagrees with digest')
-refused(lambda: resolve(event='schedule', inputs={}, candidate=candidate(image='ghcr.io/honua-io/honua-server:nightly-x',
-                                                                          digest=None)), 'is not sha256:')
-refused(lambda: resolve(event='schedule', inputs={}, candidate=candidate(label='dev-local')), 'platformRelease')
+assert scheduled['candidateRef'].startswith('refs/nightly-candidates/') and scheduled['mode'] == 'nightly-candidate'
+assert nightly(candidate=candidate(digest=None))['serverImageDigest'] == SERVER
+refused(lambda: nightly(candidate=None), 'no honua-release nightly candidate')
+refused(lambda: nightly(candidate=candidate(helm='b' * 40)), 'pins honua-helm')
+refused(lambda: nightly(candidate=candidate(digest=OTHER)), 'disagrees with digest')
+refused(lambda: nightly(candidate=candidate(image='ghcr.io/honua-io/honua-server:nightly-x', digest=None)),
+        'is not sha256:')
+refused(lambda: nightly(candidate=candidate(label='dev-local')), 'platformRelease')
 
 # The OCI platform set is the server index's linux platforms; attestation manifests are not platforms.
 index = {'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': [
@@ -279,6 +301,85 @@ except cp.urllib.error.HTTPError:
     assert len(calls) == 1
 else:
     raise AssertionError('a 403 is not transient')
+
+# `resolve` as the workflow runs it. In a reusable workflow GITHUB_EVENT_NAME, GITHUB_REF and
+# GITHUB_SHA are the caller's, so a call made from the caller's schedule, push or branch dispatch
+# must still publish exactly its inputs; only the self-scheduled nightly reads a candidate.
+def run_resolve(workdir, *, event, ref, run_workflow_ref, workflow_ref=TRUNK, inputs=None, candidate_file=None):
+    names = ('GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_OUTPUT',
+             *[f'INPUT_{key.upper()}' for key in ('server_image_digest', 'platform_version', 'chart_revision', 'proof')])
+    saved = {name: os.environ.get(name) for name in names}
+    saved_claims, saved_cwd = cp.oidc_claims, os.getcwd()
+    out = Path(workdir) / 'request.json'
+    try:
+        for name in names:
+            os.environ.pop(name, None)
+        os.environ.update(GITHUB_EVENT_NAME=event, GITHUB_REF=ref, GITHUB_SHA='f' * 40,
+                          GITHUB_WORKFLOW_REF=run_workflow_ref, GITHUB_OUTPUT=str(Path(workdir) / 'outputs'))
+        for key, value in (inputs or {}).items():
+            os.environ[f'INPUT_{key.upper()}'] = value
+        cp.oidc_claims = lambda audience='sigstore': {'job_workflow_ref': workflow_ref, 'event_name': event}
+        os.chdir(workdir)
+        argv = ['resolve', '--out', str(out)] + (['--candidate', str(candidate_file)] if candidate_file else [])
+        if cp.main(argv) != 0:
+            return None
+        return json.loads(out.read_text())
+    finally:
+        os.chdir(saved_cwd)
+        cp.oidc_claims = saved_claims
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+with tempfile.TemporaryDirectory() as temp:
+    helm = Path(temp) / 'helm'
+    env = dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.invalid',
+               GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@example.invalid')
+    subprocess.run(['git', 'init', '--quiet', str(helm)], check=True)
+    subprocess.run(['git', '-C', str(helm), 'commit', '--quiet', '--allow-empty', '-m', 'trunk'], check=True, env=env)
+    head = subprocess.run(['git', '-C', str(helm), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                          text=True).stdout.strip()
+    subprocess.run(['git', '-C', str(helm), 'update-ref', 'refs/remotes/origin/trunk', head], check=True)
+    wanted = {'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.7', 'chart_revision': head}
+    for event, ref in (('schedule', 'refs/heads/trunk'), ('push', 'refs/heads/trunk'),
+                       ('workflow_dispatch', 'refs/heads/feat/caller'), ('workflow_call', 'refs/heads/trunk')):
+        called = run_resolve(helm, event=event, ref=ref, run_workflow_ref=CALLER, inputs=wanted)
+        assert called is not None, f'a call from a caller {event} run was refused'
+        assert (called['mode'], called['serverImageDigest'], called['platformVersion'], called['sourceRevision']) == \
+            ('inputs', SERVER, '2026.1.0-rc.7', head), (event, called)
+        assert called['repository'] == 'ghcr.io/honua-io/charts/honua' and called['proof'] is False
+    # Inputs without chart_revision publish the checked-out default-branch head.
+    assert run_resolve(helm, event='schedule', ref='refs/heads/trunk', run_workflow_ref=CALLER,
+                       inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.7'})['sourceRevision'] == head
+    # A caller's schedule with no inputs is not this workflow's nightly: refused, no candidate read.
+    candidate_file = Path(temp) / 'candidate.json'
+    candidate_file.write_text(json.dumps(candidate(helm=head)))
+    assert run_resolve(helm, event='schedule', ref='refs/heads/trunk', run_workflow_ref=CALLER,
+                       candidate_file=candidate_file) is None
+    # This workflow's own schedule (run and job workflow are the same file) publishes the candidate.
+    own = run_resolve(helm, event='schedule', ref='refs/heads/trunk', run_workflow_ref=TRUNK,
+                      candidate_file=candidate_file)
+    assert (own['mode'], own['platformVersion'], own['sourceRevision']) == ('nightly-candidate', '2026.1.0-rc.4', head)
+    # Malformed inputs are refused before anything is pushed.
+    for bad in ({'server_image_digest': SERVER[:-1], 'platform_version': '2026.1.0-rc.7'},
+                {'server_image_digest': SERVER, 'platform_version': '2026.1-rc.7'},
+                {'server_image_digest': SERVER, 'platform_version': ''},
+                {'server_image_digest': '', 'platform_version': '2026.1.0-rc.7'},
+                {'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.7', 'chart_revision': 'HEAD'},
+                {'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.7', 'chart_revision': 'b' * 40}):
+        assert run_resolve(helm, event='workflow_call', ref='refs/heads/trunk', run_workflow_ref=CALLER,
+                           inputs=bad) is None, bad
+    # A caller pinned to anything but @trunk, or a revision off trunk, is refused.
+    assert run_resolve(helm, event='workflow_call', ref='refs/heads/trunk', run_workflow_ref=CALLER,
+                       workflow_ref=BRANCH, inputs=wanted) is None
+    subprocess.run(['git', '-C', str(helm), 'commit', '--quiet', '--allow-empty', '-m', 'branch'], check=True, env=env)
+    branch_head = subprocess.run(['git', '-C', str(helm), 'rev-parse', 'HEAD'], check=True, capture_output=True,
+                                 text=True).stdout.strip()
+    assert run_resolve(helm, event='workflow_call', ref='refs/heads/trunk', run_workflow_ref=CALLER,
+                       inputs=dict(wanted, chart_revision=branch_head)) is None
 
 assert os.path.exists(ROOT / '.github/workflows/chart-nightly.yml')
 print('chart publication: OK')

@@ -26,8 +26,8 @@ on:
         description: "R22 platform version, e.g. 2026.1.0-rc.3; becomes the chart version and appVersion"
         required: true
         type: string
-      source_revision:
-        description: "honua-helm commit to package (default: honua-helm trunk head)"
+      chart_revision:
+        description: "honua-helm commit to package, on trunk (default: honua-helm default-branch head)"
         required: false
         type: string
         default: ""
@@ -63,8 +63,8 @@ on:
         description: "R22 platform version, e.g. 2026.1.0-rc.3"
         required: true
         type: string
-      source_revision:
-        description: "honua-helm commit to package (default: the dispatched ref)"
+      chart_revision:
+        description: "honua-helm commit to package (default: honua-helm default-branch head; a branch proof passes its head)"
         required: false
         type: string
         default: ""
@@ -103,35 +103,68 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       OIDC_ISSUER: https://token.actions.githubusercontent.com
     steps:
-      # A reusable workflow runs with the caller's github.sha, so a call names honua-helm trunk
-      # explicitly. A schedule starts at trunk and moves to the candidate's pinned revision below.
-      - name: Choose the honua-helm revision to check out
+      # In a reusable workflow github.event_name, github.ref and github.sha are the CALLER's, so
+      # nothing here reads them. The mode is the inputs: a server_image_digest publishes exactly that
+      # request; no inputs is this workflow's own nightly, which publishes the newest stamped
+      # candidate. The revision is chart_revision, or honua-helm's default-branch head read from the
+      # API. It is authorized here, by this workflow's own code, before any checked-out file runs:
+      # the trunk workflow's identity only ever executes trunk commits, proof or not.
+      - name: Choose and authorize the honua-helm revision to check out
         id: source
         shell: bash
         env:
-          INPUT_SOURCE_REVISION: ${{ inputs.source_revision }}
+          INPUT_SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
+          INPUT_CHART_REVISION: ${{ inputs.chart_revision }}
+          TRUNK_WORKFLOW_REF: honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
         run: |
           set -euo pipefail
-          revision="${INPUT_SOURCE_REVISION}"
+          api() {
+            local delay output
+            for delay in 0 10 30 60 120; do
+              sleep "${delay}"
+              if output="$(gh api "$@" 2>"${RUNNER_TEMP}/gh-api.err")"; then
+                printf '%s\n' "${output}"
+                return 0
+              fi
+              if ! grep -qiE 'error connecting|could not resolve host|connection reset|timed? ?out|tls|HTTP 5[0-9][0-9]' \
+                "${RUNNER_TEMP}/gh-api.err"; then
+                cat "${RUNNER_TEMP}/gh-api.err" >&2
+                return 1
+              fi
+            done
+            cat "${RUNNER_TEMP}/gh-api.err" >&2
+            return 1
+          }
+          if [[ -n "${INPUT_SERVER_IMAGE_DIGEST}" ]]; then mode=inputs; else mode=nightly-candidate; fi
+          default_branch="$(api repos/honua-io/honua-helm --jq .default_branch)"
+          revision="${INPUT_CHART_REVISION}"
           if [[ -z "${revision}" ]]; then
-            case "${GITHUB_EVENT_NAME}" in
-              workflow_call)
-                for delay in 0 10 30 60 120; do
-                  sleep "${delay}"
-                  if revision="$(git ls-remote https://github.com/honua-io/honua-helm refs/heads/trunk | cut -f1)" \
-                    && [[ -n "${revision}" ]]; then
-                    break
-                  fi
-                done
-                ;;
-              *) revision="${GITHUB_SHA}" ;;
-            esac
+            revision="$(api "repos/honua-io/honua-helm/commits/${default_branch}" --jq .sha)"
           fi
           if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::source_revision '${revision}' is not a 40-hex honua-helm commit" >&2
+            echo "::error::chart_revision '${revision}' is not a 40-hex honua-helm commit" >&2
             exit 1
           fi
-          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          job_workflow_ref="$(curl --silent --show-error --fail --retry 5 --retry-all-errors \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | python3 -c '
+          import base64, json, sys
+          payload = json.load(sys.stdin)["value"].split(".")[1]
+          print(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["job_workflow_ref"])')"
+          if [[ "${job_workflow_ref}" == "${TRUNK_WORKFLOW_REF}" ]]; then
+            # compare/<revision>...<trunk>: "identical" or "ahead" means the revision is on trunk.
+            status="$(api "repos/honua-io/honua-helm/compare/${revision}...${default_branch}" --jq .status)"
+            if [[ "${status}" != "identical" && "${status}" != "ahead" ]]; then
+              echo "::error::honua-helm ${revision} is not on ${default_branch} (${status}); ${TRUNK_WORKFLOW_REF} runs only trunk code" >&2
+              exit 1
+            fi
+          fi
+          {
+            echo "mode=${mode}"
+            echo "revision=${revision}"
+            echo "default_branch=${default_branch}"
+            echo "job_workflow_ref=${job_workflow_ref}"
+          } >> "${GITHUB_OUTPUT}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,7 +178,7 @@ jobs:
 
       - name: Select the newest stamped nightly candidate
         id: candidate
-        if: github.event_name == 'schedule'
+        if: steps.source.outputs.mode == 'nightly-candidate'
         shell: bash
         run: |
           set -euo pipefail
@@ -153,12 +186,25 @@ jobs:
             --workdir "${RUNNER_TEMP}/release-candidates" --out "${RUNNER_TEMP}/candidate.json"
 
       - name: Check out the candidate's pinned honua-helm revision
-        if: github.event_name == 'schedule'
+        if: steps.source.outputs.mode == 'nightly-candidate'
         shell: bash
         env:
           REVISION: ${{ steps.candidate.outputs.source_revision }}
+          DEFAULT_BRANCH: ${{ steps.source.outputs.default_branch }}
+          JOB_WORKFLOW_REF: ${{ steps.source.outputs.job_workflow_ref }}
+          TRUNK_WORKFLOW_REF: honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
         run: |
           set -euo pipefail
+          if [[ ! "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the candidate pins honua-helm '${REVISION}', not a 40-hex commit" >&2
+            exit 1
+          fi
+          # Authorized before the candidate's files run, like the revision above.
+          if [[ "${JOB_WORKFLOW_REF}" == "${TRUNK_WORKFLOW_REF}" ]] \
+            && ! git merge-base --is-ancestor "${REVISION}" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::the candidate pins honua-helm ${REVISION}, which is not on ${DEFAULT_BRANCH}" >&2
+            exit 1
+          fi
           git checkout --quiet --detach "${REVISION}"
           if [[ ! -f scripts/chart_publication.py ]]; then
             echo "::error::honua-helm ${REVISION} predates chart publication; it cannot be packaged by its own tooling" >&2
@@ -173,11 +219,13 @@ jobs:
         env:
           INPUT_SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
           INPUT_PLATFORM_VERSION: ${{ inputs.platform_version }}
+          INPUT_CHART_REVISION: ${{ inputs.chart_revision }}
           INPUT_PROOF: ${{ inputs.proof }}
+          MODE: ${{ steps.source.outputs.mode }}
         run: |
           set -euo pipefail
           candidate=()
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+          if [[ "${MODE}" == "nightly-candidate" ]]; then
             candidate=(--candidate "${RUNNER_TEMP}/candidate.json")
           fi
           python3 scripts/chart_publication.py resolve "${candidate[@]}" --out "${RUNNER_TEMP}/request.json"
@@ -397,7 +445,7 @@ jobs:
   delete-proof:
     name: Delete the throwaway proof package
     needs: publish
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.proof }}
+    if: ${{ always() && inputs.proof == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

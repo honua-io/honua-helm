@@ -77,16 +77,40 @@ def require_digest(value, what='server_image_digest'):
     return value
 
 
-def resolve_request(*, event, ref, inputs, workflow_ref, source_revision, on_trunk, candidate=None):
+def resolve_request(*, inputs, workflow_ref, run_workflow_ref, source_revision, on_trunk, candidate=None):
     """Decide what this run may publish, before anything is pushed.
+
+    The mode comes from the inputs, never from the event name: in a reusable workflow
+    `github.event_name`, `GITHUB_REF` and `GITHUB_SHA` are the caller's. A non-empty
+    `server_image_digest` publishes exactly that request; no inputs at all is the self-scheduled
+    nightly, which publishes the newest stamped candidate.
 
     `workflow_ref` is the OIDC `job_workflow_ref` claim: the identity Fulcio will put in the signing
     certificate. Only the trunk workflow may publish the release repository, so a branch dispatch,
     or a caller that pinned this reusable workflow to anything but @trunk, is refused here and not
-    discovered after the push by a failing `cosign verify`.
+    discovered after the push by a failing `cosign verify`. `run_workflow_ref` is `GITHUB_WORKFLOW_REF`,
+    the top-level workflow of the run; it differs from `workflow_ref` exactly when this workflow was
+    called, and a caller must always name what it publishes.
     """
-    proof = event == 'workflow_dispatch' and str(inputs.get('proof', '')).lower() == 'true'
-    if event == 'schedule':
+    server_digest = str(inputs.get('server_image_digest') or '')
+    version = str(inputs.get('platform_version') or '')
+    chart_revision = str(inputs.get('chart_revision') or '')
+    proof = str(inputs.get('proof', '')).lower() == 'true'
+    called = run_workflow_ref != workflow_ref
+    if server_digest:
+        mode = 'inputs'
+        if candidate is not None:
+            raise Refusal('a request with server_image_digest publishes exactly that request, not a nightly candidate')
+        if not version:
+            raise Refusal('server_image_digest was given without platform_version')
+    else:
+        mode = 'nightly-candidate'
+        if version or chart_revision:
+            raise Refusal('platform_version or chart_revision was given without server_image_digest; '
+                          'a request names the server image digest, the platform version and optionally the revision')
+        if called:
+            raise Refusal(f'{run_workflow_ref} called this workflow without server_image_digest and platform_version; '
+                          'only the self-scheduled nightly publishes the newest stamped candidate')
         if candidate is None:
             raise Refusal('no honua-release nightly candidate is stamped (refs/nightly-candidates/*); '
                           'a scheduled run publishes only a stamped candidate and never invents a version')
@@ -97,30 +121,30 @@ def resolve_request(*, event, ref, inputs, workflow_ref, source_revision, on_tru
         if image and '@' in image and image.split('@', 1)[1] != server_digest:
             raise Refusal(f"candidate {candidate['ref']}: honua-server image {image} disagrees with digest {server_digest}")
         version = platform_version_from_label(candidate['manifest'].get('platformRelease'))
-        wanted_revision = str(helm.get('sha', ''))
-        if wanted_revision != source_revision:
-            raise Refusal(f"candidate {candidate['ref']} pins honua-helm {wanted_revision!r}, "
+        chart_revision = str(helm.get('sha', ''))
+        if chart_revision != source_revision:
+            raise Refusal(f"candidate {candidate['ref']} pins honua-helm {chart_revision!r}, "
                           f'checked out {source_revision!r}')
-    elif event in ('workflow_call', 'workflow_dispatch'):
-        server_digest, version = inputs.get('server_image_digest'), inputs.get('platform_version')
-    else:
-        raise Refusal(f'event {event!r} does not publish a chart')
     require_digest(server_digest)
     require_platform_version(version)
+    if chart_revision and not REVISION_RE.fullmatch(chart_revision):
+        raise Refusal(f'chart_revision {chart_revision!r} is not a 40-hex honua-helm commit')
     if not REVISION_RE.fullmatch(source_revision or ''):
         raise Refusal(f'source revision {source_revision!r} is not a 40-hex commit')
+    if chart_revision and chart_revision != source_revision:
+        raise Refusal(f'chart_revision {chart_revision} was requested but {source_revision} is checked out')
     if not str(workflow_ref).startswith(WORKFLOW_PATH + '@'):
         raise Refusal(f'job_workflow_ref {workflow_ref!r} is not {WORKFLOW_PATH}')
-    if not proof:
-        if workflow_ref != TRUNK_WORKFLOW_REF:
-            raise Refusal(f'only {TRUNK_WORKFLOW_REF} publishes the release repository; this run is '
-                          f'{workflow_ref} (dispatch with proof=true to exercise a branch)')
-        if event == 'workflow_dispatch' and ref != 'refs/heads/trunk':
-            raise Refusal(f'a non-proof dispatch must run on refs/heads/trunk, not {ref}')
-        if not on_trunk:
-            raise Refusal(f'source revision {source_revision} is not on honua-helm trunk')
+    if not proof and workflow_ref != TRUNK_WORKFLOW_REF:
+        raise Refusal(f'only {TRUNK_WORKFLOW_REF} publishes the release repository; this run is '
+                      f'{workflow_ref} (dispatch with proof=true to exercise a branch)')
+    # The trunk workflow runs only trunk code with its identity, proof or not; a branch proof runs
+    # the branch's own workflow and may package the branch.
+    if workflow_ref == TRUNK_WORKFLOW_REF and not on_trunk:
+        raise Refusal(f'source revision {source_revision} is not on honua-helm trunk')
     namespace = PROOF_NAMESPACE if proof else RELEASE_NAMESPACE
     return {
+        'mode': mode,
         'proof': proof,
         'serverImageDigest': server_digest,
         'platformVersion': version,
@@ -494,6 +518,7 @@ def build_receipt(request, *, digest, package_sha256, architectures, platform_di
             'attestations': [SBOM_PREDICATE, PROVENANCE_PREDICATE],
             'verifiedBy': verification,
         },
+        'mode': request['mode'],
         'candidateRef': request['candidateRef'],
         'run': run,
         'platformManifest': {
@@ -563,16 +588,17 @@ def command_resolve(args):
         with open(args.candidate, encoding='utf-8') as handle:
             candidate = json.load(handle)
     inputs = {key: os.environ.get(f'INPUT_{key.upper()}', '') for key in
-              ('server_image_digest', 'platform_version', 'proof')}
+              ('server_image_digest', 'platform_version', 'chart_revision', 'proof')}
     head = _git('rev-parse', 'HEAD').strip()
     on_trunk = subprocess.run(['git', 'merge-base', '--is-ancestor', head, 'origin/trunk']).returncode == 0
     workflow_ref = oidc_claims().get('job_workflow_ref', '')
-    request = resolve_request(event=os.environ['GITHUB_EVENT_NAME'], ref=os.environ.get('GITHUB_REF', ''),
-                              inputs=inputs, workflow_ref=workflow_ref, source_revision=head,
-                              on_trunk=on_trunk, candidate=candidate)
+    request = resolve_request(inputs=inputs, workflow_ref=workflow_ref,
+                              run_workflow_ref=os.environ.get('GITHUB_WORKFLOW_REF', ''),
+                              source_revision=head, on_trunk=on_trunk, candidate=candidate)
     with open(args.out, 'w', encoding='utf-8') as handle:
         json.dump(request, handle, indent=2, sort_keys=True)
     _write_outputs({
+        'mode': request['mode'],
         'proof': str(request['proof']).lower(),
         'server_image_digest': request['serverImageDigest'],
         'platform_version': request['platformVersion'],
@@ -670,7 +696,8 @@ def command_receipt(args):
         'repository': os.environ.get('GITHUB_REPOSITORY'),
         'id': os.environ.get('GITHUB_RUN_ID'),
         'attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
-        'event': os.environ.get('GITHUB_EVENT_NAME'),
+        'event': os.environ.get('GITHUB_EVENT_NAME'),  # the top-level run's event: a caller's when called
+        'runWorkflowRef': os.environ.get('GITHUB_WORKFLOW_REF'),
         'url': f"{os.environ.get('GITHUB_SERVER_URL')}/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
         'workflowRef': request['signingIdentity'].removeprefix('https://github.com/'),
     }
