@@ -1,0 +1,10 @@
+{
+  "format": "honua.component-versions/v1",
+  "component": "honua-helm",
+  "contractVersions": {
+    "admin": "v1"
+  },
+  "schemaVersions": {
+    "chart": "v2"
+  }
+}

@@ -163,6 +163,11 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
   `Chart.lock` (`helm dependency update`), since CI builds from the lock.
 - Do not build/run the project as part of documentation work; CI requires
   network access to Bitnami and ghcr.io.
+- `release/component-versions.json` declares this component's contract and
+  schema versions (`honua.component-versions/v1`). The honua-release nightly
+  resolver reads it at the exact selected commit and refuses `honua-helm` when
+  it is missing or invalid, so it must change in the same PR as any contract
+  or schema version bump (e.g. the chart `apiVersion` in `honua/Chart.yaml`).
 
 ## Shared dev-environment rules (multi-agent WSL)
 
