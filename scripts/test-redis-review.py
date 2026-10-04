@@ -2,6 +2,8 @@
 import base64
 import subprocess
 
+import yaml
+
 
 def render(*args, valid=True):
     result = subprocess.run(
@@ -24,6 +26,25 @@ def field(text, key):
 
 
 first = render('--is-upgrade')
+documents = [document for document in yaml.safe_load_all(first) if document]
+services = [document for document in documents if document.get('kind') == 'Service']
+deployments = [document for document in documents if document.get('kind') == 'Deployment']
+server = next(deployment for deployment in deployments
+              if deployment['spec']['template']['spec']['containers'][0]['name'] == 'honua')
+application_services = [service for service in services
+                        if service['metadata']['name'] == server['metadata']['name']]
+assert application_services
+for service in application_services:
+    selector = service['spec']['selector']
+    assert selector['app.kubernetes.io/component'] == 'server'
+    matching_deployments = [
+        deployment for deployment in deployments
+        if selector.items() <= deployment['spec']['template']['metadata']['labels'].items()
+    ]
+    assert matching_deployments == [server], (
+        f"application Service selector also matches "
+        f"{[deployment['metadata']['name'] for deployment in matching_deployments if deployment != server]}"
+    )
 service_name = field(resource(first, 'Service'), 'name')
 assert len(service_name) <= 63 and service_name.endswith('-redis')
 assert field(resource(first, 'PersistentVolumeClaim'), 'name') == service_name

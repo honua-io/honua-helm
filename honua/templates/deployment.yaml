@@ -24,6 +24,7 @@ spec:
     metadata:
       labels:
         {{- include "honua.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
         {{- include "honua.releaseLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
