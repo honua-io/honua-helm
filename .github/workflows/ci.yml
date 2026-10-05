@@ -91,6 +91,12 @@ jobs:
           helm template honua-stage ./honua -f honua/values-stage.yaml > /tmp/honua-rendered-stage.yaml
           helm template honua-prod ./honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot > /tmp/honua-rendered-prod.yaml
 
+      - name: Assert development quick start uses the candidate image digest
+        run: |
+          grep -Fq \
+            'image: "ghcr.io/honua-io/honua-server@sha256:3ef3bd41a2f84d1f3a6194c11db496f741cc4d869b54bf57e9d7067dd9cf3d39"' \
+            /tmp/honua-rendered-dev.yaml
+
       - name: Render staged upgrade path
         run: |
           helm template honua-stage ./honua -f honua/values-stage.yaml --is-upgrade > /tmp/honua-rendered-stage-upgrade.yaml

@@ -2,6 +2,8 @@
 
 Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
 
+> **Preview:** the Helm/Kubernetes deployment path is not qualified for production in 2026.1.
+
 - Publish target: `oci://ghcr.io/honua-io/charts/honua`
 - GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
 - Versioning and cut procedure: see [`RELEASING.md`](https://github.com/honua-io/honua-helm/blob/trunk/RELEASING.md).
@@ -68,6 +70,9 @@ helm repo add bitnami https://charts.bitnami.com/bitnami
 helm dependency build honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
 ```
+
+The development overlay pins the 2026.1 candidate server image by digest so the quick start
+does not depend on the moving `latest-aot` tag.
 
 For direct installs with external data services, the default preflight hook
 checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment

@@ -14,6 +14,8 @@ wiring, and optional Bitnami PostgreSQL and Redis subcharts for development.
 
 ## Status
 
+**Preview:** the Helm/Kubernetes deployment path is not qualified for production in 2026.1.
+
 Pre-1.0. Chart releases are cut from `chart-vX.Y.Z` tags and published to
 `oci://ghcr.io/honua-io/charts/honua` by [`release.yml`](.github/workflows/release.yml) — no
 release has been cut yet, so install from a checkout (below) until the first published version
@@ -42,8 +44,9 @@ helm upgrade --install honua honua -f honua/values-dev.yaml
 helm test honua
 ```
 
-The dev overlay is self-contained: bundled (non-PostGIS) PostgreSQL and Redis, dev-grade
-secrets, `ASPNETCORE_ENVIRONMENT=Development`. Do not use it for real data. Readiness at
+The dev overlay is self-contained: the digest-pinned 2026.1 candidate server image, bundled
+(non-PostGIS) PostgreSQL and Redis, dev-grade secrets, and
+`ASPNETCORE_ENVIRONMENT=Development`. Do not use it for real data. Readiness at
 `/healthz/ready` signals that startup and database migrations completed.
 
 Note that `helm template honua honua` with **no** values file fails by design: the baseline
@@ -101,7 +104,7 @@ within chart 0.x — see [docs/MIGRATION.md](docs/MIGRATION.md).
 | Repo | What it is |
 |------|------------|
 | [honua-server](https://github.com/honua-io/honua-server) | The multi-protocol geospatial server this chart deploys |
-| [honua-console](https://github.com/honua-io/honua-console) | Unified web console (Studio, Catalog, Operate, Share) |
+| [honua-console](https://github.com/honua-io/honua-console) | Web console for display-and-approve workflows; Studio is Preview. |
 | [honua-sdk-js](https://github.com/honua-io/honua-sdk-js) | JavaScript/TypeScript SDKs + MCP server |
 | [honua-sdk-python](https://github.com/honua-io/honua-sdk-python) | Python SDK |
 | [honua-migrate](https://github.com/honua-io/honua-migrate) | Esri migration CLI suite — read-only footprint assessment, service and content migration, codemods, durable runs, reconciliation |

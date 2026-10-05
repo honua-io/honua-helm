@@ -6,8 +6,10 @@
 replicaCount: 1
 
 image:
-  tag: "latest-aot"
-  pullPolicy: Always
+  # Candidate image validated for the 2026.1 development quick start.
+  tag: ""
+  digest: "sha256:3ef3bd41a2f84d1f3a6194c11db496f741cc4d869b54bf57e9d7067dd9cf3d39"
+  pullPolicy: IfNotPresent
 
 resources:
   requests:
