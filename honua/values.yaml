@@ -40,6 +40,9 @@ serviceAccount:
   automount: false
 
 # Pod-level extension points for scheduling, observability, and platform labels.
+# podLabels must not include app.kubernetes.io/component; the chart sets that
+# label to server after these entries so the application Service keeps selecting
+# the server pods.
 podAnnotations: {}
 podLabels: {}
 

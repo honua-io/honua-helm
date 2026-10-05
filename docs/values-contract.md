@@ -185,7 +185,7 @@ setting. See the
 | Routing | `service.*`, `ingress.*` | Ingress class, DNS, TLS, and annotations are platform-specific. |
 | Secret reference allowlist | `security.requestSecretReferences.*` | Deny-by-default allowlist for request-supplied secret references; see [Request-supplied secret references](#request-supplied-secret-references). |
 | Runtime config | `config.create`, `config.name`, `config.env.*` | Non-secret application settings are stored in a ConfigMap unless an external ConfigMap is named. |
-| Scheduling | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | Platform placement and metadata hooks. |
+| Scheduling | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | Platform placement and metadata hooks. `podLabels` must not set `app.kubernetes.io/component` (chart-owned, value `server`). |
 | Security | `podSecurityContext`, `securityContext` | Defaults are restricted and should remain the baseline. |
 | Resources and probes | `resources`, `livenessProbe`, `readinessProbe`, `startupProbe`, `terminationGracePeriodSeconds` | Tune after observing workload behavior and migration duration. |
 | Extensions | `extraEnv`, `extraEnvFrom`, `extraVolumes`, `extraVolumeMounts` | Use for External Secrets Operator, CSI Secret Store, trust bundles, or Downward API. |

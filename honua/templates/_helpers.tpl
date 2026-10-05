@@ -75,6 +75,31 @@ app.kubernetes.io/name: {{ include "honua.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- /* Whether the application Service should require app.kubernetes.io/component=server.
+       Fresh installs and client-side renders do: lookup does not see a live
+       Deployment, and new pods are created with the label. On upgrade, Helm
+       applies Services before Deployments. If the live pod template does not
+       already have the label, keep the previous selector for this upgrade so
+       existing server pods stay selected; the Deployment template still gains
+       the label. The following upgrade sees the label and narrows the selector. */ -}}
+{{- define "honua.applicationServiceSelectsServerComponent" -}}
+{{- $select := true -}}
+{{- if .Release.IsUpgrade -}}
+{{- $deploy := lookup "apps/v1" "Deployment" .Release.Namespace (include "honua.fullname" .) -}}
+{{- if $deploy -}}
+{{- $liveLabels := dig "spec" "template" "metadata" "labels" dict $deploy -}}
+{{- $component := "" -}}
+{{- if hasKey $liveLabels "app.kubernetes.io/component" -}}
+{{- $component = index $liveLabels "app.kubernetes.io/component" -}}
+{{- end -}}
+{{- if ne (toString $component) "server" -}}
+{{- $select = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $select }}true{{ else }}false{{ end -}}
+{{- end -}}
+
 {{- define "honua.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "honua.fullname" .) .Values.serviceAccount.name -}}

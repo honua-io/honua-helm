@@ -115,6 +115,25 @@ Operators upgrading from `0.1.x` should review these default behavior changes:
 - `release.id` and the effective app version (`release.appVersion` or
   `Chart.AppVersion`) must be valid Kubernetes label values.
 
+## Application Service selector
+
+The application Service used to select every pod that carried only
+`app.kubernetes.io/name` and `app.kubernetes.io/instance`. Chart-managed Redis
+pods carry those labels too, so they were included as application endpoints.
+Server pods are now labeled `app.kubernetes.io/component: server`, and the
+Service selects that label.
+
+Helm updates Services before Deployments. The first upgrade from a Deployment
+whose pod template does not already have that label therefore keeps the
+previous Service selector, while still writing the label onto the pod template.
+Existing server pods stay selected for that upgrade. The next upgrade sees the
+label on the live Deployment and narrows the Service selector. Fresh installs
+select `server` immediately.
+
+`helm template` and other client-side renders do not contact the cluster, so
+they show the narrowed selector even when a live upgrade will defer it for one
+revision. `podLabels` cannot set `app.kubernetes.io/component`.
+
 ## Prometheus SLO selector upgrade note
 
 An empty `metrics.prometheusRule.slo.metricSelector` now scopes application

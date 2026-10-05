@@ -53,6 +53,15 @@
 {{- fail "release.appVersion, or Chart.AppVersion when release.appVersion is empty, must be a valid Kubernetes label value: 63 characters or less, using letters, numbers, '_', '.', or '-', and starting and ending with a letter or number." -}}
 {{- end -}}
 
+{{- /* The application Service selects app.kubernetes.io/component=server. A
+       user-supplied pod label of the same key would otherwise deselect every
+       server pod. The deployment template also writes the chart value after
+       podLabels; this guard rejects the override up front. */ -}}
+{{- $podLabels := .Values.podLabels | default dict -}}
+{{- if hasKey $podLabels "app.kubernetes.io/component" -}}
+{{- fail "podLabels must not set app.kubernetes.io/component. The chart pins that label to server so the application Service selects only server pods." -}}
+{{- end -}}
+
 {{- /* SingleInstance cannot coordinate more than one replica. The deployment and
        pdb templates both treat the workload as multi-replica when
        autoscaling.enabled OR replicaCount > 1, so guard the same predicate here.
