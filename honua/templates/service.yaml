@@ -24,3 +24,8 @@ spec:
       protocol: TCP
   selector:
     {{- include "honua.selectorLabels" . | nindent 4 }}
+    {{- /* Narrowed only once running pods already carry component=server.
+           See honua.applicationServiceSelectsServerComponent. */ -}}
+    {{- if eq (include "honua.applicationServiceSelectsServerComponent" .) "true" }}
+    app.kubernetes.io/component: server
+    {{- end }}

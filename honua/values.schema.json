@@ -304,7 +304,13 @@
       "type": "object"
     },
     "podLabels": {
-      "type": "object"
+      "type": "object",
+      "description": "Extra labels on the server pods. app.kubernetes.io/component is reserved: the chart sets it to server so the application Service selector matches these pods.",
+      "propertyNames": {
+        "not": {
+          "enum": ["app.kubernetes.io/component"]
+        }
+      }
     },
     "podSecurityContext": {
       "type": "object"

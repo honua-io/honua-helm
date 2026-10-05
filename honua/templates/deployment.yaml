@@ -23,11 +23,15 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "honua.selectorLabels" . | nindent 8 }}
-        {{- include "honua.releaseLabels" . | nindent 8 }}
+        {{- /* User labels first. The chart-owned keys below, including
+               app.kubernetes.io/component=server, must win so the application
+               Service selector cannot diverge from these pods. */ -}}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+        {{- include "honua.selectorLabels" . | nindent 8 }}
+        {{- include "honua.releaseLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
       annotations:
         {{- include "honua.releaseAnnotations" . | nindent 8 }}
         {{- /* Roll the pods whenever the chart-managed ConfigMap/Secret content
