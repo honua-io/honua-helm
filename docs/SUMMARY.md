@@ -15,4 +15,5 @@
 ## Reference
 
 * [Operator contract](contract.md)
+* [Nightly chart publication by digest](release/CHART-PUBLICATION.md)
 * [values.yaml contract](values-contract.md)
