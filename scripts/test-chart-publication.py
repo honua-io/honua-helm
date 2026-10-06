@@ -179,6 +179,11 @@ with tempfile.TemporaryDirectory() as temp:
     assert 'app.kubernetes.io/version: "2026.1.0-rc.3"' in rendered
     subprocess.run(['helm', 'package', str(chart_dir), '--destination', temp], check=True, capture_output=True)
     package = (Path(temp) / 'honua-2026.1.0-rc.3.tgz').read_bytes()
+    # A later run re-packaging the same request builds the same chart (the reuse path compares this).
+    (Path(temp) / 'again').mkdir()
+    subprocess.run(['helm', 'package', str(chart_dir), '--destination', str(Path(temp) / 'again')], check=True,
+                   capture_output=True)
+    cp.same_contents((Path(temp) / 'again' / 'honua-2026.1.0-rc.3.tgz').read_bytes(), package)
     chart, values, lock, vendored = cp.read_package(package)
     bound = cp.verify_binding(chart, values, request)
     assert bound['serverImage'] == f'ghcr.io/honua-io/honua-server@{SERVER}' and bound['sourceRevision'] == REVISION
@@ -380,6 +385,64 @@ with tempfile.TemporaryDirectory() as temp:
                                  text=True).stdout.strip()
     assert run_resolve(helm, event='workflow_call', ref='refs/heads/trunk', run_workflow_ref=CALLER,
                        inputs=dict(wanted, chart_revision=branch_head)) is None
+
+# retry-transient.sh: a retried attempt sees the same stdin as the first (helm registry login
+# --password-stdin), and only the successful attempt's stdout reaches the caller (the verify step
+# redirects it into JSON files).
+with tempfile.TemporaryDirectory() as temp:
+    counter = Path(temp) / 'attempts'
+    flaky_cmd = Path(temp) / 'flaky.sh'
+    flaky_cmd.write_text(f'''#!/usr/bin/env bash
+n=$(( $(cat {counter} 2>/dev/null || echo 0) + 1 )); echo "$n" > {counter}
+stdin="$(cat)"
+printf '{{"attempt":%s,' "$n"
+if [[ "$n" -lt 2 ]]; then echo 'connection reset by peer' >&2; exit 1; fi
+printf '"stdin":"%s"}}\\n' "$stdin"
+''')
+    flaky_cmd.chmod(0o755)
+    wrapped = subprocess.run([str(ROOT / 'scripts/retry-transient.sh'), str(flaky_cmd)], input='s3cret',
+                             capture_output=True, text=True, env=dict(os.environ, RETRY_TRANSIENT_DELAYS='0 0 0 0 0'))
+    assert wrapped.returncode == 0, wrapped
+    assert json.loads(wrapped.stdout) == {'attempt': 2, 'stdin': 's3cret'}, wrapped.stdout
+    # A non-transient failure still returns at once, with its output.
+    counter.unlink()
+    failing = subprocess.run([str(ROOT / 'scripts/retry-transient.sh'), 'bash', '-c', 'echo out; echo denied >&2; exit 3'],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    assert (failing.returncode, failing.stdout) == (3, 'out\n') and 'denied' in failing.stderr, failing
+
+
+# An existing version is recorded only when its pulled contents are exactly the chart this run built:
+# matching Chart.yaml/values.yaml metadata is not enough, an extra template is refused.
+def chart_tgz(files):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode='w:gz') as archive:
+        for name, body in files.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mtime = len(body), len(buffer.getvalue()) + len(name)  # differing metadata
+            archive.addfile(info, io.BytesIO(body))
+    return buffer.getvalue()
+
+
+built = {'honua/Chart.yaml': b'name: honua\n', 'honua/templates/deployment.yaml': b'kind: Deployment\n'}
+cp.same_contents(chart_tgz(built), chart_tgz(dict(reversed(list(built.items())))))
+refused(lambda: cp.same_contents(chart_tgz(dict(built, **{'honua/templates/job.yaml': b'kind: Job\n'})),
+                                 chart_tgz(built)), 'honua/templates/job.yaml')
+refused(lambda: cp.same_contents(chart_tgz(dict(built, **{'honua/templates/deployment.yaml': b'kind: Pod\n'})),
+                                 chart_tgz(built)), 'honua/templates/deployment.yaml')
+
+# SLSA provenance names the honua-helm revision the chart was built from, not only the run's
+# GITHUB_SHA (the schedule's trunk tip, or a caller's commit in another repository).
+generated = {'buildDefinition': {'buildType': 'https://actions.github.io/buildtypes/workflow/v1',
+                                 'externalParameters': {'workflow': {'repository': 'https://github.com/honua-io/honua-release'}},
+                                 'resolvedDependencies': [{'uri': 'git+https://github.com/honua-io/honua-release@refs/heads/trunk',
+                                                           'digest': {'gitCommit': 'f' * 40}}]},
+             'runDetails': {'builder': {'id': 'x'}}}
+bound_predicate = cp.provenance_predicate(generated, resolve(source_revision=REVISION))
+assert bound_predicate['buildDefinition']['resolvedDependencies'][0]['digest']['gitCommit'] == 'f' * 40
+assert {'uri': f'git+{cp.SOURCE_REPOSITORY}', 'name': 'chart-source', 'digest': {'gitCommit': REVISION}} in \
+    bound_predicate['buildDefinition']['resolvedDependencies']
+assert bound_predicate['buildDefinition']['externalParameters']['chart']['sourceRevision'] == REVISION
+refused(lambda: cp.provenance_predicate({}, resolve()), 'no buildDefinition')
 
 assert os.path.exists(ROOT / '.github/workflows/chart-nightly.yml')
 print('chart publication: OK')

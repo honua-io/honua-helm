@@ -365,6 +365,54 @@ def verify_binding(chart, values, expected):
     return actual
 
 
+def package_files(package):
+    """Every member of a packaged chart: regular files by sha256 of their bytes, anything else by type.
+
+    Tar and gzip metadata (mtimes, member order) are left out, so a re-packaging of the same chart
+    compares equal and any added, removed or changed file does not.
+    """
+    members = {}
+    with tarfile.open(fileobj=io.BytesIO(package), mode='r:gz') as archive:
+        for member in archive.getmembers():
+            if member.isfile():
+                members[member.name] = 'sha256:' + hashlib.sha256(archive.extractfile(member).read()).hexdigest()
+            elif not member.isdir():
+                members[member.name] = f'type:{member.type!r}->{member.linkname}'
+    return members
+
+
+def same_contents(pulled, packaged):
+    """The pulled chart holds exactly the files of the chart this run built, byte for byte."""
+    actual, expected = package_files(pulled), package_files(packaged)
+    differing = sorted(name for name in actual.keys() | expected.keys() if actual.get(name) != expected.get(name))
+    if differing:
+        raise Refusal('the published chart is not the chart this run built; differing members: ' + ', '.join(differing))
+
+
+def provenance_predicate(predicate, request):
+    """Bind the SLSA provenance GitHub generates to the honua-helm revision the chart was built from.
+
+    actions/attest-build-provenance derives resolvedDependencies from the run's GITHUB_SHA: the
+    scheduled trunk tip, or a caller's commit in another repository. That entry stays (it is the
+    workflow that ran); the chart's source revision is added beside it and named in externalParameters.
+    """
+    definition = predicate.get('buildDefinition')
+    if not isinstance(definition, dict):
+        raise Refusal('the generated provenance predicate has no buildDefinition')
+    bound = json.loads(json.dumps(predicate))
+    definition = bound['buildDefinition']
+    definition.setdefault('externalParameters', {})['chart'] = {
+        'repository': request['repository'],
+        'version': request['platformVersion'],
+        'sourceRepository': SOURCE_REPOSITORY,
+        'sourceRevision': request['sourceRevision'],
+        'serverImageDigest': request['serverImageDigest'],
+    }
+    definition.setdefault('resolvedDependencies', []).append(
+        {'uri': f'git+{SOURCE_REPOSITORY}', 'name': 'chart-source', 'digest': {'gitCommit': request['sourceRevision']}})
+    return bound
+
+
 def pull_and_verify(registry, digest, expected):
     """Pull the chart back by digest, re-hash every object, and check its binding."""
     manifest = registry.manifest(digest)
@@ -650,7 +698,12 @@ def command_lookup(args):
 
 
 def command_verify(args):
-    """Pull by digest, re-hash, compare with the packaged bytes (when this run pushed them)."""
+    """Pull by digest, re-hash, and compare with the chart this run packaged.
+
+    A version this run pushed must be the packaged bytes. An existing version must hold exactly the
+    packaged chart's files (tar metadata aside): matching Chart.yaml and values.yaml alone could hide
+    an extra template, and this run must not sign or record bytes it did not build.
+    """
     request = _load(args.request)
     registry = _registry(request['repository'].split('/', 1)[1])
     require_digest(args.digest, 'chart digest')
@@ -659,11 +712,12 @@ def command_verify(args):
         raise Refusal(f"{request['repository']}:{request['platformVersion']} names {tagged}, not {args.digest}")
     package = pull_and_verify(registry, args.digest, request)
     pulled_sha = 'sha256:' + hashlib.sha256(package).hexdigest()
-    if args.packaged:
-        with open(args.packaged, 'rb') as handle:
-            packaged_sha = 'sha256:' + hashlib.sha256(handle.read()).hexdigest()
-        if packaged_sha != pulled_sha:
-            raise Refusal(f'pulled package hashes to {pulled_sha}, packaged bytes to {packaged_sha}')
+    with open(args.packaged, 'rb') as handle:
+        packaged = handle.read()
+    packaged_sha = 'sha256:' + hashlib.sha256(packaged).hexdigest()
+    if args.publication == 'pushed' and packaged_sha != pulled_sha:
+        raise Refusal(f'pulled package hashes to {pulled_sha}, packaged bytes to {packaged_sha}')
+    same_contents(package, packaged)
     with open(args.out, 'wb') as handle:
         handle.write(package)
     _write_outputs({'sha256': pulled_sha})
@@ -682,6 +736,13 @@ def command_sbom(args):
         raise Refusal(f'the packaged chart does not render {server_image}; rendered {sorted(images)}')
     with open(args.out, 'w', encoding='utf-8') as handle:
         json.dump(build_sbom(package, args.digest, request, sorted(images)), handle, indent=2)
+
+
+def command_provenance_predicate(args):
+    with open(args.predicate, encoding='utf-8') as handle:
+        predicate = json.load(handle)
+    with open(args.out, 'w', encoding='utf-8') as handle:
+        json.dump(provenance_predicate(predicate, _load(args.request)), handle, sort_keys=True)
 
 
 def command_receipt(args):
@@ -737,7 +798,8 @@ def main(argv=None):
     verify = sub.add_parser('verify')
     verify.add_argument('--request', required=True)
     verify.add_argument('--digest', required=True)
-    verify.add_argument('--packaged')
+    verify.add_argument('--packaged', required=True)
+    verify.add_argument('--publication', choices=('pushed', 'existing'), required=True)
     verify.add_argument('--out', required=True)
     verify.set_defaults(func=command_verify)
     sbom = sub.add_parser('sbom')
@@ -747,6 +809,11 @@ def main(argv=None):
     sbom.add_argument('--rendered', nargs='+', required=True)
     sbom.add_argument('--out', required=True)
     sbom.set_defaults(func=command_sbom)
+    predicate = sub.add_parser('provenance-predicate')
+    predicate.add_argument('--request', required=True)
+    predicate.add_argument('--predicate', required=True)
+    predicate.add_argument('--out', required=True)
+    predicate.set_defaults(func=command_provenance_predicate)
     receipt = sub.add_parser('receipt')
     receipt.add_argument('--request', required=True)
     receipt.add_argument('--server', required=True)

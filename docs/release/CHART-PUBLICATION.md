@@ -59,25 +59,32 @@ path, and this job does not change it.
    reference, and packages it.
 4. **Push once.** The only tag written is the immutable chart version. The job first proves the
    version is absent (HTTP 404) and then pushes. If the version already exists, the job re-verifies
-   it and records it, but only when its pulled bytes carry the same version, appVersion, server
-   digest and source revision. Otherwise it refuses. No floating tag is moved; channel tags belong
+   it and records it, but only when its pulled package holds exactly the files this run built from
+   the same request (same version, appVersion, server digest and source revision; tar and gzip
+   metadata aside). Matching metadata alone is not enough: an extra or changed file refuses. No floating tag is moved; channel tags belong
    to promotion. cosign stores signatures and attestations under `sha256-<digest>` tags, which are
    addressed by digest.
 5. **Verify by digest.** The job:
    - reads the version tag's digest from the registry, not from `helm push` output;
    - fetches the manifest by digest and checks that it hashes to that digest;
    - fetches the chart layer and checks that it hashes to its layer digest;
-   - requires the layer bytes to equal the packaged bytes.
+   - requires the layer bytes to equal the packaged bytes when this run pushed them, or the
+     package's files to equal the packaged chart's files when the version already existed.
 
    The binding is then checked again on the pulled package.
 6. **Sign and attest.** The job runs these steps against `repository@digest`:
    - `cosign sign`, keyless;
    - `cosign attest --type cyclonedx`, which attaches an SBOM of the chart, its vendored subcharts
      and every image it renders;
-   - `actions/attest-build-provenance`, which attaches SLSA v1 provenance and pushes it to the
-     registry.
+   - SLSA v1 provenance, pushed to the registry, only when this run pushed the version. The
+     predicate is the one `actions/attest-build-provenance` generates, with the chart's honua-helm
+     source revision added to `resolvedDependencies` (named `chart-source`) and to
+     `externalParameters.chart`. The run's own commit is the scheduled trunk tip or a caller's
+     commit, which need not be the revision that was packaged. A reused version keeps the
+     provenance of the run that pushed it; this run verifies it and does not mint another.
 
-   Then `cosign verify`, `cosign verify-attestation` and `gh attestation verify` must all pass.
+   Then `cosign verify`, `cosign verify-attestation` and `gh attestation verify` must all pass,
+   each against the exact signing identity.
 7. **Record.** The job writes the receipt, uploads the artifact and sets the job outputs.
 
 ## Triggers
@@ -169,7 +176,7 @@ cosign verify-attestation "$ref" --type cyclonedx \
   --certificate-identity https://github.com/honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 gh attestation verify "oci://$ref" --owner honua-io \
-  --signer-workflow honua-io/honua-helm/.github/workflows/chart-nightly.yml
+  --cert-identity https://github.com/honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
 helm pull oci://ghcr.io/honua-io/charts/honua --version <version>   # then compare sha256 with the receipt
 ```
 

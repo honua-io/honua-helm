@@ -145,12 +145,16 @@ jobs:
             echo "::error::chart_revision '${revision}' is not a 40-hex honua-helm commit" >&2
             exit 1
           fi
-          job_workflow_ref="$(curl --silent --show-error --fail --retry 5 --retry-all-errors \
+          # The token response is data: it is held in a variable and parsed by inline code, never
+          # piped from curl into an interpreter.
+          token_response="$(curl --silent --show-error --fail --retry 5 --retry-all-errors \
             --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | python3 -c '
-          import base64, json, sys
-          payload = json.load(sys.stdin)["value"].split(".")[1]
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore")"
+          job_workflow_ref="$(TOKEN_RESPONSE="${token_response}" python3 -c '
+          import base64, json, os
+          payload = json.loads(os.environ["TOKEN_RESPONSE"])["value"].split(".")[1]
           print(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["job_workflow_ref"])')"
+          unset token_response
           if [[ "${job_workflow_ref}" == "${TRUNK_WORKFLOW_REF}" ]]; then
             # compare/<revision>...<trunk>: "identical" or "ahead" means the revision is on trunk.
             status="$(api "repos/honua-io/honua-helm/compare/${revision}...${default_branch}" --jq .status)"
@@ -330,15 +334,15 @@ jobs:
         shell: bash
         env:
           DIGEST: ${{ steps.digest.outputs.digest }}
-          PACKAGED: ${{ steps.lookup.outputs.state == 'absent' && steps.package.outputs.artifact || '' }}
+          PACKAGED: ${{ steps.package.outputs.artifact }}
+          PUBLICATION: ${{ steps.lookup.outputs.state == 'absent' && 'pushed' || 'existing' }}
         run: |
           set -euo pipefail
-          packaged=()
-          if [[ -n "${PACKAGED}" ]]; then
-            packaged=(--packaged "${PACKAGED}")
-          fi
+          # Pushed: the pulled bytes are the packaged bytes. Existing: the pulled chart holds exactly
+          # the files this run built (tar metadata aside), so nothing it did not build is signed.
           python3 scripts/chart_publication.py verify --request "${RUNNER_TEMP}/request.json" \
-            --digest "${DIGEST}" "${packaged[@]}" --out "${RUNNER_TEMP}/pulled.tgz"
+            --digest "${DIGEST}" --packaged "${PACKAGED}" --publication "${PUBLICATION}" \
+            --out "${RUNNER_TEMP}/pulled.tgz"
 
       - name: Generate the SBOM from the pulled bytes
         shell: bash
@@ -363,11 +367,38 @@ jobs:
           scripts/retry-transient.sh cosign sign --yes "${REFERENCE}"
           scripts/retry-transient.sh cosign attest --yes --type cyclonedx --predicate receipt/sbom.cdx.json "${REFERENCE}"
 
+      # actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0 is these two
+      # steps (its predicate generator and actions/attest). Between them the predicate gains the
+      # honua-helm revision the chart was built from: GITHUB_SHA is the scheduled trunk tip or a
+      # caller's commit, not the candidate's pinned revision. Provenance is minted only for bytes this
+      # run pushed; a reused version's existing provenance is verified below, never re-minted.
+      - name: Generate the build provenance predicate
+        id: provenance
+        if: steps.lookup.outputs.state == 'absent'
+        uses: actions/attest-build-provenance/predicate@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+
+      - name: Bind the provenance to the chart's source revision
+        if: steps.lookup.outputs.state == 'absent'
+        shell: bash
+        env:
+          PREDICATE: ${{ steps.provenance.outputs.predicate }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${PREDICATE}" > "${RUNNER_TEMP}/provenance-generated.json"
+          python3 scripts/chart_publication.py provenance-predicate --request "${RUNNER_TEMP}/request.json" \
+            --predicate "${RUNNER_TEMP}/provenance-generated.json" --out "${RUNNER_TEMP}/provenance.json"
+          jq '.buildDefinition.resolvedDependencies' "${RUNNER_TEMP}/provenance.json"
+
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        if: steps.lookup.outputs.state == 'absent'
+        uses: actions/attest@daf44fb950173508f38bd2406030372c1d1162b1 # v3.0.0
+        env:
+          NODE_OPTIONS: "--max-http-header-size=32768"
         with:
           subject-name: ${{ steps.resolve.outputs.repository }}
           subject-digest: ${{ steps.digest.outputs.digest }}
+          predicate-type: ${{ steps.provenance.outputs.predicate-type }}
+          predicate-path: ${{ runner.temp }}/provenance.json
           push-to-registry: true
 
       # The identity is exact: https://github.com/<job_workflow_ref>. For the release repository
@@ -386,7 +417,7 @@ jobs:
             --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${OIDC_ISSUER}" \
             > receipt/cosign-verify-sbom.json 2> receipt/cosign-verify-sbom.txt
           scripts/retry-transient.sh gh attestation verify "oci://${REFERENCE}" --owner honua-io \
-            --signer-workflow honua-io/honua-helm/.github/workflows/chart-nightly.yml \
+            --cert-identity "${IDENTITY}" \
             --predicate-type https://slsa.dev/provenance/v1 --format json > receipt/gh-attestation-verify.json
           cat receipt/cosign-verify.txt receipt/cosign-verify-sbom.txt
           jq . receipt/cosign-verify.json
