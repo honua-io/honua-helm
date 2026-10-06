@@ -25,7 +25,10 @@ OTHER = 'sha256:' + '2' * 64
 REVISION = 'a' * 40
 TRUNK = cp.TRUNK_WORKFLOW_REF
 BRANCH = cp.WORKFLOW_PATH + '@refs/heads/feat/x'
-CALLER = 'honua-io/honua-release/.github/workflows/nightly-certification.yml@refs/heads/trunk'
+# A honua-helm workflow that calls this one; its run shares the chart-nightly-release group.
+CALLER = 'honua-io/honua-helm/.github/workflows/release-train.yml@refs/heads/trunk'
+# Another repository's caller: its run evaluates the group in that repository, so it is refused.
+FOREIGN_CALLER = 'honua-io/honua-release/.github/workflows/nightly-certification.yml@refs/heads/trunk'
 
 
 def refused(action, needle):
@@ -92,6 +95,11 @@ refused(lambda: resolve(inputs={'server_image_digest': SERVER, 'platform_version
 # A caller that names nothing is refused: it never falls through to "the newest candidate".
 refused(lambda: resolve(inputs={'server_image_digest': '', 'platform_version': ''}, candidate=candidate()),
         'called this workflow without server_image_digest')
+# A caller in another repository is refused for every request: its concurrency group cannot
+# serialize it with honua-helm's own nightly, and GHCR cannot refuse a second version-tag push.
+refused(lambda: resolve(run_workflow_ref=FOREIGN_CALLER), 'only honua-io/honua-helm runs publish')
+refused(lambda: resolve(run_workflow_ref=FOREIGN_CALLER, inputs={'server_image_digest': SERVER,
+        'platform_version': '2026.1.0-rc.3', 'chart_revision': REVISION}), 'Dispatch ' + TRUNK)
 # `proof` is a dispatch-only input; workflow_call does not declare it, so a caller's run has none.
 assert resolve(inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.3'})['proof'] is False
 
@@ -356,6 +364,12 @@ with tempfile.TemporaryDirectory() as temp:
         assert (called['mode'], called['serverImageDigest'], called['platformVersion'], called['sourceRevision']) == \
             ('inputs', SERVER, '2026.1.0-rc.7', head), (event, called)
         assert called['repository'] == 'ghcr.io/honua-io/charts/honua' and called['proof'] is False
+        assert run_resolve(helm, event=event, ref=ref, run_workflow_ref=FOREIGN_CALLER, inputs=wanted) is None, \
+            f'a call from another repository\'s {event} run was admitted'
+    # A dispatch of this workflow on trunk (how another repository requests a publication) is admitted.
+    dispatched = run_resolve(helm, event='workflow_dispatch', ref='refs/heads/trunk', run_workflow_ref=TRUNK,
+                             inputs=wanted)
+    assert (dispatched['mode'], dispatched['repository']) == ('inputs', 'ghcr.io/honua-io/charts/honua'), dispatched
     # Inputs without chart_revision publish the checked-out default-branch head.
     assert run_resolve(helm, event='schedule', ref='refs/heads/trunk', run_workflow_ref=CALLER,
                        inputs={'server_image_digest': SERVER, 'platform_version': '2026.1.0-rc.7'})['sourceRevision'] == head

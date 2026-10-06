@@ -31,8 +31,9 @@ CHART_NAME = 'honua'
 RELEASE_NAMESPACE = 'honua-io/charts'
 PROOF_NAMESPACE = 'honua-io/charts/honua-ci-proof'
 SERVER_REPOSITORY = 'honua-io/honua-server'
-SOURCE_REPOSITORY = 'https://github.com/honua-io/honua-helm'
-WORKFLOW_PATH = 'honua-io/honua-helm/.github/workflows/chart-nightly.yml'
+HELM_REPOSITORY = 'honua-io/honua-helm'
+SOURCE_REPOSITORY = f'https://github.com/{HELM_REPOSITORY}'
+WORKFLOW_PATH = f'{HELM_REPOSITORY}/.github/workflows/chart-nightly.yml'
 TRUNK_WORKFLOW_REF = f'{WORKFLOW_PATH}@refs/heads/trunk'
 OIDC_ISSUER = 'https://token.actions.githubusercontent.com'
 RECEIPT_FORMAT = 'honua.chart-publication/v1'
@@ -91,6 +92,15 @@ def resolve_request(*, inputs, workflow_ref, run_workflow_ref, source_revision, 
     discovered after the push by a failing `cosign verify`. `run_workflow_ref` is `GITHUB_WORKFLOW_REF`,
     the top-level workflow of the run; it differs from `workflow_ref` exactly when this workflow was
     called, and a caller must always name what it publishes.
+
+    The release repository is published only from honua-helm's own runs. The version tag is the
+    one write that must happen at most once, and neither guard against a second writer spans
+    repositories: GHCR has no create-if-absent tag write, and a concurrency group is scoped to the
+    repository whose run evaluates it, which for a called workflow is the caller's. A call from
+    another repository could pass its absence check while honua-helm's own nightly passes the same
+    check, and the later push would retarget the version. Every run that may write the release
+    repository therefore shares honua-helm's `chart-nightly-release` group; another repository
+    requests a publication by dispatching this workflow on trunk.
     """
     server_digest = str(inputs.get('server_image_digest') or '')
     version = str(inputs.get('platform_version') or '')
@@ -142,6 +152,10 @@ def resolve_request(*, inputs, workflow_ref, run_workflow_ref, source_revision, 
     # the branch's own workflow and may package the branch.
     if workflow_ref == TRUNK_WORKFLOW_REF and not on_trunk:
         raise Refusal(f'source revision {source_revision} is not on honua-helm trunk')
+    if not proof and not str(run_workflow_ref).startswith(HELM_REPOSITORY + '/'):
+        raise Refusal(f'{run_workflow_ref} is not a {HELM_REPOSITORY} workflow; only {HELM_REPOSITORY} runs publish the '
+                      'release repository, serialized by its chart-nightly-release concurrency group. Dispatch '
+                      f'{TRUNK_WORKFLOW_REF} with workflow_dispatch instead of calling it')
     namespace = PROOF_NAMESPACE if proof else RELEASE_NAMESPACE
     return {
         'mode': mode,

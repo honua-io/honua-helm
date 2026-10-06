@@ -77,6 +77,10 @@ on:
 permissions:
   contents: read
 
+# One publisher (docs/release/CHART-PUBLICATION.md): every run that may write the release
+# repository is a honua-helm run in this group, because GHCR cannot refuse a second push of a
+# version tag. A group is scoped to the repository of the run that evaluates it, so resolve_request
+# refuses a caller from another repository; that repository dispatches this workflow instead.
 concurrency:
   group: chart-nightly-${{ inputs.proof && 'proof' || 'release' }}
   cancel-in-progress: false
@@ -288,7 +292,7 @@ jobs:
           printf '%s' "${GH_TOKEN}" | scripts/retry-transient.sh helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
 
-      # Absent (404) publishes. Present with the same binding (an earlier run, or the train's call
+      # Absent (404) publishes. Present with the same binding (an earlier run, or the train's dispatch
       # for the same candidate) is re-verified and re-recorded, never re-pushed. Present with any
       # other binding refuses: chart versions are immutable.
       - name: Prove the chart version absent, or already bound to this request

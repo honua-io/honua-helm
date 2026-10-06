@@ -42,6 +42,9 @@ path, and this job does not change it.
    - The OIDC `job_workflow_ref` must be exactly
      `honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk`. This is the
      identity that Fulcio certifies.
+   - For the release repository, the run's top-level workflow (`GITHUB_WORKFLOW_REF`) must be a
+     honua-helm workflow. A `workflow_call` from another repository is refused, whatever it asks
+     for. See "One publisher" below.
 
    A branch dispatch, or a caller that pins this reusable workflow to anything but `@trunk`, is
    refused here. It is not left for a failing verification to discover after the push.
@@ -92,7 +95,7 @@ path, and this job does not change it.
 | Trigger | Inputs | Publishes |
 | --- | --- | --- |
 | `schedule`, 13:45 UTC daily | none | The newest stamped release-train candidate: the `refs/nightly-candidates/*` snapshot in honua-release with the newest commit date. The chart version is that snapshot's `platformRelease` label (`2026.1-rc.N` → `2026.1.0-rc.N`). The server digest is its `components.honua-server` image digest. The source revision is its `components.honua-helm.sha`. If no candidate is stamped, the run fails and publishes nothing. It never invents a version. |
-| `workflow_call` | `server_image_digest`, `platform_version`, optional `chart_revision` (default: honua-helm default-branch head, read from the API) | Exactly that request, to the release repository, whatever event started the caller. Call it as `uses: honua-io/honua-helm/.github/workflows/chart-nightly.yml@trunk`. The caller job needs `contents: read`, `packages: write`, `id-token: write` and `attestations: write`. Its token must have write access to the `charts/honua` package. |
+| `workflow_call` | `server_image_digest`, `platform_version`, optional `chart_revision` (default: honua-helm default-branch head, read from the API) | Exactly that request, to the release repository, whatever event started the caller. Only a honua-helm workflow may call it, as `uses: ./.github/workflows/chart-nightly.yml` from `trunk`; a caller in another repository is refused before anything is pushed. The caller job needs `contents: read`, `packages: write`, `id-token: write` and `attestations: write`. |
 | `workflow_dispatch` | as `workflow_call`, plus `proof` | With `proof: false`, from `trunk` only: the release repository. With `proof: true`, from any branch: the throwaway `ghcr.io/honua-io/charts/honua-ci-proof/honua`, which the `delete-proof` job deletes once the run finishes. A branch proof must pass its own head as `chart_revision`, because the default is the default-branch head. |
 
 ## What the release resolver reads
@@ -100,7 +103,7 @@ path, and this job does not change it.
 The run uploads one artifact:
 
 - named `chart-publication-<version>`, or `chart-publication-proof-<version>` for a proof run;
-- in the caller's run for `workflow_call`;
+- in the calling honua-helm run for `workflow_call`;
 - in this repository's run for `schedule` and `workflow_dispatch`.
 
 It holds `chart-publication.json` (`format: honua.chart-publication/v1`) and these supporting
@@ -160,8 +163,26 @@ helm pull oci://ghcr.io/honua-io/charts/honua --version <version>
 sha256sum honua-<version>.tgz   # must equal the receipt's platformManifest.artifactSha256
 ```
 
-The signing identity is always the trunk workflow, including when the release train calls it as
-a reusable workflow. The certificate names the called workflow, not the caller's workflow.
+The signing identity is always the trunk workflow, including when another honua-helm workflow
+calls it as a reusable workflow. The certificate names the called workflow, not the caller's
+workflow.
+
+## One publisher
+
+Every run that can write the release repository is a honua-helm run, and they all share the
+`chart-nightly-release` concurrency group, so at most one of them is between its absence check and
+its push. Nothing else can provide that guarantee. GHCR has no create-if-absent tag write: a second
+`helm push` of the same version silently retargets the tag. A concurrency group is scoped to the
+repository whose run evaluates it, and a called workflow is evaluated in the caller's run. If
+another repository could call this workflow, its run and honua-helm's scheduled nightly could both
+prove the version absent and both push it.
+
+So the release train, or any other repository, requests a publication by dispatching
+`chart-nightly.yml` on `trunk` with `server_image_digest`, `platform_version` and optionally
+`chart_revision`. It needs a token with `actions: write` on honua-helm. It reads the
+`chart-publication-<version>` artifact from that run. GitHub keeps at most one pending run per
+concurrency group: a newer pending run cancels an older pending one, which then publishes nothing
+and must be dispatched again.
 
 ### Full verification
 
@@ -187,6 +208,6 @@ The job cannot meet these itself:
 - **Public package.** The first push creates `charts/honua` with the organisation's default
   visibility. An administrator must make the package public before anonymous pulls succeed. The
   job's own checks authenticate with its token, so they do not depend on this.
-- **Cross-repository caller.** A `workflow_call` from another repository, such as the release
-  train, runs with that repository's `GITHUB_TOKEN`. The `charts/honua` package must grant that
-  repository write access under *Manage Actions access*. Without it, the push is refused.
+- **Package access.** The `charts/honua` package must grant honua-helm write access under
+  *Manage Actions access*. Without it, the push is refused. Other repositories need no package
+  access, because they dispatch the publication instead of running it.
