@@ -366,6 +366,217 @@ controlPlane:
     artifactReference: ""                  # empty uses the rendered image reference
 ```
 
+## Geoprocessing on Kubernetes Jobs
+
+Preview (2026.2), off by default. With
+`geoprocessing.kubernetesJobs.enabled=true`, asynchronous geoprocessing runs as
+`batch/v1` Jobs instead of inside the server process. The server's Kubernetes
+Job batch compute backend (`KubernetesJobBatchComputeBackend`, backend id
+`honua-kubernetes-job`) creates one Job per execution attempt.
+
+Each Job runs the server image in its worker-only profile. The server stamps
+`HONUA_OPERATION_ID`, `HONUA_EXECUTION_ATTEMPT` and the other launch variables
+on the Job. The worker records the result in the shared Redis job store and
+exits.
+
+```yaml
+geoprocessing:
+  kubernetesJobs:
+    enabled: true
+    serviceAccount:
+      annotations: {}          # IRSA: eks.amazonaws.com/role-arn of the GP job role
+```
+
+### What the chart renders
+
+| Object | Purpose |
+| --- | --- |
+| ConfigMap `<fullname>-gp-kubernetes-jobs` | `ControlPlane__Kubernetes__*` (backend defaults) and `ControlPlane__ExecutionWorkloads__<index>__*` (the GP workload: `TargetKind=KubernetesJob`, `Backend=honua-kubernetes-job`). The server loads it through `envFrom`. |
+| Secret `<fullname>-gp-kubernetes-jobs` | The workload's `ParameterEntries`: `k8s.node_selector` and one `env.<NAME>` per worker environment variable. The server loads it through `envFrom`. |
+| ServiceAccount `<fullname>-gp-job` | The identity the Job pods run as (`ControlPlane:Kubernetes:DefaultServiceAccount`). No token is mounted. |
+| Role + RoleBinding `<fullname>-gp-kubernetes-jobs` | In the Job namespace, for the server's service account: `batch/jobs` create/get/list/watch/delete, `pods` get/list/watch, `pods/log` get. Nothing cluster-wide, no Secrets. |
+| Hook Job `<fullname>-gp-rbac-check` | Runs on `post-install`, `post-upgrade` and `helm test`, as the server's service account. It checks each permission above with a SelfSubjectAccessReview. A missing permission fails the release with `HONUA_GP_K8S_RBAC_MISSING`. |
+
+The server Deployment also changes in two ways:
+
+- It mounts its service account token. The backend discovers the API server,
+  token and CA in-cluster.
+- It treats Redis as required, so the preflight hook checks Redis.
+
+### Values
+
+| Value | Default | Server setting |
+| --- | --- | --- |
+| `enabled` | `false` | Registers the workload and renders the objects above. |
+| `namespace` | release namespace | `ControlPlane:Kubernetes:DefaultNamespace`. Another namespace must already exist; the job ServiceAccount, Role and RoleBinding are rendered into it. |
+| `image.repository` / `tag` / `digest` | the chart's server image | `ControlPlane:Kubernetes:DefaultImage`. Keep the default: the server and worker must share the execution contract. |
+| `image.pullPolicy` | `image.pullPolicy` | `ControlPlane:Kubernetes:DefaultImagePullPolicy` |
+| `image.maxSupportedContractVersion` | `1` | `ControlPlane:Kubernetes:DefaultImageMaxSupportedContractVersion` |
+| `imagePullSecrets` | names from `image.pullSecrets` | `ControlPlane:Kubernetes:DefaultImagePullSecrets` |
+| `serviceAccount.create` / `name` / `annotations` | `true` / `<fullname>-gp-job` / `{}` | `ControlPlane:Kubernetes:DefaultServiceAccount` |
+| `rbac.create` | `true` | Renders the Role and RoleBinding above. The RBAC check still runs when this is `false`. |
+| `resources.requests` / `limits` | `250m`/`512Mi`, `2`/`2Gi` | `ControlPlane:Kubernetes:Default{Cpu,Memory}{Request,Limit}` |
+| `ttlSecondsAfterFinished` | `3600` | `ControlPlane:Kubernetes:DefaultTtlSecondsAfterFinished`. The server raises any value below 30 to 30. |
+| `activeDeadlineSeconds` | unset | `ControlPlane:Kubernetes:DefaultActiveDeadlineSeconds`. A job's own timeout policy wins. |
+| `nodeSelector` | `{}` | The workload's `k8s.node_selector` parameter |
+| `workload.index` / `id` / `name` | `2` / `geoprocessing-kubernetes-job` / `Geoprocessing (Kubernetes Job)` | `ControlPlane:ExecutionWorkloads:<index>` |
+| `inheritServerEnvironment` | `true` | Copies the server's environment into the worker (see below). |
+| `workerEnv` | `{}` | Extra worker env. An empty value drops an inherited entry. |
+| `allowInlineWorkerSecrets` | `false` | Disposable clusters only (see below). |
+
+The server does not read some Job settings, so the chart does not expose them:
+
+- `backoffLimit` is always `0`. A failed pod fails the Job, and the server's
+  reconciler owns retries. Each retry is a fresh Job named `-a<attempt>`.
+- The Job spec has no tolerations or affinity. For placement, use
+  `nodeSelector` or a namespace default (for example a `PodNodeSelector`
+  annotation or a Kyverno policy).
+- The Job spec has no volumes, `envFrom` or `secretKeyRef`.
+
+`workload.index` defaults to `2`. The server's `appsettings.json` already
+declares `ControlPlane:ExecutionWorkloads:0` (the local baseline) and `:1` (an
+AWS Batch placeholder). The AWS Batch entry stays inactive until its ARNs are
+set. Keep it that way. If both are active, the server routes GP to the first
+non-local workload, which is AWS Batch.
+
+### Worker environment and secrets
+
+The worker composes the same services as the server. It needs the same
+database, the Redis job store and the connection-encryption master key.
+Redis-backed non-development deployments also need the operation key-ring
+certificate.
+
+The server builds the Job pod spec itself. It can set only literal env values,
+which it takes from the workload's `env.<NAME>` parameters. It cannot use
+`secretKeyRef`, `envFrom` or volumes. It also writes those literal values into
+the Job object and the durable job record.
+
+So credentials reach the worker only as **cloud secret references**:
+`aws:secretsmanager:<arn>` or `azure:keyvault:<vault>/<secret>`. The worker
+resolves them at startup with the job service account's cloud identity. AWS
+Batch and Lambda workers use the same reference contract.
+
+With `inheritServerEnvironment: true`, the worker gets:
+
+- every `config.env` entry except `ASPNETCORE_URLS` and the `ControlPlane__*`
+  settings (the worker neither serves HTTP nor dispatches jobs);
+- the licensing values;
+- each `secret.env` entry whose value is a cloud secret reference.
+
+The chart never copies plain `secret.env` values, the chart-derived PostgreSQL
+and Redis connection strings, or the contents of an existing Secret
+(`secret.create=false`). For those, set references in `workerEnv`.
+
+The chart refuses to render when:
+
+- A worker credential is not a reference. Credentials are
+  `ConnectionStrings__*` and any name containing password, master key, API
+  key, token, PKCS#12, secret key, private key, license content or the
+  audit-chain key.
+- The chart manages the Secret (`secret.create=true`) and the worker lacks
+  `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis` or
+  `Security__ConnectionEncryption__MasterKey`. With an existing Secret
+  (`secret.create=false`) the chart cannot see the server's credentials, so it
+  renders, and the install NOTES print a warning naming the missing settings.
+  Every GP Job fails until `workerEnv` carries references for them.
+- The worker would inherit `Operations__SecretChannel__KeyRingCertificatePath`.
+  Job pods cannot mount the file. Supply
+  `Operations__SecretChannel__KeyRingCertificatePkcs12` as a reference
+  instead, and drop the path with
+  `workerEnv.Operations__SecretChannel__KeyRingCertificatePath: ""`.
+
+The worker serves no HTTP, so it does not need `HONUA_ADMIN_PASSWORD`. The
+chart never copies a plain admin password. The `HONUA_*` launch variables are
+reserved: the chart and the server both reject them in `workerEnv`.
+
+`allowInlineWorkerSecrets: true` copies plain secret values into the Job spec,
+including the chart-derived connection strings. Use it only on a throwaway
+cluster with no secret store, such as kind in CI. Anyone who can read Jobs in
+the namespace, or the job store, can then read those values.
+
+The preflight hook accepts cloud secret references but cannot resolve them,
+because it has no cloud identity. For those values it checks presence only and
+skips the TCP and complexity checks. The server validates the resolved values
+at startup.
+
+### Redis
+
+GP on Kubernetes Jobs requires Redis. Redis is the durable job store, and the
+worker refuses to start without it. When the backend is enabled, the chart
+requires `ConnectionStrings__redis` for the server, as it does for MultiNode.
+
+- **External Redis** (ElastiCache, MemoryDB, Azure Cache): set
+  `ConnectionStrings__redis`. TLS and auth go in the connection string, for
+  example `<primary endpoint>:6379,password=<token>,ssl=true`. A secret
+  reference in `secret.env.ConnectionStrings__redis` serves the server and the
+  workers. A plain string in `secret.env` or an existing Secret serves the
+  server only; give the workers a reference in
+  `workerEnv.ConnectionStrings__redis`.
+- **Chart-managed Redis** (`redis.enabled`): the derived connection string
+  carries the password inline. It reaches the workers only with
+  `allowInlineWorkerSecrets`. Otherwise, store the connection string in a
+  secret manager and set its reference in `workerEnv.ConnectionStrings__redis`.
+
+### EKS: mapping the honua-iac `aws-eks` outputs
+
+The honua-iac `aws-eks` module is the EKS GA certification cell: GP on
+Kubernetes Job runners, Redis on or off, and a PostGIS datastore. It creates:
+
+- RDS PostGIS, ElastiCache and the Secrets Manager entries;
+- two workload IAM roles, `server` and `gp-job`.
+
+It creates no Kubernetes objects. This chart owns the service accounts and the
+Job RBAC.
+
+| `aws-eks` output | Chart value |
+| --- | --- |
+| `kubernetes_namespace` | `helm install -n <namespace>`. The IAM trust is scoped to this namespace. |
+| `server_service_account_name` | `serviceAccount.name`. The chart default is `<fullname>`. |
+| `server_service_account_annotations` | `serviceAccount.annotations`. Used for IRSA; empty under Pod Identity. |
+| `gp_job_namespace` | `geoprocessing.kubernetesJobs.namespace` |
+| `gp_job_service_account_name` | `geoprocessing.kubernetesJobs.serviceAccount.name` |
+| `gp_job_service_account_annotations` | `geoprocessing.kubernetesJobs.serviceAccount.annotations` |
+| `gp_job_image` | Leave empty to run the chart's server image. Otherwise set `geoprocessing.kubernetesJobs.image.*`. |
+| `chart_config_env` | `config.env`, as is. It holds no credentials. It carries `ControlPlane__Kubernetes__{DefaultNamespace,DefaultServiceAccount,DefaultImage}`, the CORS origins, the operation policy rules and operator secret references (key ring, audit-chain key). When the matching `geoprocessing.kubernetesJobs` value is empty, the chart takes the Job namespace, service account name and image from those `ControlPlane__Kubernetes__*` entries, so the ServiceAccount and RBAC it renders match what the server is told. `config.env` loads after the chart's own ConfigMap, so its entries win on the server. |
+| `honua_server_environment` | The complete environment: `chart_config_env` plus the credential references. Put the credential references in `secret.env`, or in `geoprocessing.kubernetesJobs.workerEnv` when the credentials themselves live in an existing Secret (`secret.create=false`). The worker needs `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis` and `Security__ConnectionEncryption__MasterKey`. |
+| `gp_job_data_bucket_arn` | The IAM roles grant the worker and server S3 access. Set the server's storage settings in `config.env`; the worker inherits them. |
+| `workload_identity_mode` | `pod_identity` (the default): no annotations. The EKS Pod Identity associations name the service accounts, so the names must match. `irsa`: copy the `*_service_account_annotations` outputs. Both `annotations` values are optional and default to `{}`. |
+
+```yaml
+serviceAccount:
+  name: honua-server                       # server_service_account_name
+  annotations: {}                          # server_service_account_annotations (irsa)
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "aws:secretsmanager:<db_connection arn>"
+    HONUA_ADMIN_PASSWORD: "aws:secretsmanager:<admin_password arn>"
+    Security__ConnectionEncryption__MasterKey: "aws:secretsmanager:<master_key arn>"
+    ConnectionStrings__redis: "aws:secretsmanager:<redis_connection arn>"
+    Operations__SecretChannel__KeyRingCertificatePkcs12: "aws:secretsmanager:<key ring arn>"
+geoprocessing:
+  kubernetesJobs:
+    enabled: true
+    namespace: ""                          # gp_job_namespace (empty = release namespace)
+    serviceAccount:
+      name: honua-gp-job                   # gp_job_service_account_name
+      annotations: {}                      # gp_job_service_account_annotations (irsa)
+```
+
+`honua/ci-values/gp-kubernetes-jobs.yaml` is a rendered example of this shape.
+
+A Redis-off cell cannot run GP on Kubernetes Jobs, because the worker has no
+job store. Leave `geoprocessing.kubernetesJobs.enabled=false` there.
+
+### Verifying
+
+```bash
+helm test <release>                                   # includes the gp-rbac-check hook
+kubectl get jobs -n <gp namespace> -l app.kubernetes.io/managed-by=honua-controlplane
+```
+
+Jobs carry the `honua.io/operation-id` and `honua.io/workload-kind=geoprocessing`
+labels.
+
 ## Preflight hook
 
 `preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, Redis TCP reachability for non-development deployments, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.

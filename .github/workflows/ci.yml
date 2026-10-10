@@ -140,6 +140,11 @@ jobs:
       - name: Verify managed Redis review regressions
         run: python3 scripts/test-redis-review.py
 
+      - name: Verify geoprocessing on Kubernetes Jobs rendering
+        run: |
+          helm lint honua -f honua/ci-values/gp-kubernetes-jobs.yaml
+          python3 scripts/test-gp-kubernetes-jobs.py
+
       - name: Prove Redis-free Production and maintained bundled Redis
         run: |
           set -euo pipefail
@@ -916,3 +921,163 @@ jobs:
         with:
           name: honua-smoke-evidence
           path: /tmp/honua-smoke
+
+  gp-kubernetes-jobs-smoke:
+    name: GP on Kubernetes Jobs kind smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Create kind cluster
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: honua-gp-smoke
+
+      - name: Update dependencies
+        run: helm dependency update honua
+
+      - name: Start PostGIS
+        run: |
+          set -euo pipefail
+
+          kubectl create namespace honua-smoke
+          cat <<'YAML' | kubectl apply -n honua-smoke -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: honua-postgis
+            labels:
+              app.kubernetes.io/name: honua-postgis
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: honua-postgis
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: honua-postgis
+              spec:
+                containers:
+                  - name: postgis
+                    image: postgis/postgis:16-3.4-alpine
+                    ports:
+                      - containerPort: 5432
+                    env:
+                      - name: POSTGRES_USER
+                        value: honua
+                      - name: POSTGRES_PASSWORD
+                        value: ci-password
+                      - name: POSTGRES_DB
+                        value: honua
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: honua-postgis
+          spec:
+            selector:
+              app.kubernetes.io/name: honua-postgis
+            ports:
+              - name: postgresql
+                port: 5432
+                targetPort: 5432
+          YAML
+
+          kubectl rollout status deployment/honua-postgis -n honua-smoke --timeout=180s
+          for i in {1..60}; do
+            if kubectl exec deployment/honua-postgis -n honua-smoke -- pg_isready -h 127.0.0.1 -U honua -d honua; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PostGIS did not become ready."
+          exit 1
+
+      - name: Start Redis
+        run: |
+          set -euo pipefail
+
+          cat <<'YAML' | kubectl apply -n honua-smoke -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: honua-redis
+            labels:
+              app.kubernetes.io/name: honua-redis
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: honua-redis
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: honua-redis
+              spec:
+                containers:
+                  - name: redis
+                    image: redis:7-alpine
+                    args:
+                      - redis-server
+                      - --appendonly
+                      - "no"
+                      - --save
+                      - ""
+                      - --requirepass
+                      - ci-redis-password
+                    ports:
+                      - containerPort: 6379
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: honua-redis
+          spec:
+            selector:
+              app.kubernetes.io/name: honua-redis
+            ports:
+              - name: redis
+                port: 6379
+                targetPort: 6379
+          YAML
+
+          kubectl rollout status deployment/honua-redis -n honua-smoke --timeout=180s
+          for i in {1..60}; do
+            if kubectl exec deployment/honua-redis -n honua-smoke -- redis-cli -h 127.0.0.1 --no-auth-warning -a ci-redis-password ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Redis did not become ready."
+          exit 1
+
+      - name: Install with GP on Kubernetes Jobs and dispatch geometry.buffer
+        env:
+          # Same verified amd64 AOT image as the install/upgrade smoke (server#4725).
+          # It predates the worker-only execution profile (server#5780), so the
+          # dispatched Job's completion is recorded, not gated. Set
+          # HONUA_GP_REQUIRE_COMPLETION=true once a candidate with #5780 is pinned.
+          HONUA_IMAGE_DIGEST: sha256:51a3fac496dc2e422646603f8675c7517dadad13b1263909fe73c65fd29b445d
+          HONUA_GP_REQUIRE_COMPLETION: "false"
+        run: scripts/gp-kubernetes-jobs-smoke.sh
+
+      - name: Capture smoke evidence
+        if: always()
+        run: |
+          set +e
+          mkdir -p /tmp/honua-gp-smoke
+          kubectl get all,roles,rolebindings,serviceaccounts -n honua-smoke -o wide > /tmp/honua-gp-smoke/resources.txt
+          kubectl logs -n honua-smoke deployment/honua-honua > /tmp/honua-gp-smoke/server.log
+          kubectl get events -n honua-smoke --sort-by=.lastTimestamp > /tmp/honua-gp-smoke/events.txt
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: honua-gp-smoke-evidence
+          path: /tmp/honua-gp-smoke

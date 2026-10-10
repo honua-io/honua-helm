@@ -136,7 +136,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "honua.requiresRedisConnection" -}}
 {{- $mode := lower (trim (default "SingleInstance" (get (.Values.config.env | default dict) "Deployment__Mode"))) -}}
-{{- if or .Values.redis.enabled (eq $mode "multinode") -}}
+{{- if or .Values.redis.enabled (eq $mode "multinode") (eq (include "honua.gpJobs.enabled" .) "true") -}}
 true
 {{- else -}}
 false
@@ -252,7 +252,8 @@ true
 {{- $minMasterKey := int (include "honua.minMasterKeyLength" .) -}}
 {{- $secretEnv := get (.Values.secret | default dict) "env" | default dict -}}
 {{- $adminPassword := toString (default "" (get $secretEnv "HONUA_ADMIN_PASSWORD")) -}}
-{{- if $adminPassword -}}
+{{- /* A cloud secret reference is validated by the server once resolved. */ -}}
+{{- if and $adminPassword (ne (include "honua.isSecretReference" $adminPassword) "true") -}}
 {{- if lt (len $adminPassword) $minPassword -}}
 {{- fail (printf "secret.env.HONUA_ADMIN_PASSWORD must be at least %d characters long." $minPassword) -}}
 {{- end -}}
@@ -270,7 +271,7 @@ true
 {{- end -}}
 {{- end -}}
 {{- $masterKey := toString (default "" (get $secretEnv "Security__ConnectionEncryption__MasterKey")) -}}
-{{- if and $masterKey (lt (len $masterKey) $minMasterKey) -}}
+{{- if and $masterKey (ne (include "honua.isSecretReference" $masterKey) "true") (lt (len $masterKey) $minMasterKey) -}}
 {{- fail (printf "secret.env.Security__ConnectionEncryption__MasterKey must be at least %d characters long." $minMasterKey) -}}
 {{- end -}}
 {{- end -}}
@@ -357,4 +358,166 @@ true
 
 {{- define "honua.redisPort" -}}
 6379
+{{- end -}}
+
+{{- /* ---------------------------------------------------------------------
+       Geoprocessing on Kubernetes Jobs (geoprocessing.kubernetesJobs).
+       --------------------------------------------------------------------- */ -}}
+
+{{- define "honua.gpJobs.values" -}}
+{{- $gp := get (.Values.geoprocessing | default dict) "kubernetesJobs" | default dict -}}
+{{- toJson $gp -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.enabled" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- if eq (toString (default false (get $gp "enabled"))) "true" -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* A ControlPlane__Kubernetes__<Name> value supplied through config.env
+       (for example honua-iac's chart_config_env). The chart keeps its objects
+       and the server setting consistent with it when the matching
+       geoprocessing.kubernetesJobs value is left empty. */ -}}
+{{- define "honua.gpJobs.configEnv" -}}
+{{- $configEnv := get (.context.Values.config | default dict) "env" | default dict -}}
+{{- trim (toString (default "" (get $configEnv (printf "ControlPlane__Kubernetes__%s" .name)))) -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.namespace" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $fromConfig := include "honua.gpJobs.configEnv" (dict "context" . "name" "DefaultNamespace") -}}
+{{- default (default .Release.Namespace $fromConfig) (trim (default "" (get $gp "namespace"))) -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.serviceAccountName" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $sa := get $gp "serviceAccount" | default dict -}}
+{{- $name := trim (default "" (get $sa "name")) -}}
+{{- $fromConfig := include "honua.gpJobs.configEnv" (dict "context" . "name" "DefaultServiceAccount") -}}
+{{- if $name -}}
+{{- $name -}}
+{{- else if $fromConfig -}}
+{{- $fromConfig -}}
+{{- else -}}
+{{- printf "%s-gp-job" (include "honua.fullname" . | trunc 56 | trimSuffix "-") -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.resourceName" -}}
+{{- printf "%s-gp-kubernetes-jobs" (include "honua.fullname" . | trunc 43 | trimSuffix "-") -}}
+{{- end -}}
+
+{{- /* Worker image: the chart's server image unless an override is given. */ -}}
+{{- define "honua.gpJobs.image" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $img := get $gp "image" | default dict -}}
+{{- $repository := trim (default "" (get $img "repository")) -}}
+{{- $tag := trim (default "" (get $img "tag")) -}}
+{{- $digest := trim (default "" (get $img "digest")) -}}
+{{- $fromConfig := include "honua.gpJobs.configEnv" (dict "context" . "name" "DefaultImage") -}}
+{{- if and (not $repository) (not $tag) (not $digest) $fromConfig -}}
+{{- $fromConfig -}}
+{{- else if and (not $repository) (not $tag) (not $digest) -}}
+{{- include "honua.imageReference" . -}}
+{{- else -}}
+{{- $repository = default .Values.image.repository $repository -}}
+{{- if $digest -}}
+{{- printf "%s@%s" $repository $digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repository (required "geoprocessing.kubernetesJobs.image.tag or .digest is required when geoprocessing.kubernetesJobs.image.repository is set." $tag) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.imagePullPolicy" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $img := get $gp "image" | default dict -}}
+{{- default .Values.image.pullPolicy (trim (default "" (get $img "pullPolicy"))) -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.imagePullSecrets" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $names := list -}}
+{{- range (get $gp "imagePullSecrets" | default list) -}}
+{{- if kindIs "map" . -}}
+{{- $names = append $names (get . "name") -}}
+{{- else -}}
+{{- $names = append $names (toString .) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $names -}}
+{{- range (.Values.image.pullSecrets | default list) -}}
+{{- if kindIs "map" . -}}
+{{- $names = append $names (get . "name") -}}
+{{- else -}}
+{{- $names = append $names (toString .) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $names -}}
+{{- end -}}
+
+{{- /* A worker setting is sensitive when it carries a credential. Those may
+       only reach a Job as a cloud secret reference: the server writes Job env
+       as literal values into the pod spec and the durable job record. */ -}}
+{{- define "honua.gpJobs.isSensitiveName" -}}
+{{- if or (hasPrefix "ConnectionStrings__" .) (regexMatch "(?i)(password|masterkey|apikey|token|pkcs12|secretkey|privatekey|licensecontent|chainverification__key)" .) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- define "honua.isSecretReference" -}}
+{{- if regexMatch "^(aws:secretsmanager:|azure:keyvault:).+" (trim (toString .)) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* Effective worker environment (name => value) as JSON. Order of
+       precedence, lowest first: config.env, licensing values, reference-valued
+       (or, with allowInlineWorkerSecrets, all) secret.env entries and the
+       chart-derived Redis/PostgreSQL connection strings, then workerEnv. */ -}}
+{{- define "honua.gpJobs.workerEnv" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $allowInline := eq (toString (default false (get $gp "allowInlineWorkerSecrets"))) "true" -}}
+{{- $env := dict -}}
+{{- if eq (toString (ternary true (get $gp "inheritServerEnvironment") (not (hasKey $gp "inheritServerEnvironment")))) "true" -}}
+{{- if .Values.config.create -}}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $env) -}}
+{{- end -}}
+{{- $_ := set $env "Licensing__Mode" (toString .Values.licensing.mode) -}}
+{{- with .Values.licensing.edition -}}
+{{- $_ := set $env "Licensing__Edition" (toString .) -}}
+{{- end -}}
+{{- if .Values.secret.create -}}
+{{- $secretEnv := dict -}}
+{{- if $allowInline -}}
+{{- range $line := splitList "\n" (include "honua.secretData" .) -}}
+{{- if contains ": " $line -}}
+{{- $parts := splitn ": " 2 (trim $line) -}}
+{{- $_ := set $secretEnv $parts._0 (b64dec $parts._1) -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.secret.env "dst" $secretEnv) -}}
+{{- end -}}
+{{- range $key, $value := $secretEnv -}}
+{{- if or $allowInline (eq (include "honua.isSecretReference" $value) "true") -}}
+{{- $_ := set $env $key $value -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The server's listener and its control-plane settings do not apply to a
+       worker, which neither serves HTTP nor dispatches jobs. */ -}}
+{{- $_ := unset $env "ASPNETCORE_URLS" -}}
+{{- range $key := keys $env -}}
+{{- if hasPrefix "ControlPlane__" $key -}}
+{{- $_ := unset $env $key -}}
+{{- end -}}
+{{- end -}}
+{{- /* An explicit empty workerEnv value drops an inherited entry. */ -}}
+{{- range $key, $value := (get $gp "workerEnv" | default dict) -}}
+{{- if or (eq (toString $value) "") (eq (toString $value) "<nil>") -}}
+{{- $_ := unset $env $key -}}
+{{- else -}}
+{{- $_ := set $env $key (toString $value) -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $env -}}
 {{- end -}}
