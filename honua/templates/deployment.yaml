@@ -1,3 +1,4 @@
+{{- $gpJobs := eq (include "honua.gpJobs.enabled" .) "true" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,12 +50,17 @@ spec:
         {{- if .Values.controlPlane.deployTarget.enabled }}
         checksum/deploy-target: {{ include (print $.Template.BasePath "/deploy-target-configmap.yaml") . | sha256sum }}
         {{- end }}
+        {{- if $gpJobs }}
+        checksum/gp-kubernetes-jobs: {{ include (print $.Template.BasePath "/gp-kubernetes-jobs.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
       serviceAccountName: {{ include "honua.serviceAccountName" . }}
-      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      {{- /* The Kubernetes Job backend authenticates to the API server with the
+             pod's projected service account token. */}}
+      automountServiceAccountToken: {{ or .Values.serviceAccount.automount $gpJobs }}
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -78,6 +84,12 @@ spec:
             {{- if .Values.controlPlane.deployTarget.enabled }}
             - configMapRef:
                 name: {{ include "honua.deployTargetConfigMapName" . }}
+            {{- end }}
+            {{- if $gpJobs }}
+            - configMapRef:
+                name: {{ include "honua.gpJobs.resourceName" . }}
+            - secretRef:
+                name: {{ include "honua.gpJobs.resourceName" . }}
             {{- end }}
             {{- if or .Values.config.create .Values.config.name }}
             - configMapRef:

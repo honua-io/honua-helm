@@ -32,7 +32,9 @@ nameOverride: ""
 fullnameOverride: ""
 
 # ServiceAccount for the workload. Token automount is disabled by default
-# because the server does not need Kubernetes API access.
+# because the server does not need Kubernetes API access, except when
+# geoprocessing.kubernetesJobs.enabled is true: then the server pod mounts the
+# token to create GP Jobs, regardless of `automount`.
 serviceAccount:
   create: true
   name: ""
@@ -533,6 +535,113 @@ controlPlane:
     # Stable artifact reference for this target. Empty uses the rendered
     # image reference (repository:tag or repository@digest).
     artifactReference: ""
+
+# Geoprocessing on Kubernetes Jobs (preview, 2026.2). When enabled, the server
+# registers its Kubernetes Job batch compute backend (honua-kubernetes-job) as
+# the geoprocessing execution workload, so asynchronous GP jobs run as batch/v1
+# Jobs in `namespace` instead of in-process. Each Job runs the server image in
+# its worker-only profile (HONUA_OPERATION_ID / HONUA_EXECUTION_ATTEMPT are
+# stamped by the server) and reports through the shared Redis job store.
+#
+# Requirements (enforced at render time where the chart can see them):
+#   * Redis: the durable job store. ConnectionStrings__redis is required.
+#   * Worker environment: the server builds each Job pod spec itself and can
+#     only set literal env values on it (no secretKeyRef, envFrom or volumes).
+#     Secret settings therefore reach the worker as cloud secret references
+#     (aws:secretsmanager:<arn> or azure:keyvault:<vault>/<secret>) that the
+#     worker resolves at startup with the job service account's cloud identity
+#     (EKS Pod Identity / IRSA). See honua/README.md "Geoprocessing on
+#     Kubernetes Jobs".
+#   * RBAC: the server service account gets a namespaced Role for batch/v1 Jobs
+#     and Pods, and its token is mounted (the server talks to the API server).
+geoprocessing:
+  kubernetesJobs:
+    enabled: false
+    # Namespace the GP Jobs run in (ControlPlane:Kubernetes:DefaultNamespace).
+    # Empty uses config.env.ControlPlane__Kubernetes__DefaultNamespace when set
+    # (honua-iac chart_config_env), else the release namespace. A different namespace must already
+    # exist; the chart renders the job ServiceAccount, Role and RoleBinding
+    # into it.
+    namespace: ""
+    # Worker image (ControlPlane:Kubernetes:DefaultImage). Leave repository,
+    # tag and digest empty to run config.env.ControlPlane__Kubernetes__DefaultImage
+    # when set, else the server image this chart deploys, which
+    # is the supported pairing: the server and its workers must share the
+    # execution contract.
+    image:
+      repository: ""
+      tag: ""
+      digest: ""
+      # Empty uses image.pullPolicy.
+      pullPolicy: ""
+      # Highest serving-to-worker execution contract the worker image runs
+      # (ControlPlane:Kubernetes:DefaultImageMaxSupportedContractVersion).
+      maxSupportedContractVersion: 1
+    # Image pull secret names for the Job pods
+    # (ControlPlane:Kubernetes:DefaultImagePullSecrets). Empty reuses the names
+    # in image.pullSecrets.
+    imagePullSecrets: []
+    # ServiceAccount the Job pods run as
+    # (ControlPlane:Kubernetes:DefaultServiceAccount). Bind the worker's cloud
+    # identity here (for IRSA, the eks.amazonaws.com/role-arn annotation). The
+    # worker never calls the Kubernetes API, so its token is not mounted.
+    serviceAccount:
+      create: true
+      # Empty uses config.env.ControlPlane__Kubernetes__DefaultServiceAccount
+      # when set, else "<fullname>-gp-job". Under EKS Pod Identity the
+      # association names this account, so no annotation is needed; for IRSA
+      # set eks.amazonaws.com/role-arn in annotations.
+      name: ""
+      annotations: {}
+    # Create the Role/RoleBinding that let the server service account manage
+    # Jobs in `namespace`. Disable only when the platform team provisions an
+    # equivalent binding; the post-install RBAC check still verifies it.
+    rbac:
+      create: true
+    # Container requests/limits stamped on every Job
+    # (ControlPlane:Kubernetes:Default{Cpu,Memory}{Request,Limit}).
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    # ttlSecondsAfterFinished for finished Jobs
+    # (ControlPlane:Kubernetes:DefaultTtlSecondsAfterFinished). The server
+    # clamps it to at least 30 so it observes the terminal state first.
+    ttlSecondsAfterFinished: 3600
+    # Fallback activeDeadlineSeconds (ControlPlane:Kubernetes:DefaultActiveDeadlineSeconds).
+    # A job's own timeout policy wins. null leaves it unset.
+    activeDeadlineSeconds: null
+    # Node selector for the Job pods (the workload's k8s.node_selector).
+    # The server's Job spec has no tolerations or affinity; use a node
+    # selector (or a namespace default) for placement.
+    nodeSelector: {}
+    # Execution workload the chart registers
+    # (ControlPlane:ExecutionWorkloads:<index>). The server's appsettings.json
+    # declares indexes 0 (local baseline) and 1 (AWS Batch placeholder, inactive
+    # until its ARNs are set), so the chart appends at index 2. Keep the AWS
+    # Batch workload inactive: when both are active the server routes GP to the
+    # first non-local workload, which is AWS Batch.
+    workload:
+      index: 2
+      id: geoprocessing-kubernetes-job
+      name: "Geoprocessing (Kubernetes Job)"
+    # Copy the server's environment into the worker: every config.env entry,
+    # the licensing values, and each secret.env entry whose value is a cloud
+    # secret reference. Plain (inline) secret.env values are never copied
+    # unless allowInlineWorkerSecrets is true.
+    inheritServerEnvironment: true
+    # Extra or overriding worker environment variables, name => value. Secret
+    # settings (connection strings, passwords, keys, tokens, PKCS#12
+    # material) must be aws:secretsmanager: or azure:keyvault: references.
+    # The HONUA_* launch variables are reserved by the server and rejected.
+    workerEnv: {}
+    # Disposable clusters only (kind, CI). Lets plain secret values reach the
+    # worker. They are written into every Job spec and the durable job record,
+    # readable by anyone who can read Jobs in the namespace or the job store.
+    allowInlineWorkerSecrets: false
 
 # Optional Bitnami PostgreSQL dependency. This is development-only because the
 # subchart does not include PostGIS; production should use an external

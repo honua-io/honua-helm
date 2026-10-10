@@ -125,6 +125,20 @@ spec:
                 return "${_status}"
               }
 
+              # A cloud secret reference (for example the aws:secretsmanager:<arn>
+              # values honua-iac's aws-eks module hands the chart) is resolved by
+              # the server at startup with its workload identity. This hook has no
+              # such identity, so it checks presence only and skips the
+              # complexity and reachability checks it cannot perform.
+              is_secret_reference() {
+                case "$1" in
+                  aws:secretsmanager:?*|azure:keyvault:?*)
+                    return 0
+                    ;;
+                esac
+                return 1
+              }
+
               for var in ConnectionStrings__DefaultConnection HONUA_ADMIN_PASSWORD Security__ConnectionEncryption__MasterKey; do
                 eval "value=\${$var:-}"
                 if [ -z "$value" ]; then
@@ -132,6 +146,9 @@ spec:
                 fi
               done
 
+              if is_secret_reference "${HONUA_ADMIN_PASSWORD}"; then
+                echo "HONUA_ADMIN_PASSWORD is a secret reference; the server validates the resolved value at startup."
+              else
               if [ "${#HONUA_ADMIN_PASSWORD}" -lt {{ include "honua.minAdminPasswordLength" . }} ]; then
                 fail "HONUA_ADMIN_PASSWORD must be at least {{ include "honua.minAdminPasswordLength" . }} characters long"
               fi
@@ -163,12 +180,15 @@ spec:
                   fail "HONUA_ADMIN_PASSWORD must contain at least one special character"
                   ;;
               esac
+              fi
 
               if [ "${#Security__ConnectionEncryption__MasterKey}" -lt {{ include "honua.minMasterKeyLength" . }} ]; then
                 fail "Security__ConnectionEncryption__MasterKey must be at least {{ include "honua.minMasterKeyLength" . }} characters long"
               fi
 
-              if [ "${HONUA_PREFLIGHT_DATABASE_CHECK}" = "true" ]; then
+              if is_secret_reference "${ConnectionStrings__DefaultConnection}"; then
+                echo "Skipping PostgreSQL TCP reachability check: ConnectionStrings__DefaultConnection is a secret reference the server resolves at startup."
+              elif [ "${HONUA_PREFLIGHT_DATABASE_CHECK}" = "true" ]; then
                 conn="${ConnectionStrings__DefaultConnection}"
                 db_host=""
                 db_port="5432"
@@ -208,7 +228,9 @@ spec:
                   fail "missing required environment variable ConnectionStrings__redis"
                 fi
 
-                if [ "${HONUA_PREFLIGHT_REDIS_CHECK}" = "true" ]; then
+                if is_secret_reference "$redis_conn"; then
+                  echo "Skipping Redis TCP reachability check: ConnectionStrings__redis is a secret reference the server resolves at startup."
+                elif [ "${HONUA_PREFLIGHT_REDIS_CHECK}" = "true" ]; then
                   redis_endpoint="${redis_conn%%,*}"
                   redis_endpoint="${redis_endpoint#redis://}"
                   redis_endpoint="${redis_endpoint#rediss://}"

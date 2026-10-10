@@ -74,3 +74,21 @@ or bump a value under podAnnotations so the upgrade renders a new pod spec.
 See docs/contract.md in this chart repository for the durable operator-facing
 contract, including probe tuning, image identity, preflight scope, and rollback
 semantics.
+{{- if eq (include "honua.gpJobs.enabled" .) "true" }}
+{{- $workerEnv := include "honua.gpJobs.workerEnv" . | fromJson }}
+{{- $missing := list }}
+{{- range $required := list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey" }}
+{{- if not (hasKey $workerEnv $required) }}{{ $missing = append $missing $required }}{{ end }}
+{{- end }}
+
+Geoprocessing on Kubernetes Jobs is enabled: async GP runs as Jobs in namespace
+{{ include "honua.gpJobs.namespace" . }} as service account {{ include "honua.gpJobs.serviceAccountName" . }}.
+{{- if $missing }}
+
+WARNING: the GP worker environment has no {{ join ", " $missing }}.
+The server writes Job env as literal values and cannot project the Secret
+{{ include "honua.secretName" . }} into Job pods, so every GP Job will fail until
+geoprocessing.kubernetesJobs.workerEnv carries aws:secretsmanager:/azure:keyvault:
+references for them (see the chart README, "Geoprocessing on Kubernetes Jobs").
+{{- end }}
+{{- end }}

@@ -1,0 +1,102 @@
+{{- if and .Values.preflight.enabled (eq (include "honua.gpJobs.enabled" .) "true") }}
+{{- $namespace := include "honua.gpJobs.namespace" . }}
+# Verifies, as the server's own service account, every Kubernetes API
+# permission the Kubernetes Job batch compute backend uses in the GP Job
+# namespace. Runs after install/upgrade (the Role/RoleBinding are ordinary
+# release resources, so a pre-install hook would run before they exist) and
+# during `helm test`. A missing permission fails the release with
+# HONUA_GP_K8S_RBAC_MISSING instead of leaving GP to fail at the first job.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "honua.fullname" . | trunc 46 | trimSuffix "-" }}-gp-rbac-check
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,test
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        # Keep the checker out of the application's Service endpoints.
+        app.kubernetes.io/component: gp-rbac-check
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "honua.serviceAccountName" . }}
+      # The check authenticates exactly as the server does.
+      automountServiceAccountToken: true
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gp-rbac-check
+          image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
+          imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: HONUA_GP_JOB_NAMESPACE
+              value: {{ $namespace | quote }}
+            - name: HONUA_SERVER_SERVICE_ACCOUNT
+              value: {{ printf "system:serviceaccount:%s:%s" .Release.Namespace (include "honua.serviceAccountName" .) | quote }}
+            - name: HONUA_PREFLIGHT_RETRIES
+              value: {{ .Values.preflight.retries | default 3 | quote }}
+            - name: HONUA_PREFLIGHT_RETRY_DELAY_SECONDS
+              value: {{ .Values.preflight.retryDelaySeconds | default 3 | quote }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              sa=/var/run/secrets/kubernetes.io/serviceaccount
+              [ -r "$sa/token" ] || { echo "HONUA_GP_K8S_TOKEN_MISSING: no service account token is mounted; the Kubernetes Job backend cannot reach the API server." >&2; exit 1; }
+              api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+              missing=0
+
+              # check <verb> <group> <resource> [subresource]
+              check() {
+                body=$(printf '{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{"resourceAttributes":{"namespace":"%s","verb":"%s","group":"%s","resource":"%s","subresource":"%s"}}}' \
+                  "$HONUA_GP_JOB_NAMESPACE" "$1" "$2" "$3" "${4:-}")
+                attempt=1
+                while :; do
+                  if response=$(curl --silent --show-error --fail --max-time 10 --cacert "$sa/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$sa/token")" -H "Content-Type: application/json" \
+                      -X POST --data "$body" "$api/apis/authorization.k8s.io/v1/selfsubjectaccessreviews"); then
+                    break
+                  fi
+                  if [ "$attempt" -ge "${HONUA_PREFLIGHT_RETRIES}" ]; then
+                    echo "HONUA_GP_K8S_API_UNREACHABLE: SelfSubjectAccessReview failed after ${attempt} attempt(s)." >&2
+                    exit 1
+                  fi
+                  attempt=$((attempt + 1))
+                  sleep "${HONUA_PREFLIGHT_RETRY_DELAY_SECONDS}"
+                done
+                target="$3${4:+/$4}${2:+.$2}"
+                if printf '%s' "$response" | tr -d ' \n' | grep -q '"allowed":true'; then
+                  echo "ok: ${HONUA_SERVER_SERVICE_ACCOUNT} can $1 ${target} in ${HONUA_GP_JOB_NAMESPACE}"
+                else
+                  echo "HONUA_GP_K8S_RBAC_MISSING: ${HONUA_SERVER_SERVICE_ACCOUNT} cannot $1 ${target} in namespace ${HONUA_GP_JOB_NAMESPACE}" >&2
+                  missing=1
+                fi
+              }
+
+              for verb in create get list watch delete; do check "$verb" batch jobs; done
+              for verb in get list watch; do check "$verb" "" pods; done
+              check get "" pods log
+
+              if [ "$missing" -ne 0 ]; then
+                echo "GP on Kubernetes Jobs RBAC check failed. Set geoprocessing.kubernetesJobs.rbac.create=true or grant the permissions above." >&2
+                exit 1
+              fi
+              echo "gp kubernetes jobs rbac check passed for ${HONUA_SERVER_SERVICE_ACCOUNT} in ${HONUA_GP_JOB_NAMESPACE}"
+{{- end }}
