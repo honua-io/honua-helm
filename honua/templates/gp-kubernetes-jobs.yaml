@@ -48,11 +48,13 @@ data:
   {{- with get $limits "memory" }}
   ControlPlane__Kubernetes__DefaultMemoryLimit: {{ toString . | quote }}
   {{- end }}
-  {{- if ne (toString (get $gp "ttlSecondsAfterFinished")) "<nil>" }}
-  ControlPlane__Kubernetes__DefaultTtlSecondsAfterFinished: {{ toString (get $gp "ttlSecondsAfterFinished") | quote }}
+  {{- $ttlSecondsAfterFinished := toString (get $gp "ttlSecondsAfterFinished") }}
+  {{- if and $ttlSecondsAfterFinished (ne $ttlSecondsAfterFinished "<nil>") }}
+  ControlPlane__Kubernetes__DefaultTtlSecondsAfterFinished: {{ $ttlSecondsAfterFinished | quote }}
   {{- end }}
-  {{- if ne (toString (get $gp "activeDeadlineSeconds")) "<nil>" }}
-  ControlPlane__Kubernetes__DefaultActiveDeadlineSeconds: {{ toString (get $gp "activeDeadlineSeconds") | quote }}
+  {{- $activeDeadlineSeconds := toString (get $gp "activeDeadlineSeconds") }}
+  {{- if and $activeDeadlineSeconds (ne $activeDeadlineSeconds "<nil>") }}
+  ControlPlane__Kubernetes__DefaultActiveDeadlineSeconds: {{ $activeDeadlineSeconds | quote }}
   {{- end }}
   # The geoprocessing workload: GeoprocessingJobDispatcher routes GP to the
   # first non-local geoprocessing workload, resolved to this backend by its
