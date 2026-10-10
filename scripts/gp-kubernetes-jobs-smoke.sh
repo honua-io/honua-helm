@@ -10,7 +10,7 @@
 #   3. the server pod mounts its token and loads the GP wiring;
 #   4. an asynchronous geometry.buffer submission through OGC API Processes is
 #      dispatched by the live server as a batch/v1 Job in the namespace, with
-#      the Job service account, the server image and the worker launch env;
+#      the Job service account, the server image and the worker env;
 #   5. removing the RoleBinding makes the RBAC check fail with
 #      HONUA_GP_K8S_RBAC_MISSING.
 # The Job's own completion is recorded (worker exit, GP job status) but only
@@ -90,7 +90,8 @@ job_id="$(jq -r '.jobID // .jobId // .id // empty' "$evidence/submit.json")"
 
 job=""
 for _ in $(seq 1 60); do
-  job="$(kubectl get jobs -n "$namespace" -l app.kubernetes.io/managed-by=honua-controlplane -o name | head -1)"
+  job="$(kubectl get jobs -n "$namespace" -o name \
+    -l "app.kubernetes.io/managed-by=honua-controlplane,honua.io/operation-id=$(printf '%s' "$job_id" | tr '[:upper:]' '[:lower:]')" | head -1)"
   [ -n "$job" ] && break
   sleep 2
 done
@@ -105,9 +106,18 @@ jq -e '.spec.backoffLimit == 0 and .spec.ttlSecondsAfterFinished == 600' "$evide
 jq -e '.metadata.labels["honua.io/workload-kind"] == "geoprocessing" and (.metadata.labels["honua.io/operation-id"] | length > 0)' \
   "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the operation labels"
 jq -e '[.spec.template.spec.containers[0].env[].name] as $n
-       | ($n | index("HONUA_OPERATION_ID")) != null and ($n | index("ConnectionStrings__redis")) != null
-         and ($n | index("ConnectionStrings__DefaultConnection")) != null' "$evidence/gp-job.json" >/dev/null \
-  || fail "GP Job lacks the launch or worker environment"
+       | ($n | index("ConnectionStrings__redis")) != null and ($n | index("ConnectionStrings__DefaultConnection")) != null
+         and ($n | index("Security__ConnectionEncryption__MasterKey")) != null and ($n | index("HONUA_CONTRACT_VERSION")) != null' \
+  "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the worker environment"
+jq -r '[.spec.template.spec.containers[0].env[].name | select(startswith("HONUA_"))] | join(",")' "$evidence/gp-job.json" \
+  | tee "$evidence/launch-variables.txt"
+# The worker launch contract (HONUA_OPERATION_ID, HONUA_EXECUTION_ATTEMPT, ...) is stamped by
+# server images that carry honua-server#5780; older images stamp only HONUA_CONTRACT_VERSION and
+# their Job boots a full server instead of a single-job worker.
+if [ "$require_completion" = "true" ]; then
+  grep -q 'HONUA_OPERATION_ID' "$evidence/launch-variables.txt" || fail "GP Job lacks HONUA_OPERATION_ID"
+  grep -q 'HONUA_EXECUTION_ATTEMPT' "$evidence/launch-variables.txt" || fail "GP Job lacks HONUA_EXECUTION_ATTEMPT"
+fi
 echo "GP job $job_id dispatched as $job" | tee "$evidence/dispatch.txt"
 
 # Completion: recorded, gated only when the image carries the worker profile.
