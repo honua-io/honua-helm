@@ -25,6 +25,17 @@ evidence="${HONUA_SMOKE_EVIDENCE:-/tmp/honua-gp-smoke}"
 digest="${HONUA_IMAGE_DIGEST:?set HONUA_IMAGE_DIGEST}"
 repository="${HONUA_IMAGE_REPOSITORY:-ghcr.io/honua-io/honua-server}"
 require_completion="${HONUA_GP_REQUIRE_COMPLETION:-false}"
+# true: the pinned server image carries honua-server#5796 (bebaada00), so the
+# chart's default envFrom wiring is exercised. false: the image predates it and
+# the smoke uses the legacy literal mode (envFromServer=false with inline
+# credentials, which only a disposable cluster may use).
+server_envfrom="${HONUA_GP_SERVER_ENVFROM:-false}"
+if [ "$server_envfrom" = "true" ]; then
+  mode_args=()
+else
+  mode_args=(--set geoprocessing.kubernetesJobs.envFromServer=false
+             --set geoprocessing.kubernetesJobs.allowInlineWorkerSecrets=true)
+fi
 fullname="$release-honua"
 server_sa="system:serviceaccount:$namespace:$fullname"
 port="${HONUA_SMOKE_PORT:-18080}"
@@ -38,7 +49,7 @@ helm install "$release" ./honua -n "$namespace" --wait --timeout 10m \
   --set image.repository="$repository" --set image.tag= --set image.digest="$digest" \
   --set image.pullPolicy=IfNotPresent \
   --set geoprocessing.kubernetesJobs.enabled=true \
-  --set geoprocessing.kubernetesJobs.allowInlineWorkerSecrets=true \
+  "${mode_args[@]}" \
   --set geoprocessing.kubernetesJobs.ttlSecondsAfterFinished=600 | tee "$evidence/helm-install.txt"
 
 # 1. The post-install RBAC check ran as the server and passed.
@@ -105,10 +116,20 @@ jq -e '.spec.backoffLimit == 0 and .spec.ttlSecondsAfterFinished == 600' "$evide
   || fail "GP Job does not carry the backend's backoff/TTL"
 jq -e '.metadata.labels["honua.io/workload-kind"] == "geoprocessing" and (.metadata.labels["honua.io/operation-id"] | length > 0)' \
   "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the operation labels"
-jq -e '[.spec.template.spec.containers[0].env[].name] as $n
-       | ($n | index("ConnectionStrings__redis")) != null and ($n | index("ConnectionStrings__DefaultConnection")) != null
-         and ($n | index("Security__ConnectionEncryption__MasterKey")) != null and ($n | index("HONUA_CONTRACT_VERSION")) != null' \
-  "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the worker environment"
+if [ "$server_envfrom" = "true" ]; then
+  # The worker imports the server's runtime Secret and ConfigMap by name; no
+  # credential value is written into the Job.
+  jq -e --arg secret "$fullname-secret" --arg config "$fullname-config" \
+    '[.spec.template.spec.containers[0].envFrom[]? | (.secretRef.name // empty)] == [$secret]
+     and ([.spec.template.spec.containers[0].envFrom[]? | (.configMapRef.name // empty)] | index($config)) != null
+     and ([.spec.template.spec.containers[0].env[]? | select(.name | test("ConnectionStrings|MasterKey|PASSWORD"))] | length) == 0' \
+    "$evidence/gp-job.json" >/dev/null || fail "GP Job does not import the runtime Secret and ConfigMap through envFrom"
+else
+  jq -e '[.spec.template.spec.containers[0].env[].name] as $n
+         | ($n | index("ConnectionStrings__redis")) != null and ($n | index("ConnectionStrings__DefaultConnection")) != null
+           and ($n | index("Security__ConnectionEncryption__MasterKey")) != null and ($n | index("HONUA_CONTRACT_VERSION")) != null' \
+    "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the worker environment"
+fi
 jq -r '[.spec.template.spec.containers[0].env[].name | select(startswith("HONUA_"))] | join(",")' "$evidence/gp-job.json" \
   | tee "$evidence/launch-variables.txt"
 # The worker launch contract (HONUA_OPERATION_ID, HONUA_EXECUTION_ATTEMPT, ...) is stamped by

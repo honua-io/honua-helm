@@ -242,17 +242,22 @@
 {{- end -}}
 {{- $workerEnv := include "honua.gpJobs.workerEnv" . | fromJson -}}
 {{- range $key, $value := $workerEnv -}}
-{{- if and (not $allowInline) (eq (include "honua.gpJobs.isSensitiveName" $key) "true") (ne (include "honua.isSecretReference" $value) "true") -}}
+{{- if and (not $allowInline) $value (eq (include "honua.gpJobs.isSensitiveName" $key) "true") (ne (include "honua.isSecretReference" $value) "true") -}}
 {{- fail (printf "geoprocessing.kubernetesJobs worker setting %s must be an aws:secretsmanager: or azure:keyvault: reference. The server writes Job env as literal values into the Job spec and the durable job record, so a plain credential would be exposed there. Set geoprocessing.kubernetesJobs.workerEnv.%s to a reference the job service account can resolve (or set allowInlineWorkerSecrets=true on a disposable cluster)." $key $key) -}}
 {{- end -}}
 {{- end -}}
-{{- if hasKey $workerEnv "Operations__SecretChannel__KeyRingCertificatePath" -}}
+{{- $envFromMode := eq (include "honua.gpJobs.envFromMode" .) "true" -}}
+{{- $configEnv := get (.Values.config | default dict) "env" | default dict -}}
+{{- $secretEnv := get (.Values.secret | default dict) "env" | default dict -}}
+{{- $pathKey := "Operations__SecretChannel__KeyRingCertificatePath" -}}
+{{- $importedPath := and $envFromMode (or (get $configEnv $pathKey) (and .Values.secret.create (get $secretEnv $pathKey))) (not (and (hasKey $workerEnv $pathKey) (eq (toString (get $workerEnv $pathKey)) ""))) -}}
+{{- if or $importedPath (and (hasKey $workerEnv $pathKey) (ne (toString (get $workerEnv $pathKey)) "")) -}}
 {{- fail "geoprocessing.kubernetesJobs: the worker environment carries Operations__SecretChannel__KeyRingCertificatePath, but GP Job pods cannot mount files (the server's Job spec has no volumes). Set geoprocessing.kubernetesJobs.workerEnv.Operations__SecretChannel__KeyRingCertificatePkcs12 to an aws:secretsmanager:/azure:keyvault: reference and drop the path with workerEnv.Operations__SecretChannel__KeyRingCertificatePath: \"\"." -}}
 {{- end -}}
 {{- /* Only refuse when the chart can see the server's credentials. With an
        existing Secret (secret.create=false) the gap is reported in NOTES. */ -}}
 {{- range $required := list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey" -}}
-{{- if and $.Values.secret.create (not (hasKey $workerEnv $required)) -}}
+{{- if and (not $envFromMode) $.Values.secret.create (not (hasKey $workerEnv $required)) -}}
 {{- fail (printf "geoprocessing.kubernetesJobs: GP Job workers need %s (the same database, Redis job store and master key as the server), and the chart cannot project it from a Kubernetes Secret because the server's Job spec carries literal env only. Put an aws:secretsmanager:/azure:keyvault: reference in secret.env.%s (inherited when inheritServerEnvironment is true) or in geoprocessing.kubernetesJobs.workerEnv.%s." $required $required $required) -}}
 {{- end -}}
 {{- end -}}

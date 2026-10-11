@@ -166,6 +166,7 @@
                 "name": { "type": "string", "minLength": 1 }
               }
             },
+            "envFromServer": { "type": "boolean", "description": "Import the server's runtime Secret and ConfigMap into every Job through envFrom (honua-server >= bebaada00, server#5796)." },
             "inheritServerEnvironment": { "type": "boolean" },
             "workerEnv": {
               "type": "object",

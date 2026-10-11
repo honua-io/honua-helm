@@ -545,13 +545,13 @@ controlPlane:
 #
 # Requirements (enforced at render time where the chart can see them):
 #   * Redis: the durable job store. ConnectionStrings__redis is required.
-#   * Worker environment: the server builds each Job pod spec itself and can
-#     only set literal env values on it (no secretKeyRef, envFrom or volumes).
-#     Secret settings therefore reach the worker as cloud secret references
-#     (aws:secretsmanager:<arn> or azure:keyvault:<vault>/<secret>) that the
-#     worker resolves at startup with the job service account's cloud identity
-#     (EKS Pod Identity / IRSA). See honua/README.md "Geoprocessing on
-#     Kubernetes Jobs".
+#   * Worker environment: with envFromServer (the default) every Job
+#     imports the server's runtime Secret and ConfigMap through envFrom, so the
+#     worker gets the same database, Redis and master key as the server. This
+#     needs a honua-server image at or after bebaada00 (server#5796). Older
+#     servers, or Jobs in another namespace, fall back to literal env, where
+#     credentials must be cloud secret references (aws:secretsmanager: /
+#     azure:keyvault:). See honua/README.md "Geoprocessing on Kubernetes Jobs".
 #   * RBAC: the server service account gets a namespaced Role for batch/v1 Jobs
 #     and Pods, and its token is mounted (the server talks to the API server).
 geoprocessing:
@@ -628,18 +628,30 @@ geoprocessing:
       index: 2
       id: geoprocessing-kubernetes-job
       name: "Geoprocessing (Kubernetes Job)"
-    # Copy the server's environment into the worker: every config.env entry,
-    # the licensing values, and each secret.env entry whose value is a cloud
-    # secret reference. Plain (inline) secret.env values are never copied
+    # Import the server's runtime Secret, its ConfigMap and every extraEnvFrom
+    # source into each Job through envFrom
+    # (ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}). Needs a
+    # honua-server image at or after bebaada00 (server#5796); an older server
+    # ignores the setting and its workers start without credentials. Applies
+    # only when the Jobs run in the release namespace (Secret references must
+    # resolve in the Job's namespace); otherwise the legacy literal mode below
+    # is used. Set false to force the legacy mode for an older server.
+    envFromServer: true
+    # Copy the server's environment into the worker as literal env. In envFrom
+    # mode that is only what the Deployment sets directly (licensing values,
+    # OTLP endpoint; a license Secret travels as a secretKeyRef). In legacy
+    # mode it is every config.env entry plus each secret.env entry whose value
+    # is a cloud secret reference; plain secret.env values are never copied
     # unless allowInlineWorkerSecrets is true.
     inheritServerEnvironment: true
-    # Extra or overriding worker environment variables, name => value. Secret
-    # settings (connection strings, passwords, keys, tokens, PKCS#12
-    # material) must be aws:secretsmanager: or azure:keyvault: references.
-    # The HONUA_* launch variables are reserved by the server and rejected.
+    # Extra or overriding worker environment variables, name => value. They
+    # are literals in the Job spec and win over envFrom. Secret settings
+    # (connection strings, passwords, keys, tokens, PKCS#12 material) must be
+    # aws:secretsmanager: or azure:keyvault: references. An empty value clears
+    # the variable. The HONUA_* launch variables are reserved and rejected.
     workerEnv: {}
-    # Disposable clusters only (kind, CI). Lets plain secret values reach the
-    # worker. They are written into every Job spec and the durable job record,
+    # Legacy mode, disposable clusters only (kind, CI). Lets plain secret
+    # values reach the worker as literals. They are written into every Job spec and the durable job record,
     # readable by anyone who can read Jobs in the namespace or the job store.
     allowInlineWorkerSecrets: false
 
