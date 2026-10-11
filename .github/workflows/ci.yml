@@ -1064,6 +1064,10 @@ jobs:
           # HONUA_GP_REQUIRE_COMPLETION=true once a candidate with #5780 is pinned.
           HONUA_IMAGE_DIGEST: sha256:51a3fac496dc2e422646603f8675c7517dadad13b1263909fe73c65fd29b445d
           HONUA_GP_REQUIRE_COMPLETION: "false"
+          # The image also predates server#5796 (bebaada00), which renders
+          # ControlPlane:Kubernetes:DefaultEnvFrom*; set true with a newer pin to
+          # exercise the chart's default envFrom wiring.
+          HONUA_GP_SERVER_ENVFROM: "false"
         run: scripts/gp-kubernetes-jobs-smoke.sh
 
       - name: Capture smoke evidence

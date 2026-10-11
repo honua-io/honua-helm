@@ -36,6 +36,17 @@ data:
   {{- range $i, $name := (include "honua.gpJobs.imagePullSecrets" . | fromJsonArray) }}
   ControlPlane__Kubernetes__DefaultImagePullSecrets__{{ $i }}: {{ $name | quote }}
   {{- end }}
+  {{- if eq (include "honua.gpJobs.envFromMode" .) "true" }}
+  # Every Job imports the server's runtime Secret and ConfigMap (and any
+  # extraEnvFrom sources) through envFrom (honua-server >= bebaada00). Only the
+  # names reach the server; the kubelet resolves the values at pod start.
+  {{- range $i, $name := (include "honua.gpJobs.envFromSources" (dict "kind" "secretRef" "context" .) | fromJsonArray) }}
+  ControlPlane__Kubernetes__DefaultEnvFromSecrets__{{ $i }}: {{ $name | quote }}
+  {{- end }}
+  {{- range $i, $name := (include "honua.gpJobs.envFromSources" (dict "kind" "configMapRef" "context" .) | fromJsonArray) }}
+  ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__{{ $i }}: {{ $name | quote }}
+  {{- end }}
+  {{- end }}
   {{- with get $requests "cpu" }}
   ControlPlane__Kubernetes__DefaultCpuRequest: {{ toString . | quote }}
   {{- end }}
@@ -90,6 +101,11 @@ data:
   {{- end }}
   {{ $prefix }}ParameterEntries__{{ $entry }}__Key: {{ "k8s.node_selector" | b64enc | quote }}
   {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ join "," $pairs | b64enc | quote }}
+  {{- $entry = add1 $entry }}
+  {{- end }}
+  {{- if and (eq (include "honua.gpJobs.envFromMode" .) "true") .Values.licensing.licenseSecretRef.name }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Key: {{ "k8s.env.Licensing__LicenseContent.secretKeyRef" | b64enc | quote }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ printf "%s:%s" .Values.licensing.licenseSecretRef.name .Values.licensing.licenseSecretRef.key | b64enc | quote }}
   {{- $entry = add1 $entry }}
   {{- end }}
   {{- $workerEnv := include "honua.gpJobs.workerEnv" . | fromJson }}

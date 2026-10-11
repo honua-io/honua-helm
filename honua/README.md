@@ -391,7 +391,7 @@ geoprocessing:
 
 | Object | Purpose |
 | --- | --- |
-| ConfigMap `<fullname>-gp-kubernetes-jobs` | `ControlPlane__Kubernetes__*` (backend defaults) and `ControlPlane__ExecutionWorkloads__<index>__*` (the GP workload: `TargetKind=KubernetesJob`, `Backend=honua-kubernetes-job`). The server loads it through `envFrom`. |
+| ConfigMap `<fullname>-gp-kubernetes-jobs` | `ControlPlane__Kubernetes__*` (backend defaults, including `DefaultEnvFrom{Secrets,ConfigMaps}`) and `ControlPlane__ExecutionWorkloads__<index>__*` (the GP workload: `TargetKind=KubernetesJob`, `Backend=honua-kubernetes-job`). The server loads it through `envFrom`. |
 | Secret `<fullname>-gp-kubernetes-jobs` | The workload's `ParameterEntries`: `k8s.node_selector` and one `env.<NAME>` per worker environment variable. The server loads it through `envFrom`. |
 | ServiceAccount `<fullname>-gp-job` | The identity the Job pods run as (`ControlPlane:Kubernetes:DefaultServiceAccount`). No token is mounted. |
 | Role + RoleBinding `<fullname>-gp-kubernetes-jobs` | In the Job namespace, for the server's service account: `batch/jobs` create/get/list/watch/delete, `pods` get/list/watch, `pods/log` get. Nothing cluster-wide, no Secrets. |
@@ -420,9 +420,10 @@ The server Deployment also changes in two ways:
 | `activeDeadlineSeconds` | unset | `ControlPlane:Kubernetes:DefaultActiveDeadlineSeconds`. A job's own timeout policy wins. |
 | `nodeSelector` | `{}` | The workload's `k8s.node_selector` parameter |
 | `workload.index` / `id` / `name` | `2` / `geoprocessing-kubernetes-job` / `Geoprocessing (Kubernetes Job)` | `ControlPlane:ExecutionWorkloads:<index>` |
-| `inheritServerEnvironment` | `true` | Copies the server's environment into the worker (see below). |
-| `workerEnv` | `{}` | Extra worker env. An empty value drops an inherited entry. |
-| `allowInlineWorkerSecrets` | `false` | Disposable clusters only (see below). |
+| `envFromServer` | `true` | `ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}`: every Job imports the server's runtime Secret and ConfigMap. Needs honua-server at or after `bebaada00` (server#5796). See below. |
+| `inheritServerEnvironment` | `true` | Copies the server's environment into the worker as literal env (see below). |
+| `workerEnv` | `{}` | Extra literal worker env. Wins over `envFrom`. An empty value clears the variable. |
+| `allowInlineWorkerSecrets` | `false` | Legacy mode, disposable clusters only (see below). |
 
 The server does not read some Job settings, so the chart does not expose them:
 
@@ -431,7 +432,7 @@ The server does not read some Job settings, so the chart does not expose them:
 - The Job spec has no tolerations or affinity. For placement, use
   `nodeSelector` or a namespace default (for example a `PodNodeSelector`
   annotation or a Kyverno policy).
-- The Job spec has no volumes, `envFrom` or `secretKeyRef`.
+- The Job spec has no volumes. Credentials arrive through `envFrom` (see below).
 
 `workload.index` defaults to `2`. The server's `appsettings.json` already
 declares `ControlPlane:ExecutionWorkloads:0` (the local baseline) and `:1` (an
@@ -441,81 +442,146 @@ non-local workload, which is AWS Batch.
 
 ### Worker environment and secrets
 
-The worker composes the same services as the server. It needs the same
+A worker composes the same services as the server, so it needs the same
 database, the Redis job store and the connection-encryption master key.
 Redis-backed non-development deployments also need the operation key-ring
 certificate.
 
-The server builds the Job pod spec itself. It can set only literal env values,
-which it takes from the workload's `env.<NAME>` parameters. It cannot use
-`secretKeyRef`, `envFrom` or volumes. It also writes those literal values into
-the Job object and the durable job record.
+The worker receives these settings in one of two ways, depending on the server
+version and the Job namespace.
 
-So credentials reach the worker only as **cloud secret references**:
-`aws:secretsmanager:<arn>` or `azure:keyvault:<vault>/<secret>`. The worker
-resolves them at startup with the job service account's cloud identity. AWS
-Batch and Lambda workers use the same reference contract.
+#### envFrom mode (default; honua-server at or after `bebaada00`)
+
+**Requires:** a honua-server image at or after `bebaada00`. That commit carries
+server#5796.
+
+**When it applies:** `envFromServer: true` (the default), and the Jobs run in
+the release namespace.
+
+The chart sets
+`ControlPlane__Kubernetes__DefaultEnvFromSecrets__<i>` and
+`ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__<i>`. The server then adds
+container `envFrom` to every Job it launches, so the worker imports the same
+sources the server Deployment mounts:
+
+| Order | Source | Kind |
+| --- | --- | --- |
+| 1 | The runtime Secret: `<fullname>-secret` when `secret.create`, or `secret.name` | Secret |
+| 2 | Each `extraEnvFrom` `secretRef`, with its prefix | Secret |
+| 3 | The ConfigMap: `<fullname>-config` when `config.create`, or `config.name` | ConfigMap |
+| 4 | Each `extraEnvFrom` `configMapRef`, with its prefix | ConfigMap |
+
+The server writes only the Secret and ConfigMap **names** into the Job spec.
+The kubelet resolves the values when the pod starts. The values never appear
+in the Job object, the durable job record or the server logs. This covers:
+
+- a chart-managed Secret with plain credentials;
+- the chart-derived PostgreSQL and Redis connection strings;
+- an existing Secret, such as the release harness's `honua-runtime`.
+
+None of these needs a cloud secret reference any more. Neither the job
+ServiceAccount nor the server's Role needs any Secret permission, because the
+kubelet resolves the Secret.
+
+A few values are copied as literals, because the Deployment sets them directly
+rather than through `envFrom`:
+
+- `Licensing__Mode` and `Licensing__Edition`;
+- the OTLP endpoint and protocol;
+- a `licensing.licenseSecretRef`, which travels as a
+  `k8s.env.Licensing__LicenseContent.secretKeyRef` parameter rather than as a
+  value.
+
+Duplicate keys resolve as follows:
+
+- Explicit `env` entries win over `envFrom`. This covers `workerEnv` and the
+  launch variables the server stamps.
+- Between `envFrom` sources, the later source wins. ConfigMaps come after
+  Secrets in the worker. In the server pod, the Secret comes after the
+  ConfigMap. Avoid setting the same key in both.
+
+An empty `workerEnv` value renders an empty literal, which clears that
+variable in the worker.
+
+**With an older server image:** an image older than `bebaada00` ignores
+`DefaultEnvFrom*`, and its workers start with no database, Redis or
+master-key settings. The chart cannot tell the server version from an image
+digest, so it does not detect this case. The install NOTES state the
+requirement. For an older server, set `envFromServer: false`.
+
+#### Legacy literal mode
+
+**When it applies:** `envFromServer: false`, or the Jobs run in a namespace
+other than the release namespace. Secret references only resolve in the Job's
+own namespace, so a different namespace forces this mode.
+
+The server can set only literal env values on the worker, taken from the
+workload's `env.<NAME>` parameters. It also writes those values into the Job
+object and the durable job record. Credentials therefore reach the worker only
+as **cloud secret references**: `aws:secretsmanager:<arn>` or
+`azure:keyvault:<vault>/<secret>`. The worker resolves them at startup with
+the job service account's cloud identity.
 
 With `inheritServerEnvironment: true`, the worker gets:
 
-- every `config.env` entry except `ASPNETCORE_URLS` and the `ControlPlane__*`
-  settings (the worker neither serves HTTP nor dispatches jobs);
+- every `config.env` entry, except `ASPNETCORE_URLS` and `ControlPlane__*`;
 - the licensing values;
 - each `secret.env` entry whose value is a cloud secret reference.
 
-The chart never copies plain `secret.env` values, the chart-derived PostgreSQL
-and Redis connection strings, or the contents of an existing Secret
-(`secret.create=false`). For those, set references in `workerEnv`.
+The chart never copies these into the worker; for any of them, set references
+in `workerEnv` instead:
+
+- plain `secret.env` values;
+- the chart-derived connection strings;
+- the contents of an existing Secret.
+
+`allowInlineWorkerSecrets: true` copies plain secret values into the Job spec.
+It is for throwaway clusters only, such as kind in CI.
+
+#### Refusals and warnings, both modes
 
 The chart refuses to render when:
 
-- A worker credential is not a reference. Credentials are
-  `ConnectionStrings__*` and any name containing password, master key, API
-  key, token, PKCS#12, secret key, private key, license content or the
-  audit-chain key.
-- The chart manages the Secret (`secret.create=true`) and the worker lacks
-  `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis` or
-  `Security__ConnectionEncryption__MasterKey`. With an existing Secret
-  (`secret.create=false`) the chart cannot see the server's credentials, so it
-  renders, and the install NOTES print a warning naming the missing settings.
-  Every GP Job fails until `workerEnv` carries references for them.
-- The worker would inherit `Operations__SecretChannel__KeyRingCertificatePath`.
+- A literal worker credential in `workerEnv` is not a reference.
+  "Credential" means `ConnectionStrings__*`, or any name containing password,
+  master key, API key, token, PKCS#12, secret key, private key, license
+  content or the audit-chain key. A literal would be written into the Job.
+- The worker would see `Operations__SecretChannel__KeyRingCertificatePath`.
   Job pods cannot mount the file. Supply
-  `Operations__SecretChannel__KeyRingCertificatePkcs12` as a reference
-  instead, and drop the path with
-  `workerEnv.Operations__SecretChannel__KeyRingCertificatePath: ""`.
+  `Operations__SecretChannel__KeyRingCertificatePkcs12` instead, either in the
+  runtime Secret or as a reference. Then clear the path with
+  `workerEnv.Operations__SecretChannel__KeyRingCertificatePath: ""`. In envFrom
+  mode the chart checks `config.env` and the chart-managed `secret.env`. It
+  cannot see inside an existing Secret.
+- In legacy mode only: the chart manages the Secret and the worker lacks
+  `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis` or
+  `Security__ConnectionEncryption__MasterKey`. With an existing Secret, the
+  install NOTES print a warning instead.
 
-The worker serves no HTTP, so it does not need `HONUA_ADMIN_PASSWORD`. The
-chart never copies a plain admin password. The `HONUA_*` launch variables are
-reserved: the chart and the server both reject them in `workerEnv`.
+The `HONUA_*` launch variables are reserved. Both the chart and the server
+reject them in `workerEnv`. Keep them out of imported Secrets too.
 
-`allowInlineWorkerSecrets: true` copies plain secret values into the Job spec,
-including the chart-derived connection strings. Use it only on a throwaway
-cluster with no secret store, such as kind in CI. Anyone who can read Jobs in
-the namespace, or the job store, can then read those values.
-
-The preflight hook accepts cloud secret references but cannot resolve them,
-because it has no cloud identity. For those values it checks presence only and
-skips the TCP and complexity checks. The server validates the resolved values
-at startup.
+The preflight hook accepts cloud secret references. It checks that they are
+present but skips the TCP and complexity checks, because it cannot resolve
+them.
 
 ### Redis
 
 GP on Kubernetes Jobs requires Redis. Redis is the durable job store, and the
 worker refuses to start without it. When the backend is enabled, the chart
 requires `ConnectionStrings__redis` for the server, as it does for MultiNode.
+In envFrom mode, the worker reads the same `ConnectionStrings__redis` as the
+server. The source can be any of these:
 
-- **External Redis** (ElastiCache, MemoryDB, Azure Cache): set
-  `ConnectionStrings__redis`. TLS and auth go in the connection string, for
-  example `<primary endpoint>:6379,password=<token>,ssl=true`. A secret
-  reference in `secret.env.ConnectionStrings__redis` serves the server and the
-  workers. A plain string in `secret.env` or an existing Secret serves the
-  server only; give the workers a reference in
-  `workerEnv.ConnectionStrings__redis`.
-- **Chart-managed Redis** (`redis.enabled`): the derived connection string
-  carries the password inline. It reaches the workers only with
-  `allowInlineWorkerSecrets`. Otherwise, store the connection string in a
-  secret manager and set its reference in `workerEnv.ConnectionStrings__redis`.
+- **External Redis** (ElastiCache, MemoryDB, Azure Cache): put the connection
+  string in the runtime Secret. TLS and auth go in the string, for example
+  `<primary endpoint>:6379,password=<token>,ssl=true`.
+- **A cloud secret reference** to that connection string.
+- **Chart-managed Redis** (`redis.enabled`): the chart derives the connection
+  string into its Secret.
+
+In legacy mode, the worker needs a reference in
+`workerEnv.ConnectionStrings__redis` unless `secret.env` already holds one.
 
 ### EKS: mapping the honua-iac `aws-eks` outputs
 
@@ -538,7 +604,7 @@ Job RBAC.
 | `gp_job_service_account_annotations` | `geoprocessing.kubernetesJobs.serviceAccount.annotations` |
 | `gp_job_image` | Leave empty to run the chart's server image. Otherwise set `geoprocessing.kubernetesJobs.image.*`. |
 | `chart_config_env` | `config.env`, as is. It holds no credentials. It carries `ControlPlane__Kubernetes__{DefaultNamespace,DefaultServiceAccount,DefaultImage}`, the CORS origins, the operation policy rules and operator secret references (key ring, audit-chain key). When the matching `geoprocessing.kubernetesJobs` value is empty, the chart takes the Job namespace, service account name and image from those `ControlPlane__Kubernetes__*` entries, so the ServiceAccount and RBAC it renders match what the server is told. `config.env` loads after the chart's own ConfigMap, so its entries win on the server. |
-| `honua_server_environment` | The complete environment: `chart_config_env` plus the credential references. Put the credential references in `secret.env`, or in `geoprocessing.kubernetesJobs.workerEnv` when the credentials themselves live in an existing Secret (`secret.create=false`). The worker needs `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis` and `Security__ConnectionEncryption__MasterKey`. |
+| `honua_server_environment` | The complete environment: `chart_config_env` plus the credential references. In envFrom mode, the workers read credentials from the same runtime Secret as the server. That can be the chart-managed `secret.env` (plain values or references) or an existing Secret (`secret.create=false`, as the release harness does), so no worker-specific wiring is needed. In legacy mode, put the references in `secret.env` or `geoprocessing.kubernetesJobs.workerEnv`. |
 | `gp_job_data_bucket_arn` | The IAM roles grant the worker and server S3 access. Set the server's storage settings in `config.env`; the worker inherits them. |
 | `workload_identity_mode` | `pod_identity` (the default): no annotations. The EKS Pod Identity associations name the service accounts, so the names must match. `irsa`: copy the `*_service_account_annotations` outputs. Both `annotations` values are optional and default to `{}`. |
 

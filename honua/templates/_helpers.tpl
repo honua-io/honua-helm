@@ -472,11 +472,62 @@ true
        precedence, lowest first: config.env, licensing values, reference-valued
        (or, with allowInlineWorkerSecrets, all) secret.env entries and the
        chart-derived Redis/PostgreSQL connection strings, then workerEnv. */ -}}
+{{- /* envFrom mode (honua-server >= bebaada00, server#5796): the server
+       renders ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps} as
+       container envFrom on every Job, so workers read the same Secret and
+       ConfigMap the server mounts and the kubelet resolves the values. The
+       references must name objects in the Job namespace, so the mode applies
+       only when the Jobs run in the release namespace. */ -}}
+{{- define "honua.gpJobs.envFromMode" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $on := eq (toString (ternary true (get $gp "envFromServer") (not (hasKey $gp "envFromServer")))) "true" -}}
+{{- if and $on (eq (include "honua.gpJobs.namespace" .) .Release.Namespace) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* "<name>" or "<name>:<prefix>" entries for one envFrom kind
+       ("secretRef" or "configMapRef"), in the server Deployment's order. */ -}}
+{{- define "honua.gpJobs.envFromSources" -}}
+{{- $kind := .kind -}}
+{{- $root := .context -}}
+{{- $names := list -}}
+{{- if eq $kind "secretRef" -}}
+{{- if or $root.Values.secret.create $root.Values.secret.name -}}
+{{- $names = append $names (include "honua.secretName" $root) -}}
+{{- end -}}
+{{- else -}}
+{{- if or $root.Values.config.create $root.Values.config.name -}}
+{{- $names = append $names (include "honua.configmapName" $root) -}}
+{{- end -}}
+{{- end -}}
+{{- range ($root.Values.extraEnvFrom | default list) -}}
+{{- $ref := get . $kind -}}
+{{- if and $ref (get $ref "name") -}}
+{{- $entry := toString (get $ref "name") -}}
+{{- with get . "prefix" -}}{{- $entry = printf "%s:%s" $entry . -}}{{- end -}}
+{{- $names = append $names $entry -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $names -}}
+{{- end -}}
+
 {{- define "honua.gpJobs.workerEnv" -}}
 {{- $gp := include "honua.gpJobs.values" . | fromJson -}}
 {{- $allowInline := eq (toString (default false (get $gp "allowInlineWorkerSecrets"))) "true" -}}
+{{- $envFromMode := eq (include "honua.gpJobs.envFromMode" .) "true" -}}
 {{- $env := dict -}}
 {{- if eq (toString (ternary true (get $gp "inheritServerEnvironment") (not (hasKey $gp "inheritServerEnvironment")))) "true" -}}
+{{- if $envFromMode -}}
+{{- /* The Secret and ConfigMap arrive through envFrom; only the values the
+       Deployment sets directly (not through envFrom) are copied. */ -}}
+{{- $_ := set $env "Licensing__Mode" (toString .Values.licensing.mode) -}}
+{{- with .Values.licensing.edition -}}
+{{- $_ := set $env "Licensing__Edition" (toString .) -}}
+{{- end -}}
+{{- with trim (toString (default "" (dig "otlpEndpoint" "" (.Values.observability | default dict)))) -}}
+{{- $_ := set $env "OTEL_EXPORTER_OTLP_ENDPOINT" . -}}
+{{- $_ := set $env "OTEL_EXPORTER_OTLP_PROTOCOL" (toString (default "grpc" (dig "otlpProtocol" "grpc" ($.Values.observability | default dict)))) -}}
+{{- end -}}
+{{- else -}}
 {{- if .Values.config.create -}}
 {{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $env) -}}
 {{- end -}}
@@ -503,6 +554,7 @@ true
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
 {{- /* The server's listener and its control-plane settings do not apply to a
        worker, which neither serves HTTP nor dispatches jobs. */ -}}
 {{- $_ := unset $env "ASPNETCORE_URLS" -}}
@@ -511,10 +563,16 @@ true
 {{- $_ := unset $env $key -}}
 {{- end -}}
 {{- end -}}
-{{- /* An explicit empty workerEnv value drops an inherited entry. */ -}}
+{{- /* An explicit empty workerEnv value clears the variable: it drops an
+       inherited literal, and in envFrom mode it renders an empty literal,
+       which wins over the same key from envFrom. */ -}}
 {{- range $key, $value := (get $gp "workerEnv" | default dict) -}}
 {{- if or (eq (toString $value) "") (eq (toString $value) "<nil>") -}}
+{{- if $envFromMode -}}
+{{- $_ := set $env $key "" -}}
+{{- else -}}
 {{- $_ := unset $env $key -}}
+{{- end -}}
 {{- else -}}
 {{- $_ := set $env $key (toString $value) -}}
 {{- end -}}

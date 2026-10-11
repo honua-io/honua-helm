@@ -78,11 +78,17 @@ semantics.
 {{- $workerEnv := include "honua.gpJobs.workerEnv" . | fromJson }}
 {{- $missing := list }}
 {{- range $required := list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey" }}
-{{- if not (hasKey $workerEnv $required) }}{{ $missing = append $missing $required }}{{ end }}
+{{- if and (ne (include "honua.gpJobs.envFromMode" $) "true") (not (hasKey $workerEnv $required)) }}{{ $missing = append $missing $required }}{{ end }}
 {{- end }}
 
 Geoprocessing on Kubernetes Jobs is enabled: async GP runs as Jobs in namespace
 {{ include "honua.gpJobs.namespace" . }} as service account {{ include "honua.gpJobs.serviceAccountName" . }}.
+{{- if eq (include "honua.gpJobs.envFromMode" .) "true" }}
+Workers import {{ join ", " (include "honua.gpJobs.envFromSources" (dict "kind" "secretRef" "context" .) | fromJsonArray) | default "no Secret" }} and {{ join ", " (include "honua.gpJobs.envFromSources" (dict "kind" "configMapRef" "context" .) | fromJsonArray) | default "no ConfigMap" }}
+through envFrom. This needs a honua-server image at or after bebaada00
+(server#5796); an older server ignores ControlPlane__Kubernetes__DefaultEnvFrom*
+and its workers start without database, Redis or master-key settings.
+{{- end }}
 {{- if $missing }}
 
 WARNING: the GP worker environment has no {{ join ", " $missing }}.

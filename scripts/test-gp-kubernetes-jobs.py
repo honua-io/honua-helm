@@ -3,7 +3,8 @@
 
 Covers the off/on contract, the namespaced RBAC, the server-side
 ControlPlane:Kubernetes / ExecutionWorkloads wiring, the worker environment
-projection (secret references only, unless explicitly allowed inline), the
+projection (envFrom of the server's Secret and ConfigMap on honua-server >=
+bebaada00; literal secret references in the legacy mode), the
 render-time refusals, and the reference-aware preflight hook script.
 """
 import base64
@@ -104,7 +105,38 @@ assert 'checksum/gp-kubernetes-jobs' in deployment['spec']['template']['metadata
 assert preflight_env(on, 'HONUA_PREFLIGHT_REDIS_REQUIRED') == 'true'
 
 # --- On: worker environment carries references, never plain credentials.
+# envFrom mode (default, server#5796): every Job imports the server's Secret and ConfigMap by
+# name; only the values the Deployment sets directly travel as literals.
+assert config['ControlPlane__Kubernetes__DefaultEnvFromSecrets__0'] == 'honua-honua-secret'
+assert config['ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__0'] == 'honua-honua-config'
+assert 'ControlPlane__Kubernetes__DefaultEnvFromSecrets__1' not in config
 entries = workload_entries(on)
+assert entries == {'k8s.node_selector': 'kubernetes.io/arch=amd64', 'env.Licensing__Mode': 'Disabled'}, entries
+
+# The chart-managed Secret may now hold plain credentials: workers read it through envFrom.
+plain_secret = helm('--set', 'geoprocessing.kubernetesJobs.enabled=true', values='honua/ci-values/base.yaml')
+assert find(plain_secret, 'ConfigMap', '-gp-kubernetes-jobs')['data'][
+    'ControlPlane__Kubernetes__DefaultEnvFromSecrets__0'] == 'honua-honua-secret'
+plain_entries = workload_entries(plain_secret)
+assert not [key for key in plain_entries if 'ConnectionStrings' in key or 'MasterKey' in key or 'PASSWORD' in key]
+
+# extraEnvFrom sources follow, with their prefixes; the license Secret key travels as a secretKeyRef.
+extra = helm('--set', 'extraEnvFrom[0].secretRef.name=platform-db',
+             '--set', 'extraEnvFrom[1].configMapRef.name=platform-cfg',
+             '--set', 'extraEnvFrom[1].prefix=PLATFORM_',
+             '--set', 'licensing.licenseSecretRef.name=honua-license')
+extra_config = find(extra, 'ConfigMap', '-gp-kubernetes-jobs')['data']
+assert extra_config['ControlPlane__Kubernetes__DefaultEnvFromSecrets__1'] == 'platform-db'
+assert extra_config['ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__1'] == 'platform-cfg:PLATFORM_'
+assert workload_entries(extra)['k8s.env.Licensing__LicenseContent.secretKeyRef'] == 'honua-license:license.json'
+otel = workload_entries(helm('--set-string', 'observability.otlpEndpoint=http://otel:4317'))
+assert otel['env.OTEL_EXPORTER_OTLP_ENDPOINT'] == 'http://otel:4317'
+assert otel['env.OTEL_EXPORTER_OTLP_PROTOCOL'] == 'grpc'
+
+# Legacy mode (envFromServer=false, or Jobs in another namespace): literal secret references.
+legacy = helm('--set', 'geoprocessing.kubernetesJobs.envFromServer=false')
+assert 'ControlPlane__Kubernetes__DefaultEnvFromSecrets__0' not in find(legacy, 'ConfigMap', '-gp-kubernetes-jobs')['data']
+entries = workload_entries(legacy)
 assert entries['k8s.node_selector'] == 'kubernetes.io/arch=amd64'
 assert entries['env.ConnectionStrings__DefaultConnection'].startswith('aws:secretsmanager:')
 assert entries['env.ConnectionStrings__redis'].startswith('aws:secretsmanager:')
@@ -150,6 +182,9 @@ assert len(find(helm('--set', 'fullnameOverride=' + 'g' * 63), 'ServiceAccount',
 
 # --- A separate Job namespace: identity + RBAC land there, the subject stays in the release namespace.
 other = helm('--set', 'geoprocessing.kubernetesJobs.namespace=gp-jobs', namespace='honua-system')
+# The release's Secret is not in gp-jobs, so the chart falls back to literal references there.
+assert 'ControlPlane__Kubernetes__DefaultEnvFromSecrets__0' not in find(other, 'ConfigMap', '-gp-kubernetes-jobs')['data']
+assert workload_entries(other)['env.ConnectionStrings__redis'].startswith('aws:secretsmanager:')
 assert find(other, 'ConfigMap', '-gp-kubernetes-jobs')['data'][
     'ControlPlane__Kubernetes__DefaultNamespace'] == 'gp-jobs'
 for kind in ('ServiceAccount', 'Role', 'RoleBinding'):
@@ -196,8 +231,11 @@ custom = workload_entries(helm(
     '--set-string', 'geoprocessing.kubernetesJobs.workerEnv.Deployment__Mode=',
     '--set', 'geoprocessing.kubernetesJobs.nodeSelector=null'))
 assert custom['env.FileStorage__Provider'] == 'AwsS3'
-assert 'env.Deployment__Mode' not in custom, 'an empty workerEnv value drops the inherited entry'
+assert custom['env.Deployment__Mode'] == '', 'in envFrom mode an empty value renders a clearing literal'
 assert 'k8s.node_selector' not in custom
+legacy_custom = workload_entries(helm('--set', 'geoprocessing.kubernetesJobs.envFromServer=false',
+    '--set-string', 'geoprocessing.kubernetesJobs.workerEnv.Deployment__Mode='))
+assert 'env.Deployment__Mode' not in legacy_custom, 'in legacy mode an empty value drops the inherited entry'
 no_inherit = helm(
     '--set', 'geoprocessing.kubernetesJobs.inheritServerEnvironment=false',
     '--set-string', 'geoprocessing.kubernetesJobs.workerEnv.ConnectionStrings__DefaultConnection=azure:keyvault:kv/db',
@@ -216,18 +254,20 @@ assert 'must be an aws:secretsmanager:' in helm(
 assert 'launch variable' in helm(
     '--set-string', 'geoprocessing.kubernetesJobs.workerEnv.HONUA_OPERATION_ID=x', succeeds=False)
 assert 'GP Job workers need ConnectionStrings__DefaultConnection' in helm(
-    '--set', 'geoprocessing.kubernetesJobs.enabled=true', values='honua/ci-values/base.yaml', succeeds=False)
+    '--set', 'geoprocessing.kubernetesJobs.enabled=true', '--set', 'geoprocessing.kubernetesJobs.envFromServer=false',
+    values='honua/ci-values/base.yaml', succeeds=False)
 assert 'GP Job workers need ConnectionStrings__redis' in helm(
-    '--set-string', 'secret.env.ConnectionStrings__redis=', succeeds=False)
-assert 'cannot mount files' in helm(
-    '--set-string', 'config.env.Operations__SecretChannel__KeyRingCertificatePath=/etc/honua/keyring.pfx',
-    succeeds=False)
-helm('--set-string', 'config.env.Operations__SecretChannel__KeyRingCertificatePath=/etc/honua/keyring.pfx',
-     '--set-string', 'geoprocessing.kubernetesJobs.workerEnv.Operations__SecretChannel__KeyRingCertificatePath=')
+    '--set', 'geoprocessing.kubernetesJobs.envFromServer=false', '--set-string', 'secret.env.ConnectionStrings__redis=', succeeds=False)
+for mode in ((), ('--set', 'geoprocessing.kubernetesJobs.envFromServer=false',)):
+    assert 'cannot mount files' in helm(
+        *mode, '--set-string', 'config.env.Operations__SecretChannel__KeyRingCertificatePath=/etc/honua/keyring.pfx',
+        succeeds=False)
+    helm(*mode, '--set-string', 'config.env.Operations__SecretChannel__KeyRingCertificatePath=/etc/honua/keyring.pfx',
+         '--set-string', 'geoprocessing.kubernetesJobs.workerEnv.Operations__SecretChannel__KeyRingCertificatePath=')
 assert 'index' in helm('--set', 'geoprocessing.kubernetesJobs.workload.index=1', succeeds=False)
 assert 'namespace' in helm('--set', 'geoprocessing.kubernetesJobs.namespace=Bad_NS', succeeds=False)
-assert 'node_selector' in helm('--set-string', 'geoprocessing.kubernetesJobs.nodeSelector.pool=a\\,b',
-                               succeeds=False) or True
+assert 'nodeSelector' in helm('--set-string', 'geoprocessing.kubernetesJobs.nodeSelector.pool=a\\,b',
+                              succeeds=False)
 
 # --- The release harness contract (honua-release e2e/targets/aws_eks.py): credentials in an
 # existing Secret, honua-iac chart_config_env in config.env, Pod Identity (no annotations).
@@ -246,21 +286,22 @@ assert harness_config['ControlPlane__Kubernetes__DefaultServiceAccount'] == 'hon
 harness_sa = find(harness, 'ServiceAccount', '-gp-job')
 assert harness_sa['metadata']['name'] == 'honua-gp-job' and 'annotations' not in harness_sa['metadata']
 assert find(harness, 'RoleBinding', '-gp-kubernetes-jobs')['metadata']['namespace'] == 'honua-cert'
+# The harness's existing Secret and the chart_config_env ConfigMap reach every worker by name.
+assert harness_config['ControlPlane__Kubernetes__DefaultEnvFromSecrets__0'] == 'honua-runtime'
+assert harness_config['ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__0'] == 'honua-config'
 harness_entries = workload_entries(harness)
-assert not [key for key in harness_entries if key.startswith('env.ControlPlane__')]
-assert harness_entries['env.Operations__SecretChannel__KeyRingCertificatePkcs12'] == 'aws:secretsmanager:arn:kr'
-assert 'env.ConnectionStrings__DefaultConnection' not in harness_entries
+assert set(harness_entries) == {'env.Licensing__Mode'}, harness_entries
 # Explicit values still win over chart_config_env.
 assert find(helm(*harness_args, '--set-string', 'geoprocessing.kubernetesJobs.serviceAccount.name=other',
                  values=None, namespace='honua-cert'), 'ServiceAccount', 'other')
 
 # --- Disposable clusters: inline credentials only on explicit opt-in.
-inline = workload_entries(helm('--set', 'geoprocessing.kubernetesJobs.enabled=true',
+inline = workload_entries(helm('--set', 'geoprocessing.kubernetesJobs.enabled=true', '--set', 'geoprocessing.kubernetesJobs.envFromServer=false',
                                '--set', 'geoprocessing.kubernetesJobs.allowInlineWorkerSecrets=true',
                                values='honua/ci-values/base.yaml'))
 assert inline['env.ConnectionStrings__DefaultConnection'].startswith('Host=postgres;')
 assert inline['env.ConnectionStrings__redis'] == 'redis:6379,password=ci-redis-password'
-derived = workload_entries(helm('--set', 'geoprocessing.kubernetesJobs.enabled=true',
+derived = workload_entries(helm('--set', 'geoprocessing.kubernetesJobs.enabled=true', '--set', 'geoprocessing.kubernetesJobs.envFromServer=false',
                                 '--set', 'geoprocessing.kubernetesJobs.allowInlineWorkerSecrets=true',
                                 values='honua/ci-values/redis-auth.yaml'))
 assert derived['env.ConnectionStrings__redis'].startswith('honua-honua-redis:6379,password=')
