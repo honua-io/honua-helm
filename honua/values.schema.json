@@ -88,6 +88,95 @@
         }
       }
     },
+    "geoprocessing": {
+      "type": "object",
+      "description": "Geoprocessing execution settings.",
+      "properties": {
+        "kubernetesJobs": {
+          "type": "object",
+          "description": "Run asynchronous geoprocessing as Kubernetes Jobs through honua-server's honua-kubernetes-job batch compute backend (preview). See honua/README.md \"Geoprocessing on Kubernetes Jobs\".",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespace": { "type": "string", "pattern": "^$|^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repository": { "type": "string" },
+                "tag": { "type": "string" },
+                "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
+                "pullPolicy": { "enum": ["", "Always", "IfNotPresent", "Never"] },
+                "maxSupportedContractVersion": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "imagePullSecrets": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+                ]
+              }
+            },
+            "serviceAccount": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "create": { "type": "boolean" },
+                "name": { "type": "string" },
+                "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+              }
+            },
+            "rbac": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "create": { "type": "boolean" } }
+            },
+            "resources": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": { "cpu": { "type": ["string", "number"] }, "memory": { "type": "string" } }
+                },
+                "limits": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": { "cpu": { "type": ["string", "number"] }, "memory": { "type": "string" } }
+                }
+              }
+            },
+            "ttlSecondsAfterFinished": { "type": ["integer", "null"], "minimum": 0 },
+            "activeDeadlineSeconds": { "type": ["integer", "null"], "minimum": 1 },
+            "nodeSelector": {
+              "type": "object",
+              "description": "Rendered as the workload's k8s.node_selector (comma-separated key=value), so keys and values must not contain ',' or '='.",
+              "propertyNames": { "pattern": "^[^,=]+$" },
+              "additionalProperties": { "type": "string", "pattern": "^[^,=]*$" }
+            },
+            "workload": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "index": { "type": "integer", "minimum": 2 },
+                "id": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 }
+              }
+            },
+            "inheritServerEnvironment": { "type": "boolean" },
+            "workerEnv": {
+              "type": "object",
+              "description": "Worker environment overrides. Credentials must be aws:secretsmanager: or azure:keyvault: references; an empty value drops an inherited entry.",
+              "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+            },
+            "allowInlineWorkerSecrets": { "type": "boolean" }
+          }
+        }
+      }
+    },
     "strategy": {
       "type": "object",
       "properties": {

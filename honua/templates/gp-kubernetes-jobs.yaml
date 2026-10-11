@@ -1,0 +1,161 @@
+{{- if eq (include "honua.gpJobs.enabled" .) "true" }}
+{{- $gp := include "honua.gpJobs.values" . | fromJson }}
+{{- $namespace := include "honua.gpJobs.namespace" . }}
+{{- $resources := get $gp "resources" | default dict }}
+{{- $requests := get $resources "requests" | default dict }}
+{{- $limits := get $resources "limits" | default dict }}
+{{- $img := get $gp "image" | default dict }}
+{{- $workload := get $gp "workload" | default dict }}
+{{- $index := toString (get $workload "index") }}
+{{- $prefix := printf "ControlPlane__ExecutionWorkloads__%s__" $index }}
+{{- $sa := get $gp "serviceAccount" | default dict }}
+{{- $rbac := get $gp "rbac" | default dict }}
+# Server-side settings for the Kubernetes Job batch compute backend
+# (honua-server ControlPlane:Kubernetes, KubernetesExecutionOptions) and the
+# execution workload that routes geoprocessing to it. Loaded by the server
+# Deployment via envFrom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.gpJobs.resourceName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+data:
+  # In-cluster discovery of the API server, token and CA from the server pod's
+  # projected service account (the chart mounts its token when this is on).
+  ControlPlane__Kubernetes__InClusterAutoDetect: "true"
+  ControlPlane__Kubernetes__DefaultNamespace: {{ $namespace | quote }}
+  ControlPlane__Kubernetes__DefaultImage: {{ include "honua.gpJobs.image" . | quote }}
+  ControlPlane__Kubernetes__DefaultImageMaxSupportedContractVersion: {{ toString (default 1 (get $img "maxSupportedContractVersion")) | quote }}
+  ControlPlane__Kubernetes__DefaultImagePullPolicy: {{ include "honua.gpJobs.imagePullPolicy" . | quote }}
+  ControlPlane__Kubernetes__DefaultServiceAccount: {{ include "honua.gpJobs.serviceAccountName" . | quote }}
+  {{- range $i, $name := (include "honua.gpJobs.imagePullSecrets" . | fromJsonArray) }}
+  ControlPlane__Kubernetes__DefaultImagePullSecrets__{{ $i }}: {{ $name | quote }}
+  {{- end }}
+  {{- with get $requests "cpu" }}
+  ControlPlane__Kubernetes__DefaultCpuRequest: {{ toString . | quote }}
+  {{- end }}
+  {{- with get $limits "cpu" }}
+  ControlPlane__Kubernetes__DefaultCpuLimit: {{ toString . | quote }}
+  {{- end }}
+  {{- with get $requests "memory" }}
+  ControlPlane__Kubernetes__DefaultMemoryRequest: {{ toString . | quote }}
+  {{- end }}
+  {{- with get $limits "memory" }}
+  ControlPlane__Kubernetes__DefaultMemoryLimit: {{ toString . | quote }}
+  {{- end }}
+  {{- $ttlSecondsAfterFinished := toString (get $gp "ttlSecondsAfterFinished") }}
+  {{- if and $ttlSecondsAfterFinished (ne $ttlSecondsAfterFinished "<nil>") }}
+  ControlPlane__Kubernetes__DefaultTtlSecondsAfterFinished: {{ $ttlSecondsAfterFinished | quote }}
+  {{- end }}
+  {{- $activeDeadlineSeconds := toString (get $gp "activeDeadlineSeconds") }}
+  {{- if and $activeDeadlineSeconds (ne $activeDeadlineSeconds "<nil>") }}
+  ControlPlane__Kubernetes__DefaultActiveDeadlineSeconds: {{ $activeDeadlineSeconds | quote }}
+  {{- end }}
+  # The geoprocessing workload: GeoprocessingJobDispatcher routes GP to the
+  # first non-local geoprocessing workload, resolved to this backend by its
+  # canonical (Backend, TargetKind).
+  {{ $prefix }}WorkloadId: {{ get $workload "id" | quote }}
+  {{ $prefix }}Kind: "Geoprocessing"
+  {{ $prefix }}TargetKind: "KubernetesJob"
+  {{ $prefix }}Backend: "honua-kubernetes-job"
+  {{ $prefix }}WorkloadName: {{ default "Geoprocessing (Kubernetes Job)" (get $workload "name") | quote }}
+---
+# Workload parameters: the Job node selector and the worker environment
+# (env.<NAME> passthrough, stamped by the server as literal Job env). A Secret
+# because allowInlineWorkerSecrets may put plain credentials here; by default
+# every credential is a cloud secret reference.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "honua.gpJobs.resourceName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+type: Opaque
+data:
+  {{- $entry := 0 }}
+  {{- $nodeSelector := get $gp "nodeSelector" | default dict }}
+  {{- if $nodeSelector }}
+  {{- $pairs := list }}
+  {{- range $key := keys $nodeSelector | sortAlpha }}
+  {{- $pairs = append $pairs (printf "%s=%s" $key (toString (get $nodeSelector $key))) }}
+  {{- end }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Key: {{ "k8s.node_selector" | b64enc | quote }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ join "," $pairs | b64enc | quote }}
+  {{- $entry = add1 $entry }}
+  {{- end }}
+  {{- $workerEnv := include "honua.gpJobs.workerEnv" . | fromJson }}
+  {{- range $key := keys $workerEnv | sortAlpha }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Key: {{ printf "env.%s" $key | b64enc | quote }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ get $workerEnv $key | b64enc | quote }}
+  {{- $entry = add1 $entry }}
+  {{- end }}
+{{- if eq (toString (ternary true (get $sa "create") (not (hasKey $sa "create")))) "true" }}
+---
+# The identity GP Job pods run as. Bind the worker's cloud identity (EKS Pod
+# Identity association or IRSA annotation) to it. The worker never calls the
+# Kubernetes API, so no token is mounted.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "honua.gpJobs.serviceAccountName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing-job
+  {{- with get $sa "annotations" }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+{{- end }}
+{{- if eq (toString (ternary true (get $rbac "create") (not (hasKey $rbac "create")))) "true" }}
+---
+# What KubernetesJobBatchComputeBackend needs in the Job namespace: create,
+# observe and cancel (cascade-delete) batch/v1 Jobs, and read their Pods for
+# failure detail. Nothing cluster-wide, no Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "honua.gpJobs.resourceName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "honua.gpJobs.resourceName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "honua.gpJobs.resourceName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "honua.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

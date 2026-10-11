@@ -1,0 +1,22 @@
+# GP on Kubernetes Jobs, EKS-shaped: every credential is an
+# aws:secretsmanager: reference the server and the GP job service account
+# resolve with their workload identities (honua-iac aws-eks
+# honua_server_environment). The ARNs are synthetic.
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/honua-ci-server
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/db-connection"
+    HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/master-key"
+    ConnectionStrings__redis: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/redis-connection"
+    Operations__SecretChannel__KeyRingCertificatePkcs12: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/key-ring"
+geoprocessing:
+  kubernetesJobs:
+    enabled: true
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/honua-ci-gp-job
+    nodeSelector:
+      kubernetes.io/arch: amd64

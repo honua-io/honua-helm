@@ -46,6 +46,7 @@ helm upgrade --install honua ./honua \
 | Autoscaling (`autoscaling.enabled=true`) | `config.env.Deployment__Mode` must be `MultiNode` (not `SingleInstance`); MultiNode also requires `ConnectionStrings__redis` and a shared cloud `FileStorage:Provider` of `AwsS3` or `AzureBlob` (`Local` is rejected) | `honua/templates/validations.yaml` (chart-time); MultiNode runtime requirements enforced by Honua Server `ConfigurationValidationService` |
 | RollingUpdate (`strategy.type=RollingUpdate`) | At least one of `strategy.rollingUpdate.maxSurge` or `strategy.rollingUpdate.maxUnavailable` must be non-zero | `honua/values.schema.json` |
 | Deploy target registration (`controlPlane.deployTarget.enabled=true`, the default) | `controlPlane.deployTarget.backend` must be `honua-gitops-kubernetes`; resolved `targetId`/`targetName`/`environment` must be non-empty | `honua/values.schema.json`, `honua/templates/validations.yaml` |
+| GP on Kubernetes Jobs (`geoprocessing.kubernetesJobs.enabled=true`) | `ConnectionStrings__redis` for the server (Redis is the job store). With a chart-managed Secret, the worker environment must contain `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis`, and `Security__ConnectionEncryption__MasterKey`. With an existing Secret, the install NOTES warn instead. Every worker credential must be an `aws:secretsmanager:` or `azure:keyvault:` reference unless `allowInlineWorkerSecrets=true`. `workload.index` must be `>= 2`. There must be no `KeyRingCertificatePath` in the worker environment. Reserved `HONUA_*` launch variables are rejected. | `honua/values.schema.json`, `honua/templates/validations.yaml`; the RBAC check runs at install time (`gp-rbac-check` hook) |
 
 The PostgreSQL subchart is development-only. It does not include PostGIS, so
 production deployments must use an external PostGIS-enabled database and provide
@@ -191,6 +192,7 @@ setting. See the
 | Extensions | `extraEnv`, `extraEnvFrom`, `extraVolumes`, `extraVolumeMounts` | Use for External Secrets Operator, CSI Secret Store, trust bundles, or Downward API. |
 | Dependencies | `postgresql.*`, `redis.*` | PostgreSQL subchart is dev-only; Redis can be chart-managed for smoke/dev or supplied externally for non-development durable event storage. |
 | Control plane | `controlPlane.deployTarget.*` | Registers this Deployment as a control-plane deploy target (see `docs/contract.md#deploy-target-registration`). `enabled=false` opts out; the registered backend always advertises manual-recovery-only rollback. |
+| Geoprocessing | `geoprocessing.kubernetesJobs.*` | Preview. Runs asynchronous GP as Kubernetes Jobs through the server's `honua-kubernetes-job` backend. Renders a namespaced Role and RoleBinding, a job ServiceAccount, the `ControlPlane__Kubernetes__*` and `ControlPlane__ExecutionWorkloads__<index>__*` server env, and a post-install RBAC check. Mounts the server's service account token. Worker credentials travel as cloud secret references. See `honua/README.md` "Geoprocessing on Kubernetes Jobs". |
 
 ## Environment Overlays
 
