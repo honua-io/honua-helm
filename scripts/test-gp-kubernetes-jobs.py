@@ -8,6 +8,8 @@ bebaada00; literal secret references in the legacy mode), the
 render-time refusals, and the reference-aware preflight hook script.
 """
 import base64
+import math
+import runpy
 import os
 from pathlib import Path
 import shutil
@@ -340,3 +342,42 @@ if sh:
     assert weak.returncode != 0 and 'at least 16 characters' in weak.stderr, weak.stderr
 
 print('gp kubernetes jobs render tests passed')
+
+# Runtime/image pairing must be explicit for native promotion.
+native = helm('--set', 'geoprocessing.kubernetesJobs.workload.runtimeProfile=native',
+              '--set', 'geoprocessing.kubernetesJobs.image.repository=local/heavy-worker',
+              '--set', 'geoprocessing.kubernetesJobs.image.tag=dev')
+assert find(native, 'ConfigMap', '-gp-kubernetes-jobs')['data'][PREFIX + 'RuntimeProfile'] == 'native'
+assert find(on, 'ConfigMap', '-gp-kubernetes-jobs')['data'][PREFIX + 'RuntimeProfile'] == 'managed'
+helm('--set', 'geoprocessing.kubernetesJobs.workload.runtimeProfile=unknown', succeeds=False)
+
+# The semantic oracles reject plausible-but-wrong output payloads.
+
+buffer_oracle = runpy.run_path(str(ROOT / 'scripts/validate-gp-buffer.py'))['validate']
+native_oracle = runpy.run_path(str(ROOT / 'scripts/validate-gp-native.py'))['validate']
+ring = [[500 * math.cos(i * math.pi / 32), 500 * math.sin(i * math.pi / 32)] for i in range(64)]
+ring.append(ring[0])
+output = {'outputFeatureLayer': {'value': {
+    'type': 'Feature', 'geometry': {'type': 'Polygon', 'coordinates': [ring]}, 'properties': {},
+}}}
+assert buffer_oracle(output)['distance'] == 500
+output['outputFeatureLayer']['value']['geometry']['coordinates'] = [[[x * 2, y * 2] for x, y in ring]]
+try:
+    buffer_oracle(output)
+except ValueError:
+    pass
+else:
+    raise AssertionError('incorrect buffer passed the smoke oracle')
+features = [{'type': 'Feature', 'geometry': {'type': 'Point', 'coordinates': xyz},
+             'properties': {'name': name, 'value': value}}
+            for name, value, xyz in [('alpha', '17', [12.25, -4.5, 7.75]), ('beta', '29', [-23.5, 8.25, -2.5])]]
+output = {'converted': {'mediaType': 'application/geo+json', 'value': {'type': 'FeatureCollection', 'features': features}}}
+assert native_oracle(output)['featureCount'] == 2
+features[0]['properties']['value'] = '999'
+try:
+    native_oracle(output)
+except ValueError:
+    pass
+else:
+    raise AssertionError('lost native attributes passed the smoke oracle')
+print('gp runtime and output oracle tests passed')

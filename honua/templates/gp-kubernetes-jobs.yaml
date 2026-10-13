@@ -68,12 +68,13 @@ data:
   ControlPlane__Kubernetes__DefaultActiveDeadlineSeconds: {{ $activeDeadlineSeconds | quote }}
   {{- end }}
   # The geoprocessing workload: GeoprocessingJobDispatcher routes GP to the
-  # first non-local geoprocessing workload, resolved to this backend by its
+  # first compatible non-local geoprocessing workload, resolved to this backend by its
   # canonical (Backend, TargetKind).
   {{ $prefix }}WorkloadId: {{ get $workload "id" | quote }}
   {{ $prefix }}Kind: "Geoprocessing"
   {{ $prefix }}TargetKind: "KubernetesJob"
   {{ $prefix }}Backend: "honua-kubernetes-job"
+  {{ $prefix }}RuntimeProfile: {{ default "managed" (get $workload "runtimeProfile") | quote }}
   {{ $prefix }}WorkloadName: {{ default "Geoprocessing (Kubernetes Job)" (get $workload "name") | quote }}
 ---
 # Workload parameters: the Job node selector and the worker environment

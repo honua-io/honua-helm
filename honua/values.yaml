@@ -623,11 +623,13 @@ geoprocessing:
     # declares indexes 0 (local baseline) and 1 (AWS Batch placeholder, inactive
     # until its ARNs are set), so the chart appends at index 2. Keep the AWS
     # Batch workload inactive: when both are active the server routes GP to the
-    # first non-local workload, which is AWS Batch.
+    # first compatible non-local workload, which can be AWS Batch.
     workload:
       index: 2
       id: geoprocessing-kubernetes-job
       name: "Geoprocessing (Kubernetes Job)"
+      # Must match the worker image: managed (server) or native (heavy worker).
+      runtimeProfile: managed
     # Import the server's runtime Secret, its ConfigMap and every extraEnvFrom
     # source into each Job through envFrom
     # (ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}). Needs a

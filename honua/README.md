@@ -374,7 +374,8 @@ Preview (2026.2), off by default. With
 Job batch compute backend (`KubernetesJobBatchComputeBackend`, backend id
 `honua-kubernetes-job`) creates one Job per execution attempt.
 
-Each Job runs the server image in its worker-only profile. The server stamps
+Managed Jobs run the server image in its worker-only profile. Native Jobs run
+the heavy worker image with `workload.runtimeProfile: native`. The server stamps
 `HONUA_OPERATION_ID`, `HONUA_EXECUTION_ATTEMPT` and the other launch variables
 on the Job. The worker records the result in the shared Redis job store and
 exits.
@@ -409,7 +410,7 @@ The server Deployment also changes in two ways:
 | --- | --- | --- |
 | `enabled` | `false` | Registers the workload and renders the objects above. |
 | `namespace` | release namespace | `ControlPlane:Kubernetes:DefaultNamespace`. Another namespace must already exist; the job ServiceAccount, Role and RoleBinding are rendered into it. |
-| `image.repository` / `tag` / `digest` | the chart's server image | `ControlPlane:Kubernetes:DefaultImage`. Keep the default: the server and worker must share the execution contract. |
+| `image.repository` / `tag` / `digest` | the chart's server image | `ControlPlane:Kubernetes:DefaultImage`. Use the server image for managed work, or the heavy worker image for native work; both must share the execution contract. |
 | `image.pullPolicy` | `image.pullPolicy` | `ControlPlane:Kubernetes:DefaultImagePullPolicy` |
 | `image.maxSupportedContractVersion` | `1` | `ControlPlane:Kubernetes:DefaultImageMaxSupportedContractVersion` |
 | `imagePullSecrets` | names from `image.pullSecrets` | `ControlPlane:Kubernetes:DefaultImagePullSecrets` |
@@ -420,6 +421,7 @@ The server Deployment also changes in two ways:
 | `activeDeadlineSeconds` | unset | `ControlPlane:Kubernetes:DefaultActiveDeadlineSeconds`. A job's own timeout policy wins. |
 | `nodeSelector` | `{}` | The workload's `k8s.node_selector` parameter |
 | `workload.index` / `id` / `name` | `2` / `geoprocessing-kubernetes-job` / `Geoprocessing (Kubernetes Job)` | `ControlPlane:ExecutionWorkloads:<index>` |
+| `workload.runtimeProfile` | `managed` | Required image runtime (`managed` or `native`). |
 | `envFromServer` | `true` | `ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}`: every Job imports the server's runtime Secret and ConfigMap. Needs honua-server at or after `bebaada00` (server#5796). See below. |
 | `inheritServerEnvironment` | `true` | Copies the server's environment into the worker as literal env (see below). |
 | `workerEnv` | `{}` | Extra literal worker env. Wins over `envFrom`. An empty value clears the variable. |
@@ -438,7 +440,21 @@ The server does not read some Job settings, so the chart does not expose them:
 declares `ControlPlane:ExecutionWorkloads:0` (the local baseline) and `:1` (an
 AWS Batch placeholder). The AWS Batch entry stays inactive until its ARNs are
 set. Keep it that way. If both are active, the server routes GP to the first
-non-local workload, which is AWS Batch.
+compatible non-local workload, which can be AWS Batch.
+
+### Local harness
+
+`scripts/gp-kubernetes-jobs-smoke.sh` runs against a disposable kind cluster with
+PostGIS and Redis in its namespace (the CI workflow provisions these). It
+requires a completed Job, successful OGC status, a numerical output oracle,
+Secret-backed configuration, and a failing RBAC check after permission removal.
+It generates and cleans up an ephemeral Production key-ring certificate.
+`HONUA_IMAGE_DIGEST` pins the server image. For a promoted heavy worker, also set
+`HONUA_GP_RUNTIME_PROFILE=native` and `HONUA_GP_WORKER_REPOSITORY` plus either
+`HONUA_GP_WORKER_DIGEST` or `HONUA_GP_WORKER_TAG`. Native mode converts two CSV
+points to GeoJSON and verifies their coordinates and attributes. Load a local
+worker tag into kind before running this mode. The heavy worker must include
+the assigned-operation entry point delivered by honua-server#6065.
 
 ### Worker environment and secrets
 
