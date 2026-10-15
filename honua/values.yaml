@@ -629,6 +629,9 @@ geoprocessing:
       id: geoprocessing-kubernetes-job
       name: "Geoprocessing (Kubernetes Job)"
       # Must match the worker image: managed (server) or native (heavy worker).
+      # native requires an explicit image above (repository plus tag or
+      # digest) or config.env.ControlPlane__Kubernetes__DefaultImage; the
+      # chart refuses to render a native workload on the server image.
       runtimeProfile: managed
     # Import the server's runtime Secret, its ConfigMap and every extraEnvFrom
     # source into each Job through envFrom

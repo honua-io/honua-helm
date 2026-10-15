@@ -266,3 +266,23 @@
 {{- fail "geoprocessing.kubernetesJobs.serviceAccount.name is required when geoprocessing.kubernetesJobs.serviceAccount.create is false." -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* A native runtime profile needs the separate heavy-worker image. The
+       server image this chart deploys runs managed jobs only, and
+       honua.gpJobs.image falls back to it when no worker image is given, so a
+       native workload with the default image fields installs cleanly and then
+       fails at execution time. Require an explicit worker image first. */ -}}
+{{- if eq (include "honua.gpJobs.enabled" .) "true" -}}
+{{- $gpJobs := include "honua.gpJobs.values" . | fromJson -}}
+{{- $gpWorkload := get $gpJobs "workload" | default dict -}}
+{{- if eq (toString (default "managed" (get $gpWorkload "runtimeProfile"))) "native" -}}
+{{- $gpImage := get $gpJobs "image" | default dict -}}
+{{- $gpRepository := trim (default "" (get $gpImage "repository")) -}}
+{{- $gpTag := trim (default "" (get $gpImage "tag")) -}}
+{{- $gpDigest := trim (default "" (get $gpImage "digest")) -}}
+{{- $gpFromConfig := include "honua.gpJobs.configEnv" (dict "context" . "name" "DefaultImage") -}}
+{{- if and (not $gpRepository) (not $gpTag) (not $gpDigest) (not $gpFromConfig) -}}
+{{- fail "geoprocessing.kubernetesJobs.workload.runtimeProfile is native, but no worker image is set, so the Jobs would run the chart's server image, which only supports the managed profile. Set geoprocessing.kubernetesJobs.image.repository plus .tag or .digest (or config.env.ControlPlane__Kubernetes__DefaultImage) to the native heavy-worker image." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
