@@ -1058,16 +1058,10 @@ jobs:
 
       - name: Install with GP on Kubernetes Jobs and dispatch geometry.buffer
         env:
-          # Same verified amd64 AOT image as the install/upgrade smoke (server#4725).
-          # It predates the worker-only execution profile (server#5780), so the
-          # dispatched Job's completion is recorded, not gated. Set
-          # HONUA_GP_REQUIRE_COMPLETION=true once a candidate with #5780 is pinned.
-          HONUA_IMAGE_DIGEST: sha256:51a3fac496dc2e422646603f8675c7517dadad13b1263909fe73c65fd29b445d
-          HONUA_GP_REQUIRE_COMPLETION: "false"
-          # The image also predates server#5796 (bebaada00), which renders
-          # ControlPlane:Kubernetes:DefaultEnvFrom*; set true with a newer pin to
-          # exercise the chart's default envFrom wiring.
-          HONUA_GP_SERVER_ENVFROM: "false"
+          # Includes assigned workers and envFrom launch configuration.
+          HONUA_IMAGE_DIGEST: sha256:dcf3296f17a456a876c23133fae50b5b32628d4ec710e8bdab58f57d2394d750
+          HONUA_GP_REQUIRE_COMPLETION: "true"
+          HONUA_GP_SERVER_ENVFROM: "true"
         run: scripts/gp-kubernetes-jobs-smoke.sh
 
       - name: Capture smoke evidence

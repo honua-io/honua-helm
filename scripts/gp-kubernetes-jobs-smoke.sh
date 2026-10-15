@@ -8,15 +8,12 @@
 #   2. the server's service account can do exactly what the backend needs in
 #      the namespace, and nothing it does not (Secrets, other namespaces);
 #   3. the server pod mounts its token and loads the GP wiring;
-#   4. an asynchronous geometry.buffer submission through OGC API Processes is
+#   4. an asynchronous managed buffer or native conversion through OGC API Processes is
 #      dispatched by the live server as a batch/v1 Job in the namespace, with
-#      the Job service account, the server image and the worker env;
+#      the Job service account, the selected image and the worker env;
 #   5. removing the RoleBinding makes the RBAC check fail with
 #      HONUA_GP_K8S_RBAC_MISSING.
-# The Job's own completion is recorded (worker exit, GP job status) but only
-# gated when HONUA_GP_REQUIRE_COMPLETION=true: a worker image must contain the
-# worker-only execution profile (honua-server#5780) to run the job it was
-# launched for.
+# Completion, result semantics, and secret-backed worker configuration are required.
 set -euo pipefail
 
 namespace="${HONUA_SMOKE_NAMESPACE:-honua-smoke}"
@@ -24,18 +21,22 @@ release="${HONUA_SMOKE_RELEASE:-honua}"
 evidence="${HONUA_SMOKE_EVIDENCE:-/tmp/honua-gp-smoke}"
 digest="${HONUA_IMAGE_DIGEST:?set HONUA_IMAGE_DIGEST}"
 repository="${HONUA_IMAGE_REPOSITORY:-ghcr.io/honua-io/honua-server}"
-require_completion="${HONUA_GP_REQUIRE_COMPLETION:-false}"
-# true: the pinned server image carries honua-server#5796 (bebaada00), so the
-# chart's default envFrom wiring is exercised. false: the image predates it and
-# the smoke uses the legacy literal mode (envFromServer=false with inline
-# credentials, which only a disposable cluster may use).
-server_envfrom="${HONUA_GP_SERVER_ENVFROM:-false}"
-if [ "$server_envfrom" = "true" ]; then
-  mode_args=()
+# Legacy dispatch-only mode must not produce a green smoke receipt.
+[ "${HONUA_GP_REQUIRE_COMPLETION:-true}" = true ] || { echo "completion is required" >&2; exit 1; }
+[ "${HONUA_GP_SERVER_ENVFROM:-true}" = true ] || { echo "envFrom is required" >&2; exit 1; }
+runtime_profile="${HONUA_GP_RUNTIME_PROFILE:-managed}"
+worker_repository="${HONUA_GP_WORKER_REPOSITORY:-$repository}"
+worker_digest="${HONUA_GP_WORKER_DIGEST:-}"
+worker_tag="${HONUA_GP_WORKER_TAG:-}"
+if [ "$runtime_profile" = native ]; then
+  [ -n "${HONUA_GP_WORKER_REPOSITORY:-}" ] && { [ -n "$worker_digest" ] || [ -n "$worker_tag" ]; } \
+    || { echo "native mode requires an explicit heavy worker image" >&2; exit 1; }
 else
-  mode_args=(--set geoprocessing.kubernetesJobs.envFromServer=false
-             --set geoprocessing.kubernetesJobs.allowInlineWorkerSecrets=true)
+  [ "$runtime_profile" = managed ] || { echo "unknown runtime profile" >&2; exit 1; }
+  worker_digest="${worker_digest:-$digest}"
 fi
+worker_image="$worker_repository${worker_digest:+@$worker_digest}"
+[ -n "$worker_digest" ] || worker_image="$worker_repository:$worker_tag"
 fullname="$release-honua"
 server_sa="system:serviceaccount:$namespace:$fullname"
 port="${HONUA_SMOKE_PORT:-18080}"
@@ -44,12 +45,35 @@ mkdir -p "$evidence"
 fail() { echo "gp smoke failed: $*" >&2; exit 1; }
 can() { kubectl auth can-i "$@" --as "$server_sa" 2>/dev/null || true; }
 
+# Production secret-channel encryption requires a private certificate. Generate a
+# disposable key outside the evidence directory and transport it via the runtime
+# Secret (never command-line literal values or captured manifests).
+keyring_dir="$(mktemp -d)"
+chmod 700 "$keyring_dir"
+forward=""
+cleanup() {
+  [ -z "$forward" ] || kill "$forward" 2>/dev/null || true
+  rm -rf "$keyring_dir"
+}
+trap cleanup EXIT
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=gp-smoke' \
+  -keyout "$keyring_dir/key.pem" -out "$keyring_dir/cert.pem" 2>/dev/null
+openssl pkcs12 -export -passout pass: -inkey "$keyring_dir/key.pem" \
+  -in "$keyring_dir/cert.pem" -out "$keyring_dir/keyring.pfx"
+base64 -w0 "$keyring_dir/keyring.pfx" > "$keyring_dir/keyring.b64"
+
 helm install "$release" ./honua -n "$namespace" --wait --timeout 10m \
   -f honua/ci-values/upgrade-base.yaml \
   --set image.repository="$repository" --set image.tag= --set image.digest="$digest" \
   --set image.pullPolicy=IfNotPresent \
   --set geoprocessing.kubernetesJobs.enabled=true \
-  "${mode_args[@]}" \
+  --set-string config.env.Public__BaseUrl="http://$fullname" \
+  --set geoprocessing.kubernetesJobs.workload.runtimeProfile="$runtime_profile" \
+  --set geoprocessing.kubernetesJobs.image.repository="$worker_repository" \
+  --set geoprocessing.kubernetesJobs.image.tag="$worker_tag" \
+  --set geoprocessing.kubernetesJobs.image.digest="$worker_digest" \
+  --set-string config.env.Operations__SecretChannel__KeyRingCertificatePkcs12=env:GP_SMOKE_KEYRING_PFX \
+  --set-file secret.env.GP_SMOKE_KEYRING_PFX="$keyring_dir/keyring.b64" \
   --set geoprocessing.kubernetesJobs.ttlSecondsAfterFinished=600 | tee "$evidence/helm-install.txt"
 
 # 1. The post-install RBAC check ran as the server and passed.
@@ -83,19 +107,29 @@ grep -q 'ControlPlane__ExecutionWorkloads__2__Backend: honua-kubernetes-job' "$e
 # 4. A real GP submission becomes a Kubernetes Job.
 kubectl port-forward -n "$namespace" "svc/$fullname" "$port:80" > "$evidence/port-forward.log" 2>&1 &
 forward=$!
-trap 'kill "$forward" 2>/dev/null || true' EXIT
+
 for _ in $(seq 1 30); do curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz/live" && break; sleep 1; done
 admin_password="$(kubectl get secret "$fullname-secret" -n "$namespace" -o jsonpath='{.data.HONUA_ADMIN_PASSWORD}' | base64 -d)"
-# POINT(0 0) as little-endian WKB.
-wkb="$(printf '\001\001\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000' | base64)"
+if [ "$runtime_profile" = native ]; then
+  process=gdal.ogr2ogr
+  payload="$(python3 - <<'NATIVE'
+import base64, json
+csv = 'WKT,name,value\n"POINT Z (12.25 -4.5 7.75)",alpha,17\n"POINT Z (-23.5 8.25 -2.5)",beta,29\n'
+print(json.dumps({"inputs": {"source": base64.b64encode(csv.encode()).decode(), "sourceFormat": "CSV", "targetFormat": "GeoJSON"}}))
+NATIVE
+)"
+else
+  process=geometry.buffer
+  payload='{"inputs":{"wkb":"AQEAAAAAAAAAAAAAAAAAAAAAAAAA","srid":3857,"distance":500,"geodesic":false}}'
+fi
 status="$(curl -sS -o "$evidence/submit.json" -w '%{http_code}' \
   -H "Host: $fullname" -H "X-API-Key: $admin_password" -H 'Content-Type: application/json' \
   -H 'Prefer: respond-async' \
-  --data "{\"inputs\":{\"wkb\":\"$wkb\",\"srid\":4326,\"distance\":1}}" \
-  "http://127.0.0.1:$port/ogc/processes/processes/geometry.buffer/execution")"
+  --data "$payload" \
+  "http://127.0.0.1:$port/ogc/processes/processes/$process/execution")"
 echo "submit HTTP $status" | tee "$evidence/submit-status.txt"
 cat "$evidence/submit.json"; echo
-case "$status" in 200|201|202) ;; *) fail "geometry.buffer submission returned HTTP $status" ;; esac
+case "$status" in 201|202) ;; *) fail "GP submission returned HTTP $status" ;; esac
 job_id="$(jq -r '.jobID // .jobId // .id // empty' "$evidence/submit.json")"
 [ -n "$job_id" ] || fail "submission returned no job id"
 
@@ -110,38 +144,29 @@ done
 kubectl get "$job" -n "$namespace" -o json > "$evidence/gp-job.json"
 jq -e --arg sa "$fullname-gp-job" '.spec.template.spec.serviceAccountName == $sa' "$evidence/gp-job.json" >/dev/null \
   || fail "GP Job does not run as the job service account"
-jq -e --arg image "$repository@$digest" '.spec.template.spec.containers[0].image == $image' "$evidence/gp-job.json" >/dev/null \
-  || fail "GP Job does not run the server image"
+jq -e --arg image "$worker_image" '.spec.template.spec.containers[0].image == $image' "$evidence/gp-job.json" >/dev/null \
+  || fail "GP Job does not run the selected worker image"
 jq -e '.spec.backoffLimit == 0 and .spec.ttlSecondsAfterFinished == 600' "$evidence/gp-job.json" >/dev/null \
   || fail "GP Job does not carry the backend's backoff/TTL"
 jq -e '.metadata.labels["honua.io/workload-kind"] == "geoprocessing" and (.metadata.labels["honua.io/operation-id"] | length > 0)' \
   "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the operation labels"
-if [ "$server_envfrom" = "true" ]; then
-  # The worker imports the server's runtime Secret and ConfigMap by name; no
-  # credential value is written into the Job.
-  jq -e --arg secret "$fullname-secret" --arg config "$fullname-config" \
-    '[.spec.template.spec.containers[0].envFrom[]? | (.secretRef.name // empty)] == [$secret]
-     and ([.spec.template.spec.containers[0].envFrom[]? | (.configMapRef.name // empty)] | index($config)) != null
-     and ([.spec.template.spec.containers[0].env[]? | select(.name | test("ConnectionStrings|MasterKey|PASSWORD"))] | length) == 0' \
-    "$evidence/gp-job.json" >/dev/null || fail "GP Job does not import the runtime Secret and ConfigMap through envFrom"
-else
-  jq -e '[.spec.template.spec.containers[0].env[].name] as $n
-         | ($n | index("ConnectionStrings__redis")) != null and ($n | index("ConnectionStrings__DefaultConnection")) != null
-           and ($n | index("Security__ConnectionEncryption__MasterKey")) != null and ($n | index("HONUA_CONTRACT_VERSION")) != null' \
-    "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the worker environment"
-fi
+# The worker imports the server's runtime Secret and ConfigMap by name; no
+# credential value is written into the Job.
+jq -e --arg secret "$fullname-secret" --arg config "$fullname-config" \
+  '[.spec.template.spec.containers[0].envFrom[]? | (.secretRef.name // empty)] == [$secret]
+   and ([.spec.template.spec.containers[0].envFrom[]? | (.configMapRef.name // empty)] | index($config)) != null
+   and ([.spec.template.spec.containers[0].env[]? | select(.name | test("ConnectionStrings|MasterKey|PASSWORD"))] | length) == 0' \
+  "$evidence/gp-job.json" >/dev/null || fail "GP Job does not import the runtime Secret and ConfigMap through envFrom"
 jq -r '[.spec.template.spec.containers[0].env[].name | select(startswith("HONUA_"))] | join(",")' "$evidence/gp-job.json" \
   | tee "$evidence/launch-variables.txt"
 # The worker launch contract (HONUA_OPERATION_ID, HONUA_EXECUTION_ATTEMPT, ...) is stamped by
 # server images that carry honua-server#5780; older images stamp only HONUA_CONTRACT_VERSION and
 # their Job boots a full server instead of a single-job worker.
-if [ "$require_completion" = "true" ]; then
-  grep -q 'HONUA_OPERATION_ID' "$evidence/launch-variables.txt" || fail "GP Job lacks HONUA_OPERATION_ID"
-  grep -q 'HONUA_EXECUTION_ATTEMPT' "$evidence/launch-variables.txt" || fail "GP Job lacks HONUA_EXECUTION_ATTEMPT"
-fi
+grep -q 'HONUA_OPERATION_ID' "$evidence/launch-variables.txt" || fail "GP Job lacks HONUA_OPERATION_ID"
+grep -q 'HONUA_EXECUTION_ATTEMPT' "$evidence/launch-variables.txt" || fail "GP Job lacks HONUA_EXECUTION_ATTEMPT"
 echo "GP job $job_id dispatched as $job" | tee "$evidence/dispatch.txt"
 
-# Completion: recorded, gated only when the image carries the worker profile.
+# Completion and output semantics are required for every supported image.
 outcome="not-observed"
 for _ in $(seq 1 90); do
   state="$(kubectl get "$job" -n "$namespace" -o jsonpath='{.status.succeeded}/{.status.failed}')"
@@ -149,13 +174,27 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 kubectl logs -n "$namespace" "$job" --tail=200 > "$evidence/worker.log" 2>&1 || true
-curl -sS -H "Host: $fullname" -H "X-API-Key: $admin_password" \
-  "http://127.0.0.1:$port/ogc/processes/jobs/$job_id" > "$evidence/gp-job-status.json" || true
-echo "worker outcome: $outcome; GP status: $(jq -r '.status // empty' "$evidence/gp-job-status.json" 2>/dev/null)" \
+status="$(curl -sS -o "$evidence/gp-job-status.json" -w '%{http_code}' \
+  -H "Host: $fullname" -H "X-API-Key: $admin_password" \
+  "http://127.0.0.1:$port/ogc/processes/jobs/$job_id")"
+[ "$status" = 200 ] || fail "job status returned HTTP $status"
+echo "worker outcome: $outcome; GP status: $(jq -r '.status // empty' "$evidence/gp-job-status.json")" \
   | tee "$evidence/completion.txt"
-if [ "$require_completion" = "true" ]; then
-  [ "$outcome" = "job-succeeded" ] || fail "worker Job did not succeed ($outcome)"
-  jq -e '.status == "successful"' "$evidence/gp-job-status.json" >/dev/null || fail "GP job did not report successful"
+[ "$outcome" = "job-succeeded" ] || fail "worker Job did not succeed ($outcome)"
+jq -e --arg id "$job_id" '.status == "successful" and .jobID == $id' \
+  "$evidence/gp-job-status.json" >/dev/null || fail "GP job did not report successful for the submitted job"
+kubectl get pods -n "$namespace" -l "job-name=${job#*/}" -o json > "$evidence/worker-pods.json"
+jq -e '.items | length > 0 and all(.[]; .status.phase == "Succeeded" and
+  all(.status.containerStatuses[]; .state.terminated.exitCode == 0))' \
+  "$evidence/worker-pods.json" >/dev/null || fail "worker containers did not exit successfully"
+status="$(curl -sS -o "$evidence/gp-results.json" -w '%{http_code}' \
+  -H "Host: $fullname" -H "X-API-Key: $admin_password" \
+  "http://127.0.0.1:$port/ogc/processes/jobs/$job_id/results")"
+[ "$status" = 200 ] || fail "results returned HTTP $status"
+if [ "$runtime_profile" = native ]; then
+  python3 scripts/validate-gp-native.py "$evidence/gp-results.json" | tee "$evidence/geometry-oracle.json"
+else
+  python3 scripts/validate-gp-buffer.py "$evidence/gp-results.json" | tee "$evidence/geometry-oracle.json"
 fi
 kubectl delete "$job" -n "$namespace" --wait=false >/dev/null 2>&1 || true
 

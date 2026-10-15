@@ -163,7 +163,8 @@
               "properties": {
                 "index": { "type": "integer", "minimum": 2 },
                 "id": { "type": "string", "minLength": 1 },
-                "name": { "type": "string", "minLength": 1 }
+                "name": { "type": "string", "minLength": 1 },
+                "runtimeProfile": { "type": "string", "enum": ["managed", "native"] }
               }
             },
             "envFromServer": { "type": "boolean", "description": "Import the server's runtime Secret and ConfigMap into every Job through envFrom (honua-server >= bebaada00, server#5796)." },
