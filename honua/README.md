@@ -343,28 +343,28 @@ by `ConfigurationDeployTargetRegistry`). Without this, a chart-installed
 server registers no deploy target and the `/api/v1/admin/deploy/preflight` and
 `deploy.rollback` capability surfaces have nothing to plan against.
 
-The only backend this chart wires up is the Honua GitOps hand-off backend,
-`honua-gitops-kubernetes`. That backend always reports
-`SupportsRollback=false`: a chart-installed server advertises **manual
-recovery only**. Registering a target, or documenting `helm rollback` here,
-does not add telemetry-driven automatic rollback — that requires a real
-executable backend (for example an Argo Rollouts controller with the matching
-RBAC/CRDs), which this chart does not install. The values schema and
-`templates/validations.yaml` both reject any other `controlPlane.deployTarget.backend`
-value for exactly this reason: no other backend's prerequisites exist in this
-chart, so accepting one would advertise a capability the installation cannot
-execute.
+The default `honua-gitops-kubernetes` backend is a hand-off with
+`SupportsRollback=false`; its recovery procedure is `helm rollback`.
+For agent-managed EKS version operations, select `honua-kubernetes-deployment`
+after the cluster and serving resources have been observed. It uses native
+Kubernetes APIs, projected service-account credentials, and scoped RBAC.
+**No Argo installation, controller, CRDs, or API is required.**
 
-```yaml
-controlPlane:
-  deployTarget:
-    enabled: true                          # false opts this install out entirely
-    targetId: ""                           # empty uses the chart fullname
-    backend: "honua-gitops-kubernetes"      # the only supported value
-    environment: ""                        # empty uses config.env.ASPNETCORE_ENVIRONMENT
-    targetName: ""                         # empty uses the chart fullname
-    artifactReference: ""                  # empty uses the rendered image reference
-```
+Native registration is a second step after the initial install, because
+Kubernetes assigns Deployment, Service, Ingress and namespace UIDs at creation.
+Start with `controlPlane.deployTarget.enabled=false`. After observing the
+installed resources, register their actual identities through
+`controlPlane.deployTarget.native`. The chart derives the release namespace,
+resource names, container, ports and probe URLs. It does not fabricate UIDs or
+use chart rendering as evidence of a working deployment.
+
+Ask the agent: “Install Honua on EKS using native Kubernetes deployments.
+Verify the serving endpoint, register the observed deployment for approved
+updates, and prove a failed update restores the previous version.”
+See [the native registration contract](../docs/contract.md#native-eks-registration)
+for observation fields, permissions, migration prerequisites and current limits.
+The chart rendering checks establish configuration correctness; they do not
+qualify an actual cloud install, update or rollback.
 
 ## Geoprocessing on Kubernetes Jobs
 
@@ -786,10 +786,12 @@ characters. For non-development deployments, it also fails if
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
  | `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
  | `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
- | `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
+ | `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Manual hand-off (`SupportsRollback=false`) or `honua-kubernetes-deployment` with explicit native prerequisites. |
  | `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |
  | `controlPlane.deployTarget.environment` | `""` | Target environment label. Empty uses `config.env.ASPNETCORE_ENVIRONMENT`. |
  | `controlPlane.deployTarget.artifactReference` | `""` | Target artifact reference. Empty uses the rendered image reference. |
+ | `controlPlane.deployTarget.native.*` | See `values.yaml` | Observed cluster/resource identities, serving route, functional expectation and migration readiness for native EKS operations. |
+ | `controlPlane.deployTarget.native.rbac.create` | true | Render scoped native deployment RBAC only when the native backend is enabled. False requires equivalent existing permissions. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 
