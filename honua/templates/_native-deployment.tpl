@@ -24,6 +24,21 @@
 {{- if or (ne $url.scheme "https") $url.userinfo $url.query $url.fragment (not $url.host) -}}
 {{- fail "Native Deployment publicUrl must be HTTPS without user information, query or fragment." -}}
 {{- end -}}
+{{- $dnsProof := or (eq $n.routeKind "Ingress") $n.loadBalancerArn $n.dnsZoneId $n.dnsRecordName (gt (len $n.publicDnsResolvers) 0) -}}
+{{- if $dnsProof -}}
+{{- if or (not $n.loadBalancerArn) (not $n.dnsZoneId) (not $n.dnsRecordName) (eq (len $n.publicDnsResolvers) 0) -}}
+{{- fail "Native custom-domain/Ingress registration requires loadBalancerArn, dnsZoneId, dnsRecordName and publicDnsResolvers together." -}}
+{{- end -}}
+{{- $hostname := first (splitList ":" $url.host) | lower | trimSuffix "." -}}
+{{- if ne ($n.dnsRecordName | lower | trimSuffix ".") $hostname -}}
+{{- fail "Native dnsRecordName must exactly match the publicUrl hostname." -}}
+{{- end -}}
+{{- $cluster := splitList ":" $n.clusterArn -}}
+{{- $lb := splitList ":" $n.loadBalancerArn -}}
+{{- if or (ne (index $cluster 1) (index $lb 1)) (ne (index $cluster 3) (index $lb 3)) (ne (index $cluster 4) (index $lb 4)) -}}
+{{- fail "Native loadBalancerArn must match clusterArn partition, region and account." -}}
+{{- end -}}
+{{- end -}}
 {{- $api := urlParse $n.apiServer -}}
 {{- if or (ne $api.scheme "https") $api.userinfo $api.query $api.fragment (not $api.host) (not (has $api.path (list "" "/"))) -}}
 {{- fail "Native Deployment apiServer must be an HTTPS API origin without credentials or path." -}}

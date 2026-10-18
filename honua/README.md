@@ -348,7 +348,7 @@ The default `honua-gitops-kubernetes` backend is a hand-off with
 For agent-managed EKS version operations, select `honua-kubernetes-deployment`
 after the cluster and serving resources have been observed. It uses native
 Kubernetes APIs, projected service-account credentials, and scoped RBAC.
-**No Argo installation, controller, CRDs, or API is required.**
+**No Argo or Flux installation, controller, CRDs, or API is required.**
 
 Native registration is a second step after the initial install, because
 Kubernetes assigns Deployment, Service, Ingress and namespace UIDs at creation.
@@ -363,6 +363,10 @@ Verify the serving endpoint, register the observed deployment for approved
 updates, and prove a failed update restores the previous version.”
 See [the native registration contract](../docs/contract.md#native-eks-registration)
 for observation fields, permissions, migration prerequisites and current limits.
+Custom domains and Ingress also require the observed AWS load balancer ARN,
+public Route53 zone/record, and administrator-selected DNS resolver IPs. The
+server checks delegation and the actual TLS route using its workload IAM
+identity. These fields configure proof; entering them does not prove the route.
 The chart rendering checks establish configuration correctness; they do not
 qualify an actual cloud install, update or rollback.
 

@@ -525,6 +525,12 @@ controlPlane:
       routeKind: "LoadBalancerService"
       routeUid: ""  # Service UID for LoadBalancerService, Ingress UID for Ingress
       publicUrl: ""  # HTTPS serving base URL, including PathBase when applicable
+      # Custom-domain proof: all three observed pins plus trusted resolver IPs.
+      # Required for Ingress; optional for a direct observed LoadBalancer hostname.
+      loadBalancerArn: ""
+      dnsZoneId: ""
+      dnsRecordName: ""  # exact publicUrl hostname, not an arbitrary DNS alias
+      publicDnsResolvers: []  # 1-4 administrator-selected recursive resolver IPs
       routeHost: ""  # Ingress only; must select one chart-rendered host/path
       routePath: "/"
       functionalQueryPath: ""  # starts with /, relative to publicUrl; no credentials

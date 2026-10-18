@@ -19,6 +19,9 @@ data:
   {{- if eq (include "honua.deployTargetBackend" .) "honua-kubernetes-deployment" }}
   ControlPlane__Kubernetes__InClusterAutoDetect: "true"
   {{- $n := .Values.controlPlane.deployTarget.native }}
+  {{- range $index, $resolver := $n.publicDnsResolvers }}
+  ControlPlane__Kubernetes__PublicDns__Resolvers__{{ $index }}: {{ $resolver | quote }}
+  {{- end }}
   {{- $base := trimSuffix "/" $n.publicUrl }}
   {{- $parameters := dict
       "honua.runtime_kind" "aws-eks"
@@ -44,6 +47,11 @@ data:
   {{- $_ := set $parameters "kubernetes.route_host" $n.routeHost }}
   {{- $_ := set $parameters "kubernetes.route_path" $n.routePath }}
   {{- $_ := set $parameters "kubernetes.route_path_type" "Prefix" }}
+  {{- end }}
+  {{- if $n.loadBalancerArn }}
+  {{- $_ := set $parameters "kubernetes.load_balancer_arn" $n.loadBalancerArn }}
+  {{- $_ := set $parameters "kubernetes.dns_zone_id" $n.dnsZoneId }}
+  {{- $_ := set $parameters "kubernetes.dns_record_name" $n.dnsRecordName }}
   {{- end }}
   {{- with $n.expectedContains }}
   {{- $_ := set $parameters "telemetry.golden_query.expected_contains" . }}

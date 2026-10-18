@@ -128,6 +128,8 @@ the native Deployment backend. Observe the running installation before enabling
 | `deploymentUid`, `serviceUid` | UIDs of this release's actual Deployment and Service |
 | `routeKind`, `routeUid` | `LoadBalancerService` with the same Service UID, or `Ingress` with the chart Ingress UID |
 | `publicUrl` | Verified HTTPS serving base URL, including any PathBase |
+| `loadBalancerArn`, `dnsZoneId`, `dnsRecordName` | For a custom domain or Ingress: actual AWS load balancer ARN, public Route53 zone ID and exact public URL hostname |
+| `publicDnsResolvers` | For DNS proof: 1–4 trusted recursive resolver IPs selected by the administrator; host configuration, never operation input |
 | `routeHost`, `routePath` | Ingress only: one chart-rendered `Prefix` rule matching the public URL |
 | `functionalQueryPath` | Relative path beginning with `/`, including query parameters if needed; no credentials |
 | `expectedContains` or `expectedSha256` | Observed, non-secret stable query result expectation |
@@ -156,10 +158,31 @@ access or Job execution. Names include a namespace/release hash to avoid clashes
 For centrally managed permissions set `native.rbac.create=false` and provide
 the same permissions separately; rendering cannot prove those permissions exist.
 
-A `LoadBalancerService` must expose the HTTPS public port and use the actual
-load-balancer hostname/IP observed in the Service status. Custom DNS aliases
-are not currently accepted by that route verifier. An Ingress must serve the
-registered host and prefix through this release's Service. The backend rechecks
+A `LoadBalancerService` must expose the HTTPS public port. A direct endpoint
+must match the load-balancer hostname/IP observed in Service status. For a
+custom domain, supply all three DNS identity pins and `publicDnsResolvers`.
+An Ingress requires those DNS fields and must serve the registered host and
+prefix through this release's Service. Load balancer and cluster ARNs must
+identify the same AWS partition, region and account.
+
+For custom domains, the server verifies the actual AWS caller account, active
+internet-facing load balancer and TLS listener, public Route53 zone, and every
+A/AAAA alias for the registered hostname. Weighted/failover/multivalue records,
+CNAME chains and aliases to another load balancer are refused. Each configured
+resolver must report the zone's registered delegation and the hostname's
+closest authoritative zone; creating an undelegated duplicate zone is not
+sufficient. These observations do not prove global DNS cache convergence.
+The resolver IPs are rendered as `ControlPlane__Kubernetes__PublicDns__Resolvers`
+host configuration, outside deployment parameters.
+
+The server's existing workload IAM identity needs `sts:GetCallerIdentity`,
+`elasticloadbalancing:DescribeLoadBalancers`,
+`elasticloadbalancing:DescribeListeners`, `route53:GetHostedZone` and
+`route53:ListResourceRecordSets` for that proof. Kubernetes RBAC does not grant
+these AWS permissions. Use workload identity; do not put AWS credentials in
+chart values or target metadata. No Argo or Flux installation is involved.
+
+The backend rechecks
 resource identity, Service selectors, actual pod IPs and EndpointSlices before
 accepting convergence. Query and readiness checks must succeed after updates
 and rollback; restoring the template image alone is not success.
