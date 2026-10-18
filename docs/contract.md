@@ -102,26 +102,96 @@ server registers no deploy target, and the control plane's
 `/api/v1/admin/deploy/preflight` and `deploy.rollback` capability surfaces
 have nothing to plan against.
 
-The registered `Backend` is always `honua-gitops-kubernetes`, the Honua
-GitOps hand-off backend. That backend's `GetCapabilitiesAsync` always returns
-`SupportsRollback=false`, and its `RollbackAsync` always returns
-`ManualInterventionRequired` -- it hands the desired revision to an external
-GitOps controller and cannot itself revert a running workload. Registering
-this target, or documenting `helm rollback` in this contract, therefore does
-not advertise telemetry-driven automatic rollback. Recovery for a
-chart-installed server is the manual `helm rollback` procedure described
-below; an operator wanting executable automatic recovery needs a real
-backend with the matching controller and RBAC/CRDs installed and configured
-as a distinct deploy target, which this chart does not provide.
+The default `honua-gitops-kubernetes` backend reports
+`SupportsRollback=false`. It hands a desired revision to an external workflow;
+recovery remains the manual `helm rollback` procedure below. Neither registering
+that hand-off nor documenting Helm rollback adds automatic recovery.
 
-The values schema and `templates/validations.yaml` both reject any
-`controlPlane.deployTarget.backend` value other than
-`honua-gitops-kubernetes`, and reject an empty resolved `targetId`,
-`targetName`, or `environment`. This keeps the registration truthful: an
-operator cannot configure the chart to claim a backend whose prerequisites it
-does not install, and the chart cannot silently register an unusable target.
-Set `controlPlane.deployTarget.enabled=false` to opt an installation out of
-registration entirely.
+The opt-in `honua-kubernetes-deployment` backend performs native Kubernetes
+Deployment image changes and verifies serving convergence through Honua's
+deploy reconciler. It needs no Argo controller, installation, CRDs or API.
+Other backend identifiers are rejected. Both modes require non-empty resolved
+`targetId`, `targetName`, and `environment`. Set
+`controlPlane.deployTarget.enabled=false` to disable registration entirely.
+
+### Native EKS registration
+
+Install first with registration disabled, using a server image that contains
+the native Deployment backend. Observe the running installation before enabling
+`controlPlane.deployTarget.backend=honua-kubernetes-deployment`:
+
+| `controlPlane.deployTarget.native` field | Required observation |
+| --- | --- |
+| `clusterArn`, `apiServer` | Actual EKS cluster ARN and HTTPS API origin |
+| `caSha256` | Lowercase SHA-256 of the cluster CA's DER bytes |
+| `clusterUid` | UID of that cluster's `kube-system` namespace |
+| `deploymentUid`, `serviceUid` | UIDs of this release's actual Deployment and Service |
+| `routeKind`, `routeUid` | `LoadBalancerService` with the same Service UID, or `Ingress` with the chart Ingress UID |
+| `publicUrl` | Verified HTTPS serving base URL, including any PathBase |
+| `loadBalancerArn`, `dnsZoneId`, `dnsRecordName` | For a custom domain or Ingress: actual AWS load balancer ARN, public Route53 zone ID and exact public URL hostname |
+| `publicDnsResolvers` | For DNS proof: 1–4 trusted recursive resolver IPs selected by the administrator; host configuration, never operation input |
+| `routeHost`, `routePath` | Ingress only: one chart-rendered `Prefix` rule matching the public URL |
+| `functionalQueryPath` | Relative path beginning with `/`, including query parameters if needed; no credentials |
+| `expectedContains` or `expectedSha256` | Observed, non-secret stable query result expectation |
+
+Names, namespace, container and port numbers come from the rendered chart.
+The readiness URL is `publicUrl/healthz/ready`; the functional URL appends
+`functionalQueryPath`. This metadata contains no bearer token. Native execution
+uses the pod's projected service account, verifies the pinned CA and cluster
+UID, and rereads the rotating token for API requests.
+
+Set `serviceAccount.automount=true`, pin `image.digest` with an empty `image.tag`
+and `image.pullPolicy=IfNotPresent`, and keep any explicit
+`artifactReference` identical to that image. Native registration also requires
+`native.migrationsReady=true`, `config.env.HONUA_SKIP_MIGRATIONS="true"`, and
+`strategy.type=RollingUpdate`. Converge the database schema out of band first
+and verify compatibility with both baseline and candidate. This acknowledgement
+is not proof that arbitrary future migrations are reversible. Every later
+update still requires its own migration review; image rollback cannot reverse
+destructive database changes.
+
+The default native RBAC grants GET/PATCH only on this release's Deployment,
+GET on its Service (and Ingress when selected), and LIST on namespace Pods,
+ReplicaSets and EndpointSlices for serving identity checks. A ClusterRole grants
+GET only on the `kube-system` namespace to check cluster UID. It grants no Secret
+access or Job execution. Names include a namespace/release hash to avoid clashes.
+For centrally managed permissions set `native.rbac.create=false` and provide
+the same permissions separately; rendering cannot prove those permissions exist.
+
+A `LoadBalancerService` must expose the HTTPS public port. A direct endpoint
+must match the load-balancer hostname/IP observed in Service status. For a
+custom domain, supply all three DNS identity pins and `publicDnsResolvers`.
+An Ingress requires those DNS fields and must serve the registered host and
+prefix through this release's Service. Load balancer and cluster ARNs must
+identify the same AWS partition, region and account.
+
+For custom domains, the server verifies the actual AWS caller account, active
+internet-facing load balancer and TLS listener, public Route53 zone, and every
+A/AAAA alias for the registered hostname. Weighted/failover/multivalue records,
+CNAME chains and aliases to another load balancer are refused. Each configured
+resolver must report the zone's registered delegation and the hostname's
+closest authoritative zone; creating an undelegated duplicate zone is not
+sufficient. These observations do not prove global DNS cache convergence.
+The resolver IPs are rendered as `ControlPlane__Kubernetes__PublicDns__Resolvers`
+host configuration, outside deployment parameters.
+
+The server's existing workload IAM identity needs `sts:GetCallerIdentity`,
+`elasticloadbalancing:DescribeLoadBalancers`,
+`elasticloadbalancing:DescribeListeners`, `route53:GetHostedZone` and
+`route53:ListResourceRecordSets` for that proof. Kubernetes RBAC does not grant
+these AWS permissions. Use workload identity; do not put AWS credentials in
+chart values or target metadata. No Argo or Flux installation is involved.
+
+The backend rechecks
+resource identity, Service selectors, actual pod IPs and EndpointSlices before
+accepting convergence. Query and readiness checks must succeed after updates
+and rollback; restoring the template image alone is not success.
+
+Chart checks prove rendered configuration and refusal behavior, not live EKS
+qualification. Actual installation, public routing, update failure and rollback
+must still be exercised against the selected server artifact. Do not run an
+external reconciler that continuously reverts native Deployment image patches;
+Git configuration history and native runtime operations need one agreed writer.
 
 ## Health And Probes
 

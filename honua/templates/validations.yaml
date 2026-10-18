@@ -157,19 +157,14 @@
 {{- fail "Set only one of podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable, not both." -}}
 {{- end -}}
 
-{{- /* Deploy target registration must stay truthful: the chart only wires up
-       the Honua GitOps hand-off backend (SupportsRollback=false, manual
-       recovery via helm rollback). Rejecting any other backend value here
-       prevents an operator from claiming a backend (e.g. an Argo Rollouts
-       identifier) whose RBAC/CRDs/controller this chart does not install,
-       which would advertise automatic rollback the installation cannot
-       execute. Also guard that the identity fields this chart derives never
-       resolve empty, since an empty TargetId/TargetName/Environment would
-       register an unusable target. */ -}}
+{{- /* Only explicit native registration grants deployment API access. */ -}}
 {{- if .Values.controlPlane.deployTarget.enabled -}}
 {{- $deployTargetBackend := include "honua.deployTargetBackend" . -}}
-{{- if ne $deployTargetBackend "honua-gitops-kubernetes" -}}
-{{- fail (printf "controlPlane.deployTarget.backend must be \"honua-gitops-kubernetes\" (got %q). That is the only backend this chart's Deployment, RBAC, and CRDs support; other backends (for example an Argo Rollouts controller) are not wired up by this chart and would falsely advertise automatic rollback. Set controlPlane.deployTarget.enabled=false to skip target registration instead." $deployTargetBackend) -}}
+{{- if not (has $deployTargetBackend (list "honua-gitops-kubernetes" "honua-kubernetes-deployment")) -}}
+{{- fail "controlPlane.deployTarget.backend must be honua-gitops-kubernetes or honua-kubernetes-deployment." -}}
+{{- end -}}
+{{- if eq $deployTargetBackend "honua-kubernetes-deployment" -}}
+{{- include "honua.validateNativeDeployment" . -}}
 {{- end -}}
 {{- if not (trim (include "honua.deployTargetId" .)) -}}
 {{- fail "controlPlane.deployTarget.targetId resolved to an empty value. Set controlPlane.deployTarget.targetId explicitly or ensure the chart fullname is non-empty." -}}

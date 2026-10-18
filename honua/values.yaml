@@ -502,39 +502,45 @@ metrics:
     # Optional pass-through spec.inhibitRules.
     inhibitRules: []
 
-# Registers this chart's installed Deployment as a stable target with Honua
-# Server's control plane, so the deploy/rollback surfaces
-# (/api/v1/admin/deploy/preflight, the deploy.rollback capability manifest)
-# see a target to plan against instead of finding nothing registered. This
-# does not add automatic rollback: the only backend this chart wires up is
-# the Honua GitOps hand-off backend, which always reports
-# SupportsRollback=false and requires an operator to recover out of band
-# (helm rollback, see docs/contract.md). See docs/contract.md for the full
-# registration and upgrade-safety contract.
+# Register the installed Deployment with Honua's control plane. The default
+# hand-off backend retains manual recovery. Native EKS deployments opt into
+# honua-kubernetes-deployment after installation observations are available.
+# Neither backend requires Argo. See docs/contract.md.
 controlPlane:
   deployTarget:
-    # Set to false to opt this installation out of target registration
-    # entirely (for example a preview namespace that should not appear in
-    # control-plane deploy tooling).
     enabled: true
-    # Stable identifier used by the control-plane API and workers. Empty uses
-    # the chart's fullname so each release registers a distinct target.
-    targetId: ""
-    # Backend adapter that executes deploy/rollback operations for this
-    # target. Only "honua-gitops-kubernetes" is truthful for a plain chart
-    # install: it is a hand-off backend with SupportsRollback=false. The
-    # chart fails render if this is changed to any other value, because no
-    # other backend's prerequisites (RBAC, CRDs, controller) are wired up by
-    # this chart yet.
+    targetId: ""  # empty uses this release's fullname
     backend: "honua-gitops-kubernetes"
-    # Environment/stage label surfaced on the target. Empty uses
-    # config.env.ASPNETCORE_ENVIRONMENT (see honua.runtimeEnvironment).
-    environment: ""
-    # Human-readable target name. Empty uses the chart's fullname.
+    environment: ""  # empty uses config.env.ASPNETCORE_ENVIRONMENT
     targetName: ""
-    # Stable artifact reference for this target. Empty uses the rendered
-    # image reference (repository:tag or repository@digest).
-    artifactReference: ""
+    artifactReference: ""  # native mode must match the rendered immutable image
+    native:
+      # Actual read-only observations from the installed cluster, not invented IDs.
+      clusterArn: ""
+      apiServer: ""
+      caSha256: ""  # SHA-256 of the cluster CA's DER bytes
+      clusterUid: ""  # kube-system namespace UID
+      deploymentUid: ""
+      serviceUid: ""
+      routeKind: "LoadBalancerService"
+      routeUid: ""  # Service UID for LoadBalancerService, Ingress UID for Ingress
+      publicUrl: ""  # HTTPS serving base URL, including PathBase when applicable
+      # Custom-domain proof: all three observed pins plus trusted resolver IPs.
+      # Required for Ingress; optional for a direct observed LoadBalancer hostname.
+      loadBalancerArn: ""
+      dnsZoneId: ""
+      dnsRecordName: ""  # exact publicUrl hostname, not an arbitrary DNS alias
+      publicDnsResolvers: []  # 1-4 administrator-selected recursive resolver IPs
+      routeHost: ""  # Ingress only; must select one chart-rendered host/path
+      routePath: "/"
+      functionalQueryPath: ""  # starts with /, relative to publicUrl; no credentials
+      expectedContains: ""  # a non-secret stable expected result, or use its SHA-256
+      expectedSha256: ""
+      # Explicit acknowledgement: schema already converged and supports both
+      # baseline and candidate versions. Each later deployment still needs review.
+      migrationsReady: false
+      rbac:
+        create: true  # false requires equivalent pre-existing permissions
 
 # Geoprocessing on Kubernetes Jobs (preview, 2026.2). When enabled, the server
 # registers its Kubernetes Job batch compute backend (honua-kubernetes-job) as

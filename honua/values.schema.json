@@ -78,12 +78,37 @@
             "targetId": { "type": "string" },
             "backend": {
               "type": "string",
-              "enum": ["honua-gitops-kubernetes"],
-              "description": "Only the truthful hand-off backend (SupportsRollback=false) is supported by this chart."
+              "enum": ["honua-gitops-kubernetes", "honua-kubernetes-deployment"],
+              "description": "Manual GitOps hand-off or native Kubernetes Deployment execution with observed identity and scoped RBAC."
             },
             "environment": { "type": "string" },
             "targetName": { "type": "string" },
-            "artifactReference": { "type": "string" }
+            "artifactReference": { "type": "string" },
+            "native": {
+              "type": "object", "additionalProperties": false,
+              "properties": {
+                "clusterArn": { "type": "string", "pattern": "^$|^arn:aws(-us-gov|-cn)?:eks:[a-z0-9-]+:[0-9]{12}:cluster/[A-Za-z0-9][A-Za-z0-9_-]*$" },
+                "apiServer": { "type": "string" },
+                "caSha256": { "type": "string", "pattern": "^$|^[a-f0-9]{64}$" },
+                "clusterUid": { "type": "string", "pattern": "^$|^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$" },
+                "deploymentUid": { "type": "string", "pattern": "^$|^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$" },
+                "serviceUid": { "type": "string", "pattern": "^$|^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$" },
+                "routeKind": { "enum": ["LoadBalancerService", "Ingress"] },
+                "routeUid": { "type": "string", "pattern": "^$|^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$" },
+                "publicUrl": { "type": "string" },
+                "loadBalancerArn": { "type": "string", "pattern": "^$|^arn:aws(-us-gov|-cn)?:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/(app|net)/[A-Za-z0-9-]+/[a-f0-9]+$" },
+                "dnsZoneId": { "type": "string", "pattern": "^$|^(/hostedzone/)?Z[A-Z0-9]+$" },
+                "dnsRecordName": { "type": "string", "maxLength": 254, "pattern": "^$|^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$" },
+                "publicDnsResolvers": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "anyOf": [{ "type": "string", "format": "ipv4" }, { "type": "string", "format": "ipv6" }] } },
+                "routeHost": { "type": "string" },
+                "routePath": { "type": "string", "pattern": "^/" },
+                "functionalQueryPath": { "type": "string" },
+                "expectedContains": { "type": "string", "maxLength": 4096 },
+                "expectedSha256": { "type": "string", "pattern": "^$|^[a-f0-9]{64}$" },
+                "migrationsReady": { "type": "boolean" },
+                "rbac": { "type": "object", "additionalProperties": false, "properties": { "create": { "type": "boolean" } } }
+              }
+            }
           }
         }
       }

@@ -140,6 +140,9 @@ jobs:
       - name: Verify managed Redis review regressions
         run: python3 scripts/test-redis-review.py
 
+      - name: Verify native Deployment registration and RBAC
+        run: python3 scripts/test-native-deployment.py
+
       - name: Verify geoprocessing on Kubernetes Jobs rendering
         run: |
           helm lint honua -f honua/ci-values/gp-kubernetes-jobs.yaml
@@ -550,7 +553,7 @@ jobs:
           status=$?
           set -e
           if [[ "${status}" -eq 0 ]]; then
-            echo "Expected controlPlane.deployTarget.backend other than honua-gitops-kubernetes to fail render."
+            echo "Expected an unknown controlPlane.deployTarget.backend to fail render."
             cat /tmp/honua-rendered-deploy-target-backend-invalid.yaml
             exit 1
           fi

@@ -9,19 +9,58 @@ metadata:
   annotations:
     {{- include "honua.releaseAnnotations" . | nindent 4 }}
 data:
-  # honua-server's ConfigurationDeployTargetRegistry binds
-  # ControlPlane__DeployTargets__0__* into a DeployTargetDefinition
-  # (Honua.Server.Features.ControlPlane.ControlPlaneOptions). TargetKind and
-  # Backend are the truthful identity of this chart's Deployment: Kubernetes,
-  # handed off to an external GitOps controller. That backend always reports
-  # SupportsRollback=false (GitOpsDeployBackendBase.RollbackAsync returns
-  # ManualInterventionRequired), so registering this target does not
-  # advertise automatic rollback -- recovery is `helm rollback` (see
-  # docs/contract.md).
+  # Identity is chart-derived; native pins are observed from the installed cluster.
   ControlPlane__DeployTargets__0__TargetId: {{ include "honua.deployTargetId" . | quote }}
   ControlPlane__DeployTargets__0__TargetKind: "Kubernetes"
   ControlPlane__DeployTargets__0__Backend: {{ include "honua.deployTargetBackend" . | quote }}
   ControlPlane__DeployTargets__0__Environment: {{ include "honua.deployTargetEnvironment" . | quote }}
   ControlPlane__DeployTargets__0__TargetName: {{ include "honua.deployTargetName" . | quote }}
   ControlPlane__DeployTargets__0__ArtifactReference: {{ include "honua.deployTargetArtifactReference" . | quote }}
+  {{- if eq (include "honua.deployTargetBackend" .) "honua-kubernetes-deployment" }}
+  ControlPlane__Kubernetes__InClusterAutoDetect: "true"
+  {{- $n := .Values.controlPlane.deployTarget.native }}
+  {{- range $index, $resolver := $n.publicDnsResolvers }}
+  ControlPlane__Kubernetes__PublicDns__Resolvers__{{ $index }}: {{ $resolver | quote }}
+  {{- end }}
+  {{- $base := trimSuffix "/" $n.publicUrl }}
+  {{- $parameters := dict
+      "honua.runtime_kind" "aws-eks"
+      "kubernetes.cluster_arn" $n.clusterArn
+      "kubernetes.api_server" $n.apiServer
+      "kubernetes.ca_sha256" $n.caSha256
+      "kubernetes.cluster_uid" $n.clusterUid
+      "kubernetes.namespace" .Release.Namespace
+      "kubernetes.deployment_name" (include "honua.fullname" .)
+      "kubernetes.deployment_uid" $n.deploymentUid
+      "kubernetes.container_name" "honua"
+      "kubernetes.service_name" (include "honua.fullname" .)
+      "kubernetes.service_uid" $n.serviceUid
+      "kubernetes.service_port" (toString .Values.service.port)
+      "kubernetes.target_port" (toString .Values.service.targetPort)
+      "kubernetes.route_kind" $n.routeKind
+      "kubernetes.route_name" (include "honua.fullname" .)
+      "kubernetes.route_uid" $n.routeUid
+      "kubernetes.public_url" $base
+      "telemetry.healthz.url" (printf "%s/healthz/ready" $base)
+      "telemetry.golden_query.url" (printf "%s%s" $base $n.functionalQueryPath) }}
+  {{- if eq $n.routeKind "Ingress" }}
+  {{- $_ := set $parameters "kubernetes.route_host" $n.routeHost }}
+  {{- $_ := set $parameters "kubernetes.route_path" $n.routePath }}
+  {{- $_ := set $parameters "kubernetes.route_path_type" "Prefix" }}
+  {{- end }}
+  {{- if $n.loadBalancerArn }}
+  {{- $_ := set $parameters "kubernetes.load_balancer_arn" $n.loadBalancerArn }}
+  {{- $_ := set $parameters "kubernetes.dns_zone_id" $n.dnsZoneId }}
+  {{- $_ := set $parameters "kubernetes.dns_record_name" $n.dnsRecordName }}
+  {{- end }}
+  {{- with $n.expectedContains }}
+  {{- $_ := set $parameters "telemetry.golden_query.expected_contains" . }}
+  {{- end }}
+  {{- with $n.expectedSha256 }}
+  {{- $_ := set $parameters "telemetry.golden_query.expected_sha256" . }}
+  {{- end }}
+  {{- range $key, $value := $parameters }}
+  ControlPlane__DeployTargets__0__Parameters__{{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
 {{- end }}
