@@ -125,11 +125,45 @@ startupProbe:
   timeoutSeconds: 5
   failureThreshold: 60
 
+# Recreate is the default because Honua Server applies database migrations
+# inline at startup (serialized by a PostgreSQL advisory lock), so old pods must
+# stop before new pods migrate the schema. Use RollingUpdate only for an
+# expand-only release whose migrations the previous version can read; see
+# honua/README.md "Upgrades: expand/contract". A pre-upgrade migration Job is not
+# available: the server has no migrate-and-exit entry point yet
+# (honua-io/honua-server#6470).
 strategy:
   type: Recreate
   rollingUpdate:
     maxSurge: 0
     maxUnavailable: 1
+
+# Database migration safety (honua-server Database:MigrationSafety). Each value
+# renders as a Database__MigrationSafety__* env var on the server container only
+# when set; empty values keep the server's own defaults. Setting one of these
+# keys here and also in config.env, secret.env or extraEnv fails render.
+#
+# HONUA_APPROVE_CONTRACT_MIGRATIONS is deliberately not a value: it is a one-shot
+# nonce the server prints when it refuses a contract-phase migration. Set it
+# through secret.env or extraEnv for that single upgrade, then remove it.
+migrationSafety:
+  # "" (server default Gate), "Gate" or "Auto". Gate: on an existing database,
+  # pending reviewed contract-phase (schema-narrowing) migrations are refused
+  # until HONUA_APPROVE_CONTRACT_MIGRATIONS carries the printed nonce. Auto
+  # applies them without approval. Fresh installs are unaffected.
+  contractApplyPolicy: ""
+  # Optional shell command the server runs immediately before contract-phase
+  # migrations apply on an existing database; a non-zero exit aborts the
+  # migration. It runs inside the server container, so the tool it calls (for
+  # example pg_dump) must exist in the image or a mounted volume; the stock
+  # image is not documented to ship pg_dump. The command is rendered as a plain
+  # env value in the pod spec: do not inline credentials, reference variables
+  # the container already has (for example from secret.env) instead.
+  backupCommand: ""
+  # null keeps the server default (true): contract-phase migrations without the
+  # compatibility-review marker are rejected. Set false only for a reviewed,
+  # one-off exception.
+  enforce: null
 
 terminationGracePeriodSeconds: 60
 
@@ -535,6 +569,36 @@ controlPlane:
     # Stable artifact reference for this target. Empty uses the rendered
     # image reference (repository:tag or repository@digest).
     artifactReference: ""
+    # Deploy telemetry gate parameters for this target, rendered as
+    # ControlPlane__DeployTargets__0__ParameterEntries__*. Empty renders nothing.
+    telemetry:
+      # connectionId of an entry in controlPlane.telemetryConnections. Sets the
+      # target's telemetry.connection parameter (the server's default
+      # kubernetes-honua-http preset then reads Prometheus job "honua" unless
+      # telemetry.prometheus.job/selector is set below).
+      connection: ""
+      # Other telemetry.* target parameters, for example
+      # telemetry.prometheus.job: "honua-honua". Keys must start with
+      # "telemetry."; the server rejects unrecognized keys at plan time.
+      parameters: {}
+  # Prometheus query connections for the server's deploy telemetry gate
+  # (ControlPlane:TelemetryConnections). Default empty renders nothing. Each
+  # entry:
+  #   connectionId: prometheus             # required, unique
+  #   baseUrl: https://prometheus.example.com   # required; https unless
+  #                                        # allowPrivateNetworks is true
+  #   queryPath: /api/v1/query             # optional (server default)
+  #   timeoutSeconds: 10                   # optional (server default 10)
+  #   allowPrivateNetworks: false          # true relaxes the server's SSRF
+  #                                        # guard for a trusted in-cluster or
+  #                                        # private endpoint such as
+  #                                        # http://prometheus.monitoring.svc:9090
+  #   authHeaderName: Authorization        # optional, needs authHeaderSecretRef
+  #   authHeaderSecretRef:                 # optional existing Secret holding the
+  #     name: prometheus-auth              # header value; projected through
+  #     key: header                        # secretKeyRef, never a ConfigMap
+  # Non-secret fields are rendered into the deploy-target ConfigMap.
+  telemetryConnections: []
 
 # Geoprocessing on Kubernetes Jobs (preview, 2026.2). When enabled, the server
 # registers its Kubernetes Job batch compute backend (honua-kubernetes-job) as

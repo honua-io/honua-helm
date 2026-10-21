@@ -26,11 +26,37 @@ Secret controllers, or cloud marketplace entitlement flows.
 Honua Server runs database migrations inline during application startup.
 Migrations are serialized by the server with a PostgreSQL advisory lock. The
 chart does not run a separate migration Job because Honua Server does not
-currently expose a migrate-only mode.
+currently expose a migrate-and-exit mode. A full server start is the only way
+to apply migrations, and it also starts background services. The opt-in
+pre-upgrade migration Job (`migrations.job.enabled`) is blocked on
+[honua-io/honua-server#6470](https://github.com/honua-io/honua-server/issues/6470).
 
 The chart default keeps `config.env.HONUA_SKIP_MIGRATIONS=false`. If an
 operator overrides this to `true`, the chart does not provide an alternate
-migration path; the operator owns schema convergence before serving traffic.
+migration path. Nothing converges the schema, and the operator owns that
+before serving traffic.
+
+### Contract-phase migrations
+
+The server classifies schema-narrowing migrations as contract phase. Values
+under `migrationSafety.*` render `Database__MigrationSafety__*` env on the
+server container only when set:
+
+| Value | Server setting | Empty / null means |
+| --- | --- | --- |
+| `migrationSafety.contractApplyPolicy` | `ContractApplyPolicy` (`Gate` or `Auto`) | server default `Gate`: on an existing database, pending reviewed contract migrations are refused until `HONUA_APPROVE_CONTRACT_MIGRATIONS` carries the one-shot nonce printed in the refusal |
+| `migrationSafety.backupCommand` | `BackupCommand` | no hook. When set, the server runs the shell command inside its container just before contract migrations apply on an existing database. A non-zero exit aborts. The tool must exist in the image or a mounted volume. |
+| `migrationSafety.enforce` | `Enforce` | server default `true`: contract migrations without the compatibility-review marker are rejected |
+
+`HONUA_APPROVE_CONTRACT_MIGRATIONS` is not a chart value. Set the nonce through
+`secret.env` or `extraEnv` for the single upgrade that needs it, then remove it.
+Render fails when a `Database__MigrationSafety__*` key set by these values is
+also present in `config.env`, `secret.env` or `extraEnv`.
+
+`helm rollback` is safe only when the previous image recognizes every applied
+migration. Otherwise its pods refuse to start with `schema_reader_incompatible`,
+and recovery is a database restore or a roll forward. See the chart README,
+"Upgrades: expand/contract".
 
 The default Deployment strategy is:
 
@@ -46,7 +72,9 @@ When desired replicas are greater than one, this safety property causes planned
 upgrade downtime while old pods are stopped and replacement pods start.
 
 Operators may opt into `RollingUpdate` only when the target migration set is
-forward and backward compatible across the old and new images:
+forward and backward compatible across the old and new images. In practice
+that means an expand-only release whose migrations the previous version can
+read:
 
 ```yaml
 strategy:
@@ -122,6 +150,24 @@ operator cannot configure the chart to claim a backend whose prerequisites it
 does not install, and the chart cannot silently register an unusable target.
 Set `controlPlane.deployTarget.enabled=false` to opt an installation out of
 registration entirely.
+
+### Deploy telemetry connections
+
+`controlPlane.telemetryConnections` (default `[]`) declares Prometheus query
+connections (`ControlPlane__TelemetryConnections__<n>__*`) in the same
+`<fullname>-deploy-target` ConfigMap. The ConfigMap renders whenever target
+registration is on or connections are declared. An auth header value is never
+written to the ConfigMap. It is projected from an existing Secret through
+`secretKeyRef` (`authHeaderSecretRef`). A `baseUrl` must be `https://` unless
+the connection sets `allowPrivateNetworks: true`, which mirrors the server's
+SSRF guard and is required for an in-cluster `http://` Prometheus.
+
+`controlPlane.deployTarget.telemetry.connection` sets the chart target's
+`telemetry.connection` parameter (`ControlPlane__DeployTargets__0__ParameterEntries__*`).
+It must name a declared `connectionId`. `telemetry.parameters` carries other
+`telemetry.*` keys, for example `telemetry.prometheus.job`. A telemetry
+connection does not change the backend's `SupportsRollback=false`: recovery
+stays manual.
 
 ## Health And Probes
 

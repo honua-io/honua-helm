@@ -1,4 +1,6 @@
-{{- if .Values.controlPlane.deployTarget.enabled }}
+{{- if eq (include "honua.controlPlaneConfigMap.enabled" .) "true" }}
+{{- $connections := include "honua.telemetryConnections" . | fromJsonArray }}
+{{- $parameterEntries := include "honua.deployTargetParameterEntries" . | fromJsonArray }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,6 +11,7 @@ metadata:
   annotations:
     {{- include "honua.releaseAnnotations" . | nindent 4 }}
 data:
+{{- if .Values.controlPlane.deployTarget.enabled }}
   # honua-server's ConfigurationDeployTargetRegistry binds
   # ControlPlane__DeployTargets__0__* into a DeployTargetDefinition
   # (Honua.Server.Features.ControlPlane.ControlPlaneOptions). TargetKind and
@@ -24,4 +27,33 @@ data:
   ControlPlane__DeployTargets__0__Environment: {{ include "honua.deployTargetEnvironment" . | quote }}
   ControlPlane__DeployTargets__0__TargetName: {{ include "honua.deployTargetName" . | quote }}
   ControlPlane__DeployTargets__0__ArtifactReference: {{ include "honua.deployTargetArtifactReference" . | quote }}
+  {{- /* Deploy target parameters (telemetry.connection and other telemetry.*
+         keys) as ParameterEntries, which the server merges into the target's
+         Parameters dictionary. Rendered only when set. */}}
+  {{- range $index, $entry := $parameterEntries }}
+  ControlPlane__DeployTargets__0__ParameterEntries__{{ $index }}__Key: {{ $entry.key | quote }}
+  ControlPlane__DeployTargets__0__ParameterEntries__{{ $index }}__Value: {{ $entry.value | quote }}
+  {{- end }}
+{{- end }}
+{{- /* ControlPlane:TelemetryConnections (Prometheus query connections used by the
+       server's deploy telemetry gate). Non-secret fields only: an auth header
+       value is projected from an existing Secret through secretKeyRef env on
+       the Deployment, never written into this ConfigMap. */}}
+{{- range $index, $connection := $connections }}
+  ControlPlane__TelemetryConnections__{{ $index }}__ConnectionId: {{ $connection.connectionId | quote }}
+  ControlPlane__TelemetryConnections__{{ $index }}__Provider: "prometheus"
+  ControlPlane__TelemetryConnections__{{ $index }}__BaseUrl: {{ $connection.baseUrl | quote }}
+  {{- with $connection.queryPath }}
+  ControlPlane__TelemetryConnections__{{ $index }}__QueryPath: {{ . | quote }}
+  {{- end }}
+  {{- with $connection.timeoutSeconds }}
+  ControlPlane__TelemetryConnections__{{ $index }}__TimeoutSeconds: {{ . | toString | quote }}
+  {{- end }}
+  {{- if eq (toString (default false $connection.allowPrivateNetworks)) "true" }}
+  ControlPlane__TelemetryConnections__{{ $index }}__AllowPrivateNetworks: "true"
+  {{- end }}
+  {{- with $connection.authHeaderName }}
+  ControlPlane__TelemetryConnections__{{ $index }}__AuthHeaderName: {{ . | quote }}
+  {{- end }}
+{{- end }}
 {{- end }}

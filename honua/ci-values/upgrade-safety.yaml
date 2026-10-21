@@ -1,0 +1,28 @@
+# Upgrade-safety wiring: Database:MigrationSafety env and Prometheus deploy
+# telemetry connections. Layered over base.yaml so CI can assert the rendered
+# Database__MigrationSafety__* env, the ControlPlane__TelemetryConnections__*
+# ConfigMap keys, the secretKeyRef-only auth header, and the deploy target's
+# telemetry.connection parameter entry.
+migrationSafety:
+  contractApplyPolicy: Gate
+  backupCommand: "/opt/backup/pre-contract-backup.sh"
+  enforce: true
+
+controlPlane:
+  deployTarget:
+    telemetry:
+      connection: in-cluster-prometheus
+      parameters:
+        telemetry.prometheus.job: honua-honua
+  telemetryConnections:
+    - connectionId: managed-prometheus
+      baseUrl: https://prometheus.example.com
+      queryPath: /api/v1/query
+      timeoutSeconds: 15
+      authHeaderName: Authorization
+      authHeaderSecretRef:
+        name: prometheus-query-auth
+        key: header
+    - connectionId: in-cluster-prometheus
+      baseUrl: http://prometheus.monitoring.svc:9090
+      allowPrivateNetworks: true

@@ -219,6 +219,61 @@ true
 {{- default (include "honua.imageReference" .) (trim (default "" (get $deployTarget "artifactReference"))) -}}
 {{- end -}}
 
+{{- /* controlPlane.telemetryConnections as a list (empty when unset). */ -}}
+{{- define "honua.telemetryConnections" -}}
+{{- toJson ((get (.Values.controlPlane | default dict) "telemetryConnections") | default list) -}}
+{{- end -}}
+
+{{- /* The deploy-target ConfigMap carries both the chart's deploy target
+       registration and any chart-declared ControlPlane:TelemetryConnections, so
+       it renders when either is in use. */ -}}
+{{- define "honua.controlPlaneConfigMap.enabled" -}}
+{{- $connections := include "honua.telemetryConnections" . | fromJsonArray -}}
+{{- if or .Values.controlPlane.deployTarget.enabled (gt (len $connections) 0) -}}true{{- end -}}
+{{- end -}}
+
+{{- /* Deploy target parameters rendered as
+       ControlPlane:DeployTargets:0:ParameterEntries (dotted keys such as
+       telemetry.connection cannot be environment variable names).
+       telemetry.connection comes first, then controlPlane.deployTarget.telemetry.parameters
+       in key order. Returns a JSON list of {key, value}. */ -}}
+{{- define "honua.deployTargetParameterEntries" -}}
+{{- $deployTarget := get (.Values.controlPlane | default dict) "deployTarget" | default dict -}}
+{{- $telemetry := get $deployTarget "telemetry" | default dict -}}
+{{- $entries := list -}}
+{{- $connection := trim (toString (default "" (get $telemetry "connection"))) -}}
+{{- if $connection -}}
+{{- $entries = append $entries (dict "key" "telemetry.connection" "value" $connection) -}}
+{{- end -}}
+{{- $parameters := get $telemetry "parameters" | default dict -}}
+{{- range $key := keys $parameters | sortAlpha -}}
+{{- $entries = append $entries (dict "key" $key "value" (toString (get $parameters $key))) -}}
+{{- end -}}
+{{- toJson $entries -}}
+{{- end -}}
+
+{{- /* Database:MigrationSafety environment rendered from migrationSafety.*.
+       Empty strings and a null enforce render nothing, so the server keeps its
+       own defaults (ContractApplyPolicy=Gate, Enforce=true, no backup command).
+       Returns a JSON object of env name -> value. */ -}}
+{{- define "honua.migrationSafetyEnv" -}}
+{{- $ms := .Values.migrationSafety | default dict -}}
+{{- $env := dict -}}
+{{- $policy := trim (toString (default "" (get $ms "contractApplyPolicy"))) -}}
+{{- if $policy -}}
+{{- $_ := set $env "Database__MigrationSafety__ContractApplyPolicy" $policy -}}
+{{- end -}}
+{{- $backup := trim (toString (default "" (get $ms "backupCommand"))) -}}
+{{- if $backup -}}
+{{- $_ := set $env "Database__MigrationSafety__BackupCommand" $backup -}}
+{{- end -}}
+{{- $enforce := get $ms "enforce" -}}
+{{- if kindIs "bool" $enforce -}}
+{{- $_ := set $env "Database__MigrationSafety__Enforce" (toString $enforce) -}}
+{{- end -}}
+{{- toJson $env -}}
+{{- end -}}
+
 {{- /* Minimum credential lengths, defined once so the render-time validation
        layer has a single source of truth for the thresholds. The preflight Job
        (templates/preflight-job.yaml) enforces the same minimums at install time

@@ -286,3 +286,102 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* Database:MigrationSafety has one source of truth. When a
+       migrationSafety.* value renders a Database__MigrationSafety__* env var,
+       the same key in config.env, secret.env or extraEnv is rejected rather
+       than silently shadowed (explicit env would win over envFrom, and a
+       duplicate extraEnv entry would make the winner order-dependent). */ -}}
+{{- $migrationSafetyEnv := include "honua.migrationSafetyEnv" . | fromJson -}}
+{{- range $name, $_ := $migrationSafetyEnv -}}
+{{- if hasKey ((($.Values.config).env) | default dict) $name -}}
+{{- fail (printf "%s is set by migrationSafety values; remove it from config.env." $name) -}}
+{{- end -}}
+{{- if hasKey ((($.Values.secret).env) | default dict) $name -}}
+{{- fail (printf "%s is set by migrationSafety values; remove it from secret.env." $name) -}}
+{{- end -}}
+{{- range ($.Values.extraEnv | default list) -}}
+{{- if eq (.name | default "") $name -}}
+{{- fail (printf "%s is set by migrationSafety values; remove it from extraEnv." $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Deploy telemetry connections and target parameters. The server validates
+       these again at startup and plan time; these guards catch the mistakes the
+       chart can see before an install fails or a gate is silently invalid. */ -}}
+{{- $telemetryConnections := include "honua.telemetryConnections" . | fromJsonArray -}}
+{{- $connectionIds := list -}}
+{{- range $index, $connection := $telemetryConnections -}}
+{{- $prefix := printf "controlPlane.telemetryConnections[%d]" (int $index) -}}
+{{- $id := trim (toString (default "" (get $connection "connectionId"))) -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9_.-]*$" $id) -}}
+{{- fail (printf "%s.connectionId must be a non-empty identifier (letters, numbers, '_', '.', '-'), got %q." $prefix $id) -}}
+{{- end -}}
+{{- if has $id $connectionIds -}}
+{{- fail (printf "%s.connectionId %q is not unique; the server rejects duplicate telemetry connection ids." $prefix $id) -}}
+{{- end -}}
+{{- $connectionIds = append $connectionIds $id -}}
+{{- $baseUrl := trim (toString (default "" (get $connection "baseUrl"))) -}}
+{{- $allowPrivate := eq (toString (default false (get $connection "allowPrivateNetworks"))) "true" -}}
+{{- if not (regexMatch "^https?://[^\\s/@]+" $baseUrl) -}}
+{{- fail (printf "%s.baseUrl must be an absolute http(s) URL without credentials, got %q." $prefix $baseUrl) -}}
+{{- end -}}
+{{- if and (not $allowPrivate) (not (hasPrefix "https://" $baseUrl)) -}}
+{{- fail (printf "%s.baseUrl %q is not https. The server's outbound SSRF guard rejects http, private and loopback telemetry endpoints unless the connection sets allowPrivateNetworks: true (only for a trusted in-cluster or private Prometheus such as http://prometheus.monitoring.svc:9090)." $prefix $baseUrl) -}}
+{{- end -}}
+{{- $hasAuthName := ne (trim (toString (default "" (get $connection "authHeaderName")))) "" -}}
+{{- $hasAuthRef := gt (len (get $connection "authHeaderSecretRef" | default dict)) 0 -}}
+{{- if ne $hasAuthName $hasAuthRef -}}
+{{- fail (printf "%s: set authHeaderName and authHeaderSecretRef together (the header value is read from that existing Secret through secretKeyRef; it is never written into a ConfigMap)." $prefix) -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $telemetryConnections) 0 -}}
+{{- range $key, $_ := ((.Values.config).env | default dict) -}}
+{{- if hasPrefix "ControlPlane__TelemetryConnections__" $key -}}
+{{- fail (printf "%s must be configured through controlPlane.telemetryConnections, not duplicated in config.env" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- range $key, $_ := ((.Values.secret).env | default dict) -}}
+{{- if hasPrefix "ControlPlane__TelemetryConnections__" $key -}}
+{{- fail (printf "%s must be configured through controlPlane.telemetryConnections (header values through authHeaderSecretRef), not duplicated in secret.env" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- range (.Values.extraEnv | default list) -}}
+{{- if hasPrefix "ControlPlane__TelemetryConnections__" (.name | default "") -}}
+{{- fail (printf "%s must be configured through controlPlane.telemetryConnections, not duplicated in extraEnv" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $targetTelemetry := (get (.Values.controlPlane.deployTarget | default dict) "telemetry") | default dict -}}
+{{- $targetConnection := trim (toString (default "" (get $targetTelemetry "connection"))) -}}
+{{- $targetParameters := get $targetTelemetry "parameters" | default dict -}}
+{{- if or $targetConnection (gt (len $targetParameters) 0) -}}
+{{- if not .Values.controlPlane.deployTarget.enabled -}}
+{{- fail "controlPlane.deployTarget.telemetry is set but controlPlane.deployTarget.enabled is false, so no target would carry it. Enable target registration or clear controlPlane.deployTarget.telemetry." -}}
+{{- end -}}
+{{- if and $targetConnection (not (has $targetConnection $connectionIds)) -}}
+{{- fail (printf "controlPlane.deployTarget.telemetry.connection %q does not name a connectionId in controlPlane.telemetryConnections; the server would reject the plan because the connection is not configured." $targetConnection) -}}
+{{- end -}}
+{{- range $key, $value := $targetParameters -}}
+{{- if eq $key "telemetry.connection" -}}
+{{- fail "Set the target's telemetry connection with controlPlane.deployTarget.telemetry.connection, not controlPlane.deployTarget.telemetry.parameters." -}}
+{{- end -}}
+{{- if not (regexMatch "^telemetry\\.[A-Za-z0-9_.]+$" $key) -}}
+{{- fail (printf "controlPlane.deployTarget.telemetry.parameters key %q must start with \"telemetry.\"." $key) -}}
+{{- end -}}
+{{- if eq (trim (toString $value)) "" -}}
+{{- fail (printf "controlPlane.deployTarget.telemetry.parameters.%s must not be empty." $key) -}}
+{{- end -}}
+{{- end -}}
+{{- range $key, $_ := ((.Values.config).env | default dict) -}}
+{{- if or (hasPrefix "ControlPlane__DeployTargets__0__ParameterEntries__" $key) (hasPrefix "ControlPlane__DeployTargets__0__Parameters__" $key) -}}
+{{- fail (printf "%s must be configured through controlPlane.deployTarget.telemetry, not duplicated in config.env" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- range (.Values.extraEnv | default list) -}}
+{{- if or (hasPrefix "ControlPlane__DeployTargets__0__ParameterEntries__" (.name | default "")) (hasPrefix "ControlPlane__DeployTargets__0__Parameters__" (.name | default "")) -}}
+{{- fail (printf "%s must be configured through controlPlane.deployTarget.telemetry, not duplicated in extraEnv" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

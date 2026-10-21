@@ -27,7 +27,21 @@ Rollback:
 Migrations run inline during Honua startup. The readiness endpoint
 /healthz/ready is the chart's signal that startup and migrations completed.
 The default strategy is Recreate so old and new server versions do not run
-against the same database during a migrating upgrade.
+against the same database during a migrating upgrade. Before upgrading, check
+GET /api/v1/admin/deploy/preflight and take a database backup. A pre-upgrade
+migration Job is not available yet (honua-io/honua-server#6470).
+{{- $migrationSafetyEnv := include "honua.migrationSafetyEnv" . | fromJson }}
+Contract migrations: ContractApplyPolicy={{ default "Gate (server default)" (get $migrationSafetyEnv "Database__MigrationSafety__ContractApplyPolicy") }}
+{{- if hasKey $migrationSafetyEnv "Database__MigrationSafety__BackupCommand" }}, backup command set
+{{- end }}.
+If an upgrade is refused with a contract-migration nonce, set that nonce as
+HONUA_APPROVE_CONTRACT_MIGRATIONS (secret.env or extraEnv) for that one upgrade,
+then remove it.
+{{- $telemetryConnections := include "honua.telemetryConnections" . | fromJsonArray }}
+{{- if $telemetryConnections }}
+Deploy telemetry connections: {{ range $i, $c := $telemetryConnections }}{{ if $i }}, {{ end }}{{ $c.connectionId }}{{ end }}
+{{- with .Values.controlPlane.deployTarget.telemetry }}{{ with .connection }} (target uses {{ . }}){{ end }}{{ end }}
+{{- end }}
 
 {{- if eq (default "Recreate" .Values.strategy.type) "RollingUpdate" }}
 WARNING: RollingUpdate is enabled. Use it only when the target migration set is
