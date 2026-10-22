@@ -43,7 +43,6 @@ config:
     ASPNETCORE_ENVIRONMENT: "Production"
     ASPNETCORE_URLS: "http://+:8080"
     Deployment__Mode: "SingleInstance"
-    HONUA_SKIP_MIGRATIONS: "false"
 
 secret:
   create: false

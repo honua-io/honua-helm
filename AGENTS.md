@@ -13,8 +13,12 @@ The chart was extracted from the `honua-server` monorepo and is published to
 chart source in `honua/`, CI in `.github/workflows/`, docs in `docs/`.
 
 Honua Server runs database migrations inline during startup behind a PostgreSQL
-advisory lock; the chart defaults the Deployment strategy to `Recreate` so old
-pods stop before new pods start during a migrating upgrade.
+advisory lock; the chart then resolves the Deployment strategy to `Recreate` so
+old pods stop before new pods start during a migrating upgrade. With
+`migrations.job.enabled` a pre-install/pre-upgrade hook Job
+(`templates/migrate-job.yaml`) runs the image in migrate-only mode first, the
+Deployment gets `HONUA_SKIP_MIGRATIONS=true`, and the strategy resolves to
+`RollingUpdate`.
 
 ## Tech Stack
 
@@ -144,10 +148,15 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
 - `image.tag` defaults to `latest-aot` (dev-only). Release CI stamps a concrete
   `vX.Y.Z-aot` tag. Pin by digest in production; `image.pullPolicy` must be
   `IfNotPresent` or `Never` when `image.digest` is set.
-- `strategy.type` defaults to `Recreate` (safe for inline migrations). Use
-  `RollingUpdate` only with forward/backward-compatible migrations; the schema
-  rejects `RollingUpdate` when both `maxSurge` and `maxUnavailable` are zero
+- `strategy.type` defaults to empty, resolved by `honua.strategyType`:
+  `Recreate` (safe for inline migrations), or `RollingUpdate` when
+  `migrations.job.enabled`. Use `RollingUpdate` only with forward/backward-
+  compatible migrations; the schema and `validations.yaml` reject
+  `RollingUpdate` when both `maxSurge` and `maxUnavailable` are zero
   (including `"0"` / `"0%"`).
+- `HONUA_MIGRATE_ONLY` is never user env, and `HONUA_SKIP_MIGRATIONS` is
+  chart-owned while `migrations.job.enabled`; `validations.yaml` rejects them
+  in `config.env`/`secret.env`/`extraEnv`.
 - `release.id` and the effective app version are used as Kubernetes label
   values: <=63 chars, only letters/numbers/`_`/`.`/`-`, start/end alphanumeric,
   no `+` build metadata. Put free-form build info in `release.manifest`.

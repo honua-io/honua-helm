@@ -1,0 +1,128 @@
+{{- /* Out-of-band migrations: honua-server migrate-only mode as a Helm hook.
+       The Job runs the Deployment's image with HONUA_MIGRATE_ONLY=true and the
+       Deployment's database settings, so it applies the same migrations with
+       the same Database:MigrationSafety gates, prints one honua.migrate-only/v1
+       JSON line to stdout and exits with a typed code. Helm applies the
+       Deployment only after it exits 0; any other exit fails the install or
+       upgrade with the Deployment unchanged. backoffLimit 0: a refusal is not
+       transient, so re-run deliberately. The finished Job is kept (delete
+       policy before-hook-creation) so its summary stays readable with
+       kubectl logs job/<name>. */ -}}
+{{- if eq (include "honua.migrationsJob.enabled" .) "true" }}
+{{- $job := .Values.migrations.job }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "honua.migrationsJobName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ int $job.activeDeadlineSeconds }}
+  {{- if not (kindIs "invalid" $job.ttlSecondsAfterFinished) }}
+  ttlSecondsAfterFinished: {{ int $job.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- with $job.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "honua.selectorLabels" . | nindent 8 }}
+        {{- include "honua.releaseLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+      annotations:
+        {{- include "honua.releaseAnnotations" . | nindent 8 }}
+        {{- with $job.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "honua.migrationsJob.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "honua.imageReference" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- /* On failure the pod status carries the log tail, which ends with
+                 the summary line. */}}
+          terminationMessagePolicy: FallbackToLogsOnError
+          envFrom:
+            {{- if .Values.config.create }}
+            - configMapRef:
+                name: {{ include "honua.migrationsJobName" . }}
+            {{- else if .Values.config.name }}
+            - configMapRef:
+                name: {{ include "honua.configmapName" . }}
+            {{- end }}
+            {{- if .Values.secret.create }}
+            - secretRef:
+                name: {{ include "honua.migrationsJobName" . }}
+            {{- else if .Values.secret.name }}
+            - secretRef:
+                name: {{ include "honua.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: HONUA_MIGRATE_ONLY
+              value: "true"
+            {{- range $name, $value := (include "honua.migrationSafetyEnv" . | fromJson) }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml (default .Values.resources $job.resources) | nindent 12 }}
+          {{- if or .Values.tmpVolume.enabled .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- if .Values.tmpVolume.enabled }}
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.tmpVolume.enabled .Values.extraVolumes }}
+      volumes:
+        {{- if .Values.tmpVolume.enabled }}
+        - name: tmp
+          {{- if .Values.tmpVolume.sizeLimit }}
+          emptyDir:
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

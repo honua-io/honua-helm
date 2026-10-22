@@ -125,15 +125,15 @@ startupProbe:
   timeoutSeconds: 5
   failureThreshold: 60
 
-# Recreate is the default because Honua Server applies database migrations
-# inline at startup (serialized by a PostgreSQL advisory lock), so old pods must
-# stop before new pods migrate the schema. Use RollingUpdate only for an
-# expand-only release whose migrations the previous version can read; see
-# honua/README.md "Upgrades: expand/contract". A pre-upgrade migration Job is not
-# available: the server has no migrate-and-exit entry point yet
-# (honua-io/honua-server#6470).
+# Deployment strategy. Empty type lets the chart choose: Recreate while
+# migrations run inline at server startup (serialized by a PostgreSQL advisory
+# lock), so old pods stop before new pods migrate the schema; RollingUpdate when
+# migrations.job.enabled applies them in a pre-upgrade Job first. Set Recreate or
+# RollingUpdate explicitly to override. With inline migrations, use RollingUpdate
+# only for an expand-only release whose migrations the previous version can read;
+# see honua/README.md "Upgrades: expand/contract".
 strategy:
-  type: Recreate
+  type: ""
   rollingUpdate:
     maxSurge: 0
     maxUnavailable: 1
@@ -164,6 +164,45 @@ migrationSafety:
   # compatibility-review marker are rejected. Set false only for a reviewed,
   # one-off exception.
   enforce: null
+
+# Out-of-band migrations (honua-server migrate-only mode, HONUA_MIGRATE_ONLY).
+# When enabled, a pre-install/pre-upgrade hook Job runs the same image with
+# HONUA_MIGRATE_ONLY=true and the Deployment's database settings, secrets, extra
+# env and migrationSafety values. It applies the migrations with every
+# MigrationSafety gate in force, prints one honua.migrate-only/v1 JSON line to
+# stdout and exits. Only after it exits 0 does Helm apply the Deployment, which
+# then runs with HONUA_SKIP_MIGRATIONS=true (verify the journal, never migrate)
+# and defaults to strategy RollingUpdate. A non-zero exit fails the upgrade before
+# the Deployment changes; exit 5 means a reviewed contract migration needs
+# HONUA_APPROVE_CONTRACT_MIGRATIONS set to the printed nonce for one upgrade. See
+# honua/README.md "Upgrade and migration contract" for every exit code.
+#
+# Default false for now. This becomes the recommended production path. It needs
+# a honua-server image at or after the first release that ships
+# HONUA_MIGRATE_ONLY (honua-server#6479; today: the next release after 2026.1).
+# An older image ignores HONUA_MIGRATE_ONLY, starts serving and never exits, so
+# the hook fails at activeDeadlineSeconds. Size helm --timeout above activeDeadlineSeconds.
+# HONUA_SKIP_MIGRATIONS and HONUA_MIGRATE_ONLY are chart-owned: render fails when
+# they also appear in config.env, secret.env or extraEnv.
+migrations:
+  job:
+    enabled: false
+    # Upper bound for one migration run, including a contract backupCommand.
+    activeDeadlineSeconds: 1800
+    # Keep the finished Job (and its summary log) this long; null keeps it until
+    # the next upgrade replaces it (hook-delete-policy before-hook-creation).
+    ttlSecondsAfterFinished: 86400
+    # Empty uses the server container's resources.
+    resources: {}
+    # Service account for the Job pod. Empty uses the chart's service account.
+    # On the first install with serviceAccount.create=true that account does not
+    # exist yet when pre-install hooks run, so the Job uses the namespace default
+    # account instead; set this (or serviceAccount.create=false with
+    # serviceAccount.name) when the connection string is a cloud secret reference
+    # resolved through workload identity.
+    serviceAccountName: ""
+    podAnnotations: {}
+    podLabels: {}
 
 terminationGracePeriodSeconds: 60
 
@@ -333,7 +372,6 @@ config:
   env:
     HONUA_OBSERVABILITY: "false"
     HONUA_OPENTELEMETRY: "false"
-    HONUA_SKIP_MIGRATIONS: "false"
     # SingleInstance runs one coordinated server. Set MultiNode for horizontally
     # scaled HA; MultiNode additionally requires ConnectionStrings__redis and a
     # shared cloud FileStorage:Provider (AwsS3 or AzureBlob). Enabling autoscaling
