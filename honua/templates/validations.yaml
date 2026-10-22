@@ -379,6 +379,13 @@
 {{- fail (printf "%s must be configured through controlPlane.deployTarget.telemetry, not duplicated in config.env" $key) -}}
 {{- end -}}
 {{- end -}}
+{{- /* The runtime Secret loads after the deploy-target ConfigMap, so a
+       secret.env entry would override or interleave the generated entries. */ -}}
+{{- range $key, $_ := ((.Values.secret).env | default dict) -}}
+{{- if or (hasPrefix "ControlPlane__DeployTargets__0__ParameterEntries__" $key) (hasPrefix "ControlPlane__DeployTargets__0__Parameters__" $key) -}}
+{{- fail (printf "%s must be configured through controlPlane.deployTarget.telemetry, not duplicated in secret.env" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- range (.Values.extraEnv | default list) -}}
 {{- if or (hasPrefix "ControlPlane__DeployTargets__0__ParameterEntries__" (.name | default "")) (hasPrefix "ControlPlane__DeployTargets__0__Parameters__" (.name | default "")) -}}
 {{- fail (printf "%s must be configured through controlPlane.deployTarget.telemetry, not duplicated in extraEnv" .name) -}}

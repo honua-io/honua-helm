@@ -656,6 +656,29 @@ jobs:
               exit 1
             fi
           done
+          # Every generated-key family rejects a colliding entry from each
+          # env source (config.env, secret.env, extraEnv) with its own message.
+          for case in \
+            "secret.env|--set secret.env.ControlPlane__DeployTargets__0__ParameterEntries__5__Key=telemetry.policy" \
+            "secret.env|--set-string secret.env.ControlPlane__DeployTargets__0__Parameters__telemetry\.policy=health-only" \
+            "extraEnv|--set extraEnv[0].name=ControlPlane__DeployTargets__0__ParameterEntries__5__Value --set extraEnv[0].value=x" \
+            "secret.env|--set secret.env.ControlPlane__TelemetryConnections__2__ConnectionId=other" \
+            "extraEnv|--set extraEnv[0].name=ControlPlane__TelemetryConnections__2__ConnectionId --set extraEnv[0].value=other" \
+            "secret.env|--set migrationSafety.contractApplyPolicy=Gate --set secret.env.Database__MigrationSafety__ContractApplyPolicy=Auto"; do
+            source_name="${case%%|*}"
+            args="${case#*|}"
+            set +e
+            # shellcheck disable=SC2086
+            helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/upgrade-safety.yaml ${args} \
+              > /tmp/honua-rendered-collision.txt 2>&1
+            status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]] || ! grep -q "${source_name}" /tmp/honua-rendered-collision.txt; then
+              echo "Expected a ${source_name} collision to fail render for: ${args}"
+              cat /tmp/honua-rendered-collision.txt
+              exit 1
+            fi
+          done
 
       - name: Validate ASPNETCORE_URLS / targetPort mismatch guard fails invalid config
         run: |
