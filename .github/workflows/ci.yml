@@ -1138,6 +1138,7 @@ jobs:
           kubectl logs -n honua-smoke job/honua-mj-honua-migrate > /tmp/honua-smoke/migration-job/last-job.log 2>&1
           kubectl logs -n honua-smoke deployment/honua-mj-honua > /tmp/honua-smoke/migration-job/server.log 2>&1
           helm history honua-mj -n honua-smoke > /tmp/honua-smoke/migration-job/helm-history.txt 2>&1
+          true
 
       - name: Upload smoke evidence
         if: always()
