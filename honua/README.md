@@ -315,13 +315,29 @@ The values schema rejects `RollingUpdate` when both `maxSurge` and
 
 Readiness at `/healthz/ready` is the chart signal that startup and migrations completed.
 
-For an atomic guarded upgrade on Helm 3, prefer `--atomic` with an explicit
-timeout so a failed rollout auto-rolls-back to the prior revision instead of
-leaving a partially-applied Deployment:
+`--atomic` is only for an upgrade whose current revision includes the
+schema-reader guard. An unguarded source, including `honua-2026.1`, must
+upgrade without `--atomic`. If the target applies a migration and then fails
+readiness, Helm immediately restarts the previous revision against the migrated
+database. An unguarded image serves that newer schema with no guard. A failed
+upgrade from an unguarded source is recovered by restoring the backup taken
+before the upgrade, not by Helm's automatic rollback onto 2026.1.
+
+For an atomic upgrade from a guarded image on Helm 3, prefer `--atomic` with
+an explicit timeout so a failed rollout auto-rolls-back to the prior revision
+instead of leaving a partially-applied Deployment:
 
 ```bash
 helm upgrade --install honua ./honua -f honua/values-prod.yaml \
   --atomic --timeout 10m
+```
+
+Do not pass `--atomic` when the current revision is an unguarded image. Omit
+it and keep the same timeout:
+
+```bash
+helm upgrade --install honua ./honua -f honua/values-prod.yaml \
+  --timeout 10m
 ```
 
 `--atomic` waits for the readiness scope described above (startup + migrations
@@ -332,7 +348,8 @@ above the worst-case migration duration for your database, or a slow migration
 can be aborted mid-run. `helm history` retains prior revisions (and their
 values/manifest) so a subsequent manual `helm rollback` remains available even
 without `--atomic`; see [Release evidence and rollback](#release-evidence-and-rollback)
-for what that rollback can and cannot restore.
+for what that rollback can and cannot restore. A manual rollback onto an
+unguarded image is not a recovery either.
 
 ## Upgrades: expand/contract
 
@@ -378,8 +395,11 @@ is the source of truth. This is how it maps onto the chart.
    backup taken before the upgrade. It predates the guard and serves a newer schema
    with no refusal. There is no release-named immutable tag for that image yet
    ([honua-io/honua-release#776](https://github.com/honua-io/honua-release/issues/776)).
-   `--atomic` runs `helm rollback` automatically, so a failed upgrade that already
-   applied a contract migration still needs the restore.
+   An unguarded source must upgrade without `--atomic`. A failed upgrade is
+   recovered by restoring the backup taken before the upgrade, not by Helm's
+   automatic rollback onto 2026.1. `--atomic` still runs `helm rollback` when
+   the source image is guarded, so a failed upgrade that already applied a
+   contract migration needs that same restore.
 
 The chart exposes the server's `Database:MigrationSafety` settings as values.
 Each renders a `Database__MigrationSafety__*` env var on the server container
