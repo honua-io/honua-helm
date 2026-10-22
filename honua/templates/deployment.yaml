@@ -47,7 +47,7 @@ spec:
         {{- if .Values.secret.create }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
-        {{- if .Values.controlPlane.deployTarget.enabled }}
+        {{- if eq (include "honua.controlPlaneConfigMap.enabled" .) "true" }}
         checksum/deploy-target: {{ include (print $.Template.BasePath "/deploy-target-configmap.yaml") . | sha256sum }}
         {{- end }}
         {{- if $gpJobs }}
@@ -81,7 +81,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "honua.releaseInfoConfigMapName" . }}
-            {{- if .Values.controlPlane.deployTarget.enabled }}
+            {{- if eq (include "honua.controlPlaneConfigMap.enabled" .) "true" }}
             - configMapRef:
                 name: {{ include "honua.deployTargetConfigMapName" . }}
             {{- end }}
@@ -129,6 +129,25 @@ spec:
               value: {{ $otlpEndpoint | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: {{ default "grpc" (dig "otlpProtocol" "grpc" (.Values.observability | default dict)) | quote }}
+            {{- end }}
+            {{- /* Database:MigrationSafety. Explicit env wins over every envFrom
+                   source; validations.yaml rejects the same key in config.env,
+                   secret.env or extraEnv so there is one source of truth. */}}
+            {{- range $name, $value := (include "honua.migrationSafetyEnv" . | fromJson) }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- /* Telemetry connection auth header values come only from an
+                   existing Secret; the non-secret fields are in the
+                   deploy-target ConfigMap. */}}
+            {{- range $index, $connection := (include "honua.telemetryConnections" . | fromJsonArray) }}
+            {{- with $connection.authHeaderSecretRef }}
+            - name: {{ printf "ControlPlane__TelemetryConnections__%d__AuthHeaderValue" (int $index) }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ .key | quote }}
+            {{- end }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

@@ -83,8 +83,79 @@
             },
             "environment": { "type": "string" },
             "targetName": { "type": "string" },
-            "artifactReference": { "type": "string" }
+            "artifactReference": { "type": "string" },
+            "telemetry": {
+              "type": "object",
+              "description": "Deploy telemetry gate parameters for this target, rendered as ControlPlane__DeployTargets__0__ParameterEntries__*.",
+              "additionalProperties": false,
+              "properties": {
+                "connection": {
+                  "type": "string",
+                  "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                  "description": "connectionId of an entry in controlPlane.telemetryConnections; sets the target's telemetry.connection parameter."
+                },
+                "parameters": {
+                  "type": "object",
+                  "description": "Other telemetry.* target parameters (for example telemetry.prometheus.job).",
+                  "propertyNames": { "pattern": "^telemetry\\.[A-Za-z0-9_.]+$" },
+                  "additionalProperties": { "type": ["string", "number", "boolean"] }
+                }
+              }
+            }
           }
+        },
+        "telemetryConnections": {
+          "type": "array",
+          "description": "Prometheus query connections for the server's deploy telemetry gate (ControlPlane:TelemetryConnections). Non-secret fields render into the deploy-target ConfigMap; an auth header value is projected only from an existing Secret.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["connectionId", "baseUrl"],
+            "properties": {
+              "connectionId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+              "baseUrl": { "type": "string", "pattern": "^https?://[^\\s/@]+" },
+              "queryPath": { "type": "string", "pattern": "^/" },
+              "timeoutSeconds": { "type": "integer", "minimum": 1 },
+              "allowPrivateNetworks": { "type": "boolean" },
+              "authHeaderName": { "type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$" },
+              "authHeaderSecretRef": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "key"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "key": { "type": "string", "minLength": 1 }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "$comment": "The server's SSRF guard rejects http (and private/loopback destinations) unless the connection opts into AllowPrivateNetworks.",
+                "if": { "not": { "properties": { "allowPrivateNetworks": { "const": true } }, "required": ["allowPrivateNetworks"] } },
+                "then": { "properties": { "baseUrl": { "pattern": "^https://" } } }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "migrationSafety": {
+      "type": "object",
+      "description": "honua-server Database:MigrationSafety, rendered as Database__MigrationSafety__* env only when set.",
+      "additionalProperties": false,
+      "properties": {
+        "contractApplyPolicy": {
+          "type": "string",
+          "enum": ["", "Auto", "Gate"],
+          "description": "Empty keeps the server default (Gate)."
+        },
+        "backupCommand": {
+          "type": "string",
+          "description": "Shell command run in the server container immediately before contract-phase migrations apply on an existing database; non-zero exit aborts."
+        },
+        "enforce": {
+          "type": ["boolean", "null"],
+          "description": "null keeps the server default (true)."
         }
       }
     },

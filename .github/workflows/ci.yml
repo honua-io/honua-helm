@@ -561,6 +561,125 @@ jobs:
           grep -qE "deployTarget[./]backend" /tmp/honua-rendered-deploy-target-backend-invalid.yaml
           grep -q "honua-gitops-kubernetes" /tmp/honua-rendered-deploy-target-backend-invalid.yaml
 
+      - name: Verify upgrade-safety wiring (migration safety + telemetry connections)
+        run: |
+          set -euo pipefail
+          # Default: nothing new renders, so existing installs are byte-stable.
+          for key in 'Database__MigrationSafety__' 'ControlPlane__TelemetryConnections__' 'ControlPlane__DeployTargets__0__ParameterEntries__' 'HONUA_APPROVE_CONTRACT_MIGRATIONS'; do
+            if grep -q "${key}" /tmp/honua-rendered-base.yaml; then
+              echo "Default render unexpectedly carries ${key}*."
+              exit 1
+            fi
+          done
+          helm template honua ./honua \
+            -f honua/ci-values/base.yaml \
+            -f honua/ci-values/upgrade-safety.yaml \
+            > /tmp/honua-rendered-upgrade-safety.yaml
+          rendered=/tmp/honua-rendered-upgrade-safety.yaml
+          grep -A1 'name: Database__MigrationSafety__ContractApplyPolicy$' "${rendered}" | grep -q 'value: "Gate"'
+          grep -A1 'name: Database__MigrationSafety__BackupCommand$' "${rendered}" | grep -q 'value: "/opt/backup/pre-contract-backup.sh"'
+          grep -A1 'name: Database__MigrationSafety__Enforce$' "${rendered}" | grep -q 'value: "true"'
+          # enforce=false is a real value and must render, not be dropped as empty.
+          helm template honua ./honua -f honua/ci-values/base.yaml --set migrationSafety.enforce=false \
+            | grep -A1 'name: Database__MigrationSafety__Enforce$' | grep -q 'value: "false"'
+          # The one-shot approval nonce is never a chart value.
+          if grep -q 'HONUA_APPROVE_CONTRACT_MIGRATIONS' "${rendered}"; then
+            echo "HONUA_APPROVE_CONTRACT_MIGRATIONS must not be rendered by the chart."
+            exit 1
+          fi
+          # Telemetry connections render in the deploy-target ConfigMap.
+          grep -q 'ControlPlane__TelemetryConnections__0__ConnectionId: "managed-prometheus"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__0__Provider: "prometheus"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__0__BaseUrl: "https://prometheus.example.com"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__0__QueryPath: "/api/v1/query"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__0__TimeoutSeconds: "15"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__0__AuthHeaderName: "Authorization"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__1__ConnectionId: "in-cluster-prometheus"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__1__BaseUrl: "http://prometheus.monitoring.svc:9090"' "${rendered}"
+          grep -q 'ControlPlane__TelemetryConnections__1__AllowPrivateNetworks: "true"' "${rendered}"
+          if grep -q 'ControlPlane__TelemetryConnections__0__AllowPrivateNetworks' "${rendered}"; then
+            echo "allowPrivateNetworks must render only when explicitly true."
+            exit 1
+          fi
+          # The auth header value comes only from the existing Secret, never a ConfigMap literal.
+          grep -A4 'name: ControlPlane__TelemetryConnections__0__AuthHeaderValue$' "${rendered}" | grep -q 'secretKeyRef:'
+          grep -A4 'name: ControlPlane__TelemetryConnections__0__AuthHeaderValue$' "${rendered}" | grep -q 'name: "prometheus-query-auth"'
+          test "$(grep -c 'AuthHeaderValue' "${rendered}")" -eq 1
+          # The chart's deploy target references the selected connection.
+          grep -q 'ControlPlane__DeployTargets__0__ParameterEntries__0__Key: "telemetry.connection"' "${rendered}"
+          grep -q 'ControlPlane__DeployTargets__0__ParameterEntries__0__Value: "in-cluster-prometheus"' "${rendered}"
+          grep -q 'ControlPlane__DeployTargets__0__ParameterEntries__1__Key: "telemetry.prometheus.job"' "${rendered}"
+          grep -q 'ControlPlane__DeployTargets__0__ParameterEntries__1__Value: "honua-honua"' "${rendered}"
+          # Connections alone keep the ConfigMap (and envFrom) even with target registration off.
+          helm template honua ./honua -f honua/ci-values/base.yaml \
+            --set controlPlane.deployTarget.enabled=false \
+            --set controlPlane.telemetryConnections[0].connectionId=prom \
+            --set controlPlane.telemetryConnections[0].baseUrl=https://prometheus.example.com \
+            > /tmp/honua-rendered-telemetry-only.yaml
+          grep -q 'ControlPlane__TelemetryConnections__0__ConnectionId: "prom"' /tmp/honua-rendered-telemetry-only.yaml
+          if grep -q 'ControlPlane__DeployTargets__0' /tmp/honua-rendered-telemetry-only.yaml; then
+            echo "Telemetry connections must not register a deploy target when controlPlane.deployTarget.enabled=false."
+            exit 1
+          fi
+          # A non-https baseUrl without allowPrivateNetworks fails (schema or guard).
+          set +e
+          helm template honua ./honua -f honua/ci-values/base.yaml \
+            --set controlPlane.telemetryConnections[0].connectionId=prom \
+            --set controlPlane.telemetryConnections[0].baseUrl=http://prometheus.monitoring.svc:9090 \
+            > /tmp/honua-rendered-telemetry-http.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected an http telemetry baseUrl without allowPrivateNetworks to fail render."
+            cat /tmp/honua-rendered-telemetry-http.yaml
+            exit 1
+          fi
+          grep -q 'baseUrl' /tmp/honua-rendered-telemetry-http.yaml
+          # Other invalid configurations fail render.
+          for invalid in \
+            "--set migrationSafety.contractApplyPolicy=Sometimes" \
+            "--set migrationSafety.contractApplyPolicy=Auto --set config.env.Database__MigrationSafety__ContractApplyPolicy=Gate" \
+            "--set migrationSafety.backupCommand=/bin/true --set secret.env.Database__MigrationSafety__BackupCommand=/bin/false" \
+            "--set migrationSafety.enforce=true --set extraEnv[0].name=Database__MigrationSafety__Enforce --set extraEnv[0].value=false" \
+            "--set controlPlane.deployTarget.telemetry.connection=missing" \
+            "-f honua/ci-values/upgrade-safety.yaml --set controlPlane.deployTarget.telemetry.connection=missing" \
+            "-f honua/ci-values/upgrade-safety.yaml --set controlPlane.deployTarget.enabled=false" \
+            "-f honua/ci-values/upgrade-safety.yaml --set controlPlane.telemetryConnections[1].connectionId=managed-prometheus" \
+            "-f honua/ci-values/upgrade-safety.yaml --set controlPlane.telemetryConnections[1].authHeaderName=Authorization" \
+            "-f honua/ci-values/upgrade-safety.yaml --set controlPlane.telemetryConnections[0].authHeaderValue=Bearer-literal" \
+            "-f honua/ci-values/upgrade-safety.yaml --set config.env.ControlPlane__TelemetryConnections__2__ConnectionId=other" \
+            "-f honua/ci-values/upgrade-safety.yaml --set config.env.ControlPlane__DeployTargets__0__ParameterEntries__5__Key=telemetry.policy" \
+            "-f honua/ci-values/upgrade-safety.yaml --set-string controlPlane.deployTarget.telemetry.parameters.prometheus\.job=honua"; do
+            # shellcheck disable=SC2086
+            if helm template honua ./honua -f honua/ci-values/base.yaml ${invalid} > /dev/null 2>&1; then
+              echo "Expected render to fail for: ${invalid}"
+              exit 1
+            fi
+          done
+          # Every generated-key family rejects a colliding entry from each
+          # env source (config.env, secret.env, extraEnv) with its own message.
+          for case in \
+            "secret.env|--set secret.env.ControlPlane__DeployTargets__0__ParameterEntries__5__Key=telemetry.policy" \
+            "secret.env|--set-string secret.env.ControlPlane__DeployTargets__0__Parameters__telemetry\.policy=health-only" \
+            "extraEnv|--set extraEnv[0].name=ControlPlane__DeployTargets__0__ParameterEntries__5__Value --set extraEnv[0].value=x" \
+            "secret.env|--set secret.env.ControlPlane__TelemetryConnections__2__ConnectionId=other" \
+            "extraEnv|--set extraEnv[0].name=ControlPlane__TelemetryConnections__2__ConnectionId --set extraEnv[0].value=other" \
+            "secret.env|--set migrationSafety.contractApplyPolicy=Gate --set secret.env.Database__MigrationSafety__ContractApplyPolicy=Auto"; do
+            source_name="${case%%|*}"
+            args="${case#*|}"
+            set +e
+            # shellcheck disable=SC2086
+            helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/upgrade-safety.yaml ${args} \
+              > /tmp/honua-rendered-collision.txt 2>&1
+            status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]] || ! grep -q "${source_name}" /tmp/honua-rendered-collision.txt; then
+              echo "Expected a ${source_name} collision to fail render for: ${args}"
+              cat /tmp/honua-rendered-collision.txt
+              exit 1
+            fi
+          done
+
       - name: Validate ASPNETCORE_URLS / targetPort mismatch guard fails invalid config
         run: |
           set +e

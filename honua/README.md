@@ -297,7 +297,7 @@ If you cannot pin by digest, use an immutable release tag: `v1.2.3-aot` (AOT) or
 
 Honua Server runs database migrations inline during startup behind a PostgreSQL advisory lock. The chart defaults the Deployment strategy to `Recreate` so old pods stop before new pods start during a migrating upgrade.
 
-The chart default keeps `config.env.HONUA_SKIP_MIGRATIONS=false`. If you set it to `true`, the chart does not run an alternate migration job; you own schema convergence before traffic reaches the deployment.
+The chart default keeps `config.env.HONUA_SKIP_MIGRATIONS=false`. Leave it that way. The chart has no out-of-band migration path: Honua Server does not yet have a migrate-and-exit entry point (tracked in [honua-io/honua-server#6470](https://github.com/honua-io/honua-server/issues/6470)), so the only way to apply migrations today is a full server start. If you set `HONUA_SKIP_MIGRATIONS=true`, nothing in the chart converges the schema, and the new pods refuse to serve (`schema_reader_incompatible`) or serve an unmigrated database.
 
 Use `RollingUpdate` only when the migration set is forward and backward compatible across the old and new Honua images:
 
@@ -334,6 +334,83 @@ values/manifest) so a subsequent manual `helm rollback` remains available even
 without `--atomic`; see [Release evidence and rollback](#release-evidence-and-rollback)
 for what that rollback can and cannot restore.
 
+## Upgrades: expand/contract
+
+Honua Server splits schema changes into two phases. Expand migrations add
+tables, columns and indexes and leave the old shape in place. Contract
+migrations narrow the schema: they drop, rename or truncate. Contract scripts
+carry a `-- honua:compatibility-review` marker. The server's upgrade guide
+([Upgrade and roll back](https://github.com/honua-io/honua-server/blob/trunk/docs/guides/deploy/upgrade-and-rollback.md))
+is the source of truth. This is how it maps onto the chart.
+
+1. **Preflight.** Against the running release, call
+   `GET /api/v1/admin/deploy/preflight?includeDiagnostics=true` (admin
+   `X-API-Key`). Proceed only when `readyForCoordinatedDeploy` is `true` and
+   no unexpected migrations are pending. The chart's preflight hook is
+   separate: it checks secrets, PostgreSQL/Redis reachability and the
+   registry. It does not inspect migrations.
+2. **Back up the database.** The chart does not own backups. Take one before
+   every upgrade. A restore is the only way back from a contract migration.
+3. **Roll out.** Migrations run inline when the new pod starts, serialized by
+   a PostgreSQL advisory lock, and `/healthz/ready` stays not-ready until they
+   finish. That is why `strategy.type: Recreate` is the default: old pods stop
+   before the new version migrates. Use `RollingUpdate` only for an
+   expand-only release whose migrations the previous version can still read.
+   The server checks this on startup: an older reader that finds a journal
+   entry it does not recognize refuses to start with
+   `schema_reader_incompatible`. An additive migration is not proof of reader
+   compatibility on its own, so qualify the previous image.
+4. **Contract migrations are gated.** On an existing database the server's
+   default `ContractApplyPolicy` is `Gate`. Pending reviewed contract-phase
+   migrations are refused, and the server prints a one-shot nonce. To
+   approve, set `HONUA_APPROVE_CONTRACT_MIGRATIONS` to that nonce in
+   `secret.env` (or `extraEnv`) for that one upgrade, then remove it on the
+   next upgrade. The chart deliberately has no value for it. Fresh installs
+   are not gated.
+5. **Roll back.** Use `helm rollback` only when the previous image recognizes
+   every migration that has been applied. Otherwise the previous pods refuse
+   to start (`schema_reader_incompatible`), and you restore the database from
+   the backup or roll forward. `--atomic` runs that rollback automatically, so
+   a failed upgrade that already applied a contract migration still needs the
+   restore.
+
+The chart exposes the server's `Database:MigrationSafety` settings as values.
+Each renders a `Database__MigrationSafety__*` env var on the server container
+only when set. Empty values keep the server defaults:
+
+```yaml
+migrationSafety:
+  contractApplyPolicy: ""   # "" = server default Gate; "Gate" or "Auto"
+  backupCommand: ""         # shell command run just before contract migrations apply
+  enforce: null             # null = server default true
+```
+
+- `contractApplyPolicy: Auto` applies contract migrations without the nonce.
+  Keep `Gate` for any database you care about.
+- `backupCommand` runs inside the server container, immediately before
+  contract-phase migrations apply on an existing database. A non-zero exit
+  aborts the migration. The tool it calls, for example `pg_dump`, must exist
+  in the image or a mounted volume (`extraVolumes`/`extraVolumeMounts`). The
+  stock image is not documented to ship `pg_dump`. The command is a plain env
+  value in the pod spec, so do not inline credentials. Reference variables the
+  container already has.
+- `enforce: false` lets contract-phase migrations that lack the
+  compatibility-review marker apply. Use it only for a reviewed exception.
+
+Precedence: these values are rendered as explicit container `env`, which
+Kubernetes applies over every `envFrom` source. To keep one source of truth,
+render fails when the same `Database__MigrationSafety__*` key is also set in
+`config.env`, `secret.env` or `extraEnv`. If you leave a value empty, you can
+still set the key through those sources or an external ConfigMap/Secret.
+
+Not available yet: an opt-in pre-upgrade migration Job
+(`migrations.job.enabled`), and with it `HONUA_SKIP_MIGRATIONS=true` on the
+serving pods and `RollingUpdate` as a safe default. These are blocked on a
+server migrate-and-exit entry point,
+[honua-io/honua-server#6470](https://github.com/honua-io/honua-server/issues/6470).
+Starting a second full server as a Job would also start its background
+services, so the chart does not do that.
+
 ## Deploy target registration
 
 `controlPlane.deployTarget.enabled` (default `true`) registers this chart's
@@ -365,6 +442,64 @@ controlPlane:
     targetName: ""                         # empty uses the chart fullname
     artifactReference: ""                  # empty uses the rendered image reference
 ```
+
+### Deploy telemetry connections
+
+The server's deploy telemetry gate queries a named Prometheus connection
+(`ControlPlane:TelemetryConnections`). A deploy target selects one through its
+`telemetry.connection` parameter. The chart can declare connections and point
+its own target at one. Both are off by default:
+
+```yaml
+controlPlane:
+  deployTarget:
+    telemetry:
+      connection: in-cluster-prometheus     # a connectionId below
+      parameters:
+        telemetry.prometheus.job: honua-honua   # other telemetry.* target parameters
+  telemetryConnections:
+    - connectionId: in-cluster-prometheus
+      baseUrl: http://prometheus.monitoring.svc:9090
+      allowPrivateNetworks: true            # required for http / in-cluster / private addresses
+    - connectionId: managed-prometheus
+      baseUrl: https://prometheus.example.com
+      queryPath: /api/v1/query              # optional, server default
+      timeoutSeconds: 10                    # optional, server default
+      authHeaderName: Authorization
+      authHeaderSecretRef:                  # existing Secret holding the header value
+        name: prometheus-query-auth
+        key: header
+```
+
+- Connection fields render as `ControlPlane__TelemetryConnections__<n>__*` in
+  the `<fullname>-deploy-target` ConfigMap. This ConfigMap also renders when
+  target registration is off and connections are declared. `Provider` is
+  always `prometheus`. Configure CloudWatch connections through `config.env`
+  instead.
+- An auth header value never goes into a ConfigMap. It is projected from the
+  existing Secret as `ControlPlane__TelemetryConnections__<n>__AuthHeaderValue`
+  through `secretKeyRef`. `authHeaderName` and `authHeaderSecretRef` must be
+  set together.
+- `baseUrl` must be `https://` unless `allowPrivateNetworks: true`. The
+  server's outbound SSRF guard rejects http, private and loopback endpoints
+  otherwise, so an in-cluster `http://prometheus.monitoring.svc:9090` needs
+  the opt-in. Enable it only for a trusted endpoint inside your network.
+- `deployTarget.telemetry.connection` must name a declared `connectionId`. It
+  renders as `ControlPlane__DeployTargets__0__ParameterEntries__0__*`
+  (`telemetry.connection`), followed by any `telemetry.parameters`. With only
+  a connection set, the server's default `kubernetes-honua-http` preset reads
+  Prometheus job `honua`. Set `telemetry.prometheus.job` or
+  `telemetry.prometheus.selector` to match your scrape config. The server
+  rejects unrecognized `telemetry.*` keys and incomplete gates at plan time.
+- When the chart declares connections or target parameters, the matching
+  `ControlPlane__TelemetryConnections__*` or
+  `ControlPlane__DeployTargets__0__ParameterEntries__*` keys in `config.env`,
+  `secret.env` or `extraEnv` fail render, so indexes cannot interleave.
+
+The chart's target still uses the `honua-gitops-kubernetes` hand-off backend
+(`SupportsRollback=false`). A telemetry connection makes the gate evaluable.
+It does not add automatic rollback for this target: recovery is still
+`helm rollback`.
 
 ## Geoprocessing on Kubernetes Jobs
 
@@ -753,7 +888,10 @@ characters. For non-development deployments, it also fails if
 | `release.manifest` | `""` | URL, path, or commit for the release manifest. |
 | `release.digest` | `""` | `sha256:<64 lowercase hex characters>` digest of the release manifest or bundle. |
 | `release.appVersion` | `""` | Optional label-safe evidence override for `app.kubernetes.io/version`, Pod-template annotations, and release-info output. |
-| `strategy.type` | `Recreate` | Upgrade strategy. `Recreate` is safe for inline migrations. |
+| `strategy.type` | `Recreate` | Upgrade strategy. `Recreate` is safe for inline migrations. Use `RollingUpdate` only for expand-only releases the previous version can read; see [Upgrades: expand/contract](#upgrades-expandcontract). |
+| `migrationSafety.contractApplyPolicy` | `""` | `Database__MigrationSafety__ContractApplyPolicy`: `Gate` or `Auto`. Empty keeps the server default `Gate`. |
+| `migrationSafety.backupCommand` | `""` | `Database__MigrationSafety__BackupCommand`: shell command run in the server container just before contract migrations apply. The tool must exist in the image or a mounted volume. |
+| `migrationSafety.enforce` | `null` | `Database__MigrationSafety__Enforce`. `null` keeps the server default `true`. |
 | `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used only when `strategy.type=RollingUpdate`; both values cannot be zero. |
 | `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
 | `preflight.timeoutSeconds` | 5 | Timeout for database and registry reachability checks. |
@@ -790,6 +928,9 @@ characters. For non-development deployments, it also fails if
  | `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |
  | `controlPlane.deployTarget.environment` | `""` | Target environment label. Empty uses `config.env.ASPNETCORE_ENVIRONMENT`. |
  | `controlPlane.deployTarget.artifactReference` | `""` | Target artifact reference. Empty uses the rendered image reference. |
+| `controlPlane.deployTarget.telemetry.connection` | `""` | The target's `telemetry.connection` parameter. Must name a `controlPlane.telemetryConnections[].connectionId`. |
+| `controlPlane.deployTarget.telemetry.parameters` | `{}` | Other `telemetry.*` target parameters, rendered as `ParameterEntries`. |
+| `controlPlane.telemetryConnections` | `[]` | Prometheus connections for the deploy telemetry gate; see [Deploy telemetry connections](#deploy-telemetry-connections). Auth header values come only from `authHeaderSecretRef`. |
 
 See `values.yaml` and `../docs/values-contract.md` for the complete reference.
 
