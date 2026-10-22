@@ -302,7 +302,7 @@ Honua Server applies database migrations in one of two ways. The chart picks the
 | Inline (default, `migrations.job.enabled: false`) | Each new pod migrates during startup, serialized by a PostgreSQL advisory lock | `Recreate` | migrate, then serve |
 | Out of band (`migrations.job.enabled: true`) | A pre-install/pre-upgrade hook Job runs the image once in migrate-only mode before the Deployment changes | `RollingUpdate` | `HONUA_SKIP_MIGRATIONS=true`: verify the journal, never migrate |
 
-The out-of-band Job is the path that becomes the recommended production default. It is off by default for now because it needs a honua-server image that ships migrate-only mode ([honua-io/honua-server#6479](https://github.com/honua-io/honua-server/pull/6479)). An older image ignores `HONUA_MIGRATE_ONLY`, starts a normal server and never exits, so the hook fails at `activeDeadlineSeconds`.
+The out-of-band Job is the path that becomes the recommended production default. It is off by default for now because `migrations.job` requires a honua-server image at or after the first release that ships `HONUA_MIGRATE_ONLY` (migrate-only mode, [honua-io/honua-server#6479](https://github.com/honua-io/honua-server/pull/6479)). Today that is the next release after 2026.1: the 2026.1 server image does not have it. An older image ignores `HONUA_MIGRATE_ONLY`, starts a normal server and never exits, so the hook fails at `activeDeadlineSeconds`.
 
 ### Inline migrations
 
@@ -439,14 +439,17 @@ is the source of truth. This is how it maps onto the chart.
    to start (`schema_reader_incompatible`), and you restore the database from
    the backup or roll forward. The chart cannot downgrade the schema.
    `--atomic` runs that rollback automatically, so a failed upgrade that
-   already applied a contract migration still needs the restore. Rolling an
-   image back across expand-only migrations without a restore needs both
-   images to carry the server's reader-compatibility declarations (schema
-   135 and later, [honua-io/honua-server#6478](https://github.com/honua-io/honua-server/pull/6478),
-   not merged yet): an older image cannot learn that check. Even then it
-   covers only pods that migrate inline. Pods running with
-   `HONUA_SKIP_MIGRATIONS=true` (the Job path) keep the strict check and
-   refuse any journal entry their image does not ship.
+   already applied a contract migration still needs the restore. Images at
+   schema 135 and later ([honua-io/honua-server#6478](https://github.com/honua-io/honua-server/pull/6478))
+   record a forward-compatibility declaration for every migration they apply.
+   A rolled-back image at schema 135 or later that migrates inline accepts an
+   unknown migration only when its declaration says `expand` and the image
+   verifies that declaration itself, so rolling back across expand-only
+   migrations written by such an image needs no restore. Images at schema 134
+   and earlier, journals written before 135, and contract or
+   reader-incompatible scripts still refuse, and recovery is a restore. Pods
+   running with `HONUA_SKIP_MIGRATIONS=true` (the Job path) never accept
+   declarations: they refuse any journal entry their image does not ship.
 
 The chart exposes the server's `Database:MigrationSafety` settings as values.
 Each renders a `Database__MigrationSafety__*` env var on the server container
@@ -959,7 +962,7 @@ characters. For non-development deployments, it also fails if
 | `release.digest` | `""` | `sha256:<64 lowercase hex characters>` digest of the release manifest or bundle. |
 | `release.appVersion` | `""` | Optional label-safe evidence override for `app.kubernetes.io/version`, Pod-template annotations, and release-info output. |
 | `strategy.type` | `""` | Upgrade strategy. Empty lets the chart choose: `Recreate` for inline migrations, `RollingUpdate` when `migrations.job.enabled`. Set `Recreate` or `RollingUpdate` to override. Use `RollingUpdate` only for expand-only releases the previous version can read; see [Upgrades: expand/contract](#upgrades-expandcontract). |
-| `migrations.job.enabled` | `false` | Run migrations out of band in a pre-install/pre-upgrade hook Job (`HONUA_MIGRATE_ONLY=true`) and set `HONUA_SKIP_MIGRATIONS=true` on the Deployment. Needs a server image with migrate-only mode. See [Out-of-band migration Job](#out-of-band-migration-job). |
+| `migrations.job.enabled` | `false` | Run migrations out of band in a pre-install/pre-upgrade hook Job (`HONUA_MIGRATE_ONLY=true`) and set `HONUA_SKIP_MIGRATIONS=true` on the Deployment. Needs a server image at or after the first release that ships `HONUA_MIGRATE_ONLY` (today: the next release after 2026.1). See [Out-of-band migration Job](#out-of-band-migration-job). |
 | `migrations.job.activeDeadlineSeconds` | `1800` | Upper bound for one migration run. Keep `helm --timeout` above it. |
 | `migrations.job.ttlSecondsAfterFinished` | `86400` | How long the finished Job and its summary log are kept; `null` keeps it until the next upgrade. |
 | `migrations.job.resources` | `{}` | Job container resources. Empty uses `resources`. |

@@ -42,7 +42,8 @@ set to the printed nonce for one upgrade. The chart README lists every exit
 code.
 
 The Job is off by default for now and becomes the recommended production path.
-It requires a server image that ships migrate-only mode; an older image
+It requires a server image at or after the first release that ships
+`HONUA_MIGRATE_ONLY` (today: the next release after 2026.1); an older image
 ignores the switch, serves, and the hook fails at `activeDeadlineSeconds`.
 
 The chart owns `HONUA_SKIP_MIGRATIONS` while the Job is enabled and
@@ -72,12 +73,15 @@ also present in `config.env`, `secret.env` or `extraEnv`.
 `helm rollback` is safe only when the previous image recognizes every applied
 migration. Otherwise its pods refuse to start with `schema_reader_incompatible`,
 and recovery is a database restore or a roll forward. The chart cannot
-downgrade the schema, and `helm rollback` runs no pre-upgrade hook. Rolling an
-image back across expand-only migrations without a restore needs images that
-carry the server's reader-compatibility declarations (schema 135 and later,
-honua-server#6478, not merged yet), and covers only pods that migrate inline:
-pods with `HONUA_SKIP_MIGRATIONS=true` keep the strict check. See the chart
-README, "Upgrades: expand/contract".
+downgrade the schema, and `helm rollback` runs no pre-upgrade hook. Images at
+schema 135 and later (honua-server#6478) record forward-compatibility
+declarations, and a rolled-back image at schema 135 or later that migrates
+inline accepts an expand-only migration it does not ship once it verifies that
+declaration, so such a rollback needs no restore. Images at schema 134 and
+earlier, journals written before 135, contract scripts and scripts marked
+reader-incompatible still refuse. Pods with `HONUA_SKIP_MIGRATIONS=true` never
+accept declarations and keep the strict check. See the chart README,
+"Upgrades: expand/contract".
 
 The default `strategy.type` is empty, which the chart resolves to `Recreate`
 on the inline path and `RollingUpdate` when `migrations.job.enabled` is true.
@@ -397,6 +401,10 @@ CI also runs the out-of-band path in kind: a fresh install and an upgrade with
 `migrations.job.enabled=true` must each run the `<release>-honua-migrate` hook
 Job to exit `0`, print the `honua.migrate-only/v1` summary line, and leave the
 Deployment on `RollingUpdate` with `HONUA_SKIP_MIGRATIONS=true`.
+That lane runs the customer-facing image: the honua-server digest of the latest
+published honua-io/honua-release release, falling back to `nightly-aot` only
+while no published release ships migrate-only mode. The step summary names
+the image used, and the lane fails rather than skips when no image qualifies.
 
 ## Contract Versioning
 

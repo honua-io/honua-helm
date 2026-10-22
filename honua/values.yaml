@@ -178,9 +178,10 @@ migrationSafety:
 # honua/README.md "Upgrade and migration contract" for every exit code.
 #
 # Default false for now. This becomes the recommended production path. It needs
-# a honua-server image that ships migrate-only mode (honua-server#6479); an older
-# image ignores HONUA_MIGRATE_ONLY, starts serving and never exits, so the hook
-# fails at activeDeadlineSeconds. Size helm --timeout above activeDeadlineSeconds.
+# a honua-server image at or after the first release that ships
+# HONUA_MIGRATE_ONLY (honua-server#6479; today: the next release after 2026.1).
+# An older image ignores HONUA_MIGRATE_ONLY, starts serving and never exits, so
+# the hook fails at activeDeadlineSeconds. Size helm --timeout above activeDeadlineSeconds.
 # HONUA_SKIP_MIGRATIONS and HONUA_MIGRATE_ONLY are chart-owned: render fails when
 # they also appear in config.env, secret.env or extraEnv.
 migrations:

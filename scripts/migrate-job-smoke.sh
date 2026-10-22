@@ -14,10 +14,18 @@
 # appliedScripts); the upgrade finds it current (empty appliedScripts) and rolls
 # the Deployment to a second ReplicaSet revision.
 #
-# The image must ship migrate-only mode (honua-server 4087d93, #6479). Pin it
-# with HONUA_MIGRATE_ONLY_IMAGE_DIGEST. When that is empty the script resolves
-# HONUA_MIGRATE_ONLY_IMAGE_TAG (default nightly-aot) to its digest and refuses
-# unless the image's org.opencontainers.image.revision contains that commit.
+# The image must ship migrate-only mode (honua-server 4087d93, #6479).
+# Certification certifies the customer-facing product, so the lane prefers the
+# server image of the latest published honua-io/honua-release release (its
+# finalized-manifest.yaml asset) and falls back to nightly-aot only while no
+# published release contains migrate-only mode. Either image must carry an
+# org.opencontainers.image.revision that contains that commit. The step summary
+# records which image was used and why.
+#
+# Pin with HONUA_MIGRATE_ONLY_IMAGE_DIGEST plus HONUA_MIGRATE_ONLY_IMAGE_SOURCE
+# ("release:<tag>" or "nightly"). A nightly pin is refused once a published
+# release qualifies. With no pin the script resolves the same preference order.
+# It never skips: no qualifying image is a failure.
 set -euo pipefail
 
 namespace="${HONUA_SMOKE_NAMESPACE:-honua-smoke}"
@@ -25,50 +33,105 @@ release="${HONUA_MIGRATE_SMOKE_RELEASE:-honua-mj}"
 evidence="${HONUA_MIGRATE_SMOKE_EVIDENCE:-/tmp/honua-smoke/migration-job}"
 repository_path="honua-io/honua-server"
 repository="ghcr.io/${repository_path}"
+release_repo="${HONUA_RELEASE_REPOSITORY:-honua-io/honua-release}"
 required_commit="${HONUA_MIGRATE_ONLY_REQUIRED_COMMIT:-4087d93aecf49ac087bfe102358c019ae818ac96}"
 database="${HONUA_MIGRATE_SMOKE_DATABASE:-honua_migrate_job}"
 fullname="${release}-honua"
 job="${fullname}-migrate"
+summary_file="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-fail() { echo "migration-job smoke failed: $*" >&2; exit 1; }
+fail() {
+  echo "migration-job smoke failed: $*" >&2
+  printf '### Migration-job smoke\n\nFAILED: %s\n' "$*" >> "$summary_file"
+  exit 1
+}
 mkdir -p "$evidence"
 
-resolve_digest() {
-  local tag token index amd64 config revision status
-  tag="${HONUA_MIGRATE_ONLY_IMAGE_TAG:-nightly-aot}"
-  token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repository_path}:pull" | jq -r .token)"
-  index="$(curl -fsSI -H "Authorization: Bearer ${token}" \
-    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-    "https://ghcr.io/v2/${repository_path}/manifests/${tag}" | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:" {print $2}')"
-  [[ "$index" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "could not resolve ${repository}:${tag}"
-  amd64="$(curl -fsS -H "Authorization: Bearer ${token}" \
-    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-    "https://ghcr.io/v2/${repository_path}/manifests/${index}" \
-    | jq -r '[.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")][0].digest')"
-  config="$(curl -fsS -H "Authorization: Bearer ${token}" \
-    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-    "https://ghcr.io/v2/${repository_path}/manifests/${amd64}" | jq -r .config.digest)"
-  revision="$(curl -fsSL -H "Authorization: Bearer ${token}" \
-    "https://ghcr.io/v2/${repository_path}/blobs/${config}" | jq -r '.config.Labels["org.opencontainers.image.revision"] // empty')"
-  [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || fail "${repository}:${tag} carries no org.opencontainers.image.revision label"
-  status="$(gh api "repos/${repository_path}/compare/${required_commit}...${revision}" --jq .status)"
-  case "$status" in
-    identical|ahead) ;;
-    *) fail "${repository}:${tag} is ${revision}, which does not contain migrate-only mode (${required_commit}, compare status ${status}); no published image ships it yet, so pin HONUA_MIGRATE_ONLY_IMAGE_DIGEST once one does" ;;
-  esac
-  jq -n --arg tag "$tag" --arg digest "$index" --arg revision "$revision" --arg requiredCommit "$required_commit" \
-    '{resolvedTag:$tag,digest:$digest,revision:$revision,requiredCommit:$requiredCommit}' > "$evidence/image.json"
-  echo "$index"
+ghcr_token() { curl -fsS "https://ghcr.io/token?scope=repository:${repository_path}:pull" | jq -r .token; }
+
+# Index digest of a tag (or the digest itself).
+index_digest() {
+  local ref="$1" token="$2"
+  curl -fsSI -H "Authorization: Bearer ${token}" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+    "https://ghcr.io/v2/${repository_path}/manifests/${ref}" | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:" {print $2}'
 }
 
+# org.opencontainers.image.revision of the linux/amd64 image behind a digest.
+image_revision() {
+  local digest="$1" token="$2" manifest amd64 config
+  manifest="$(curl -fsS -H "Authorization: Bearer ${token}" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+    "https://ghcr.io/v2/${repository_path}/manifests/${digest}")"
+  amd64="$(jq -r 'if .manifests then ([.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")][0].digest) else empty end' <<<"$manifest")"
+  if [[ -n "$amd64" ]]; then
+    manifest="$(curl -fsS -H "Authorization: Bearer ${token}" \
+      -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://ghcr.io/v2/${repository_path}/manifests/${amd64}")"
+  fi
+  config="$(jq -r .config.digest <<<"$manifest")"
+  curl -fsSL -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${repository_path}/blobs/${config}" \
+    | jq -r '.config.Labels["org.opencontainers.image.revision"] // empty'
+}
+
+# 0 when the revision contains the migrate-only commit.
+contains_migrate_only() {
+  local revision="$1" status
+  [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || return 1
+  status="$(gh api "repos/${repository_path}/compare/${required_commit}...${revision}" --jq .status)"
+  [[ "$status" == "identical" || "$status" == "ahead" ]]
+}
+
+# Latest published (non-draft) release: prints "<tag> <digest> <sha>".
+latest_release_server() {
+  local tag dir
+  tag="$(gh api "repos/${release_repo}/releases?per_page=20" \
+    --jq '[.[] | select(.draft == false)] | sort_by(.published_at) | last | .tag_name // empty')"
+  [[ -n "$tag" ]] || return 1
+  dir="$(mktemp -d)"
+  gh release download "$tag" --repo "$release_repo" --pattern finalized-manifest.yaml --dir "$dir" >/dev/null 2>&1 || return 1
+  printf '%s %s %s\n' "$tag" \
+    "$(yq -r '.components."honua-server".digest // ""' "$dir/finalized-manifest.yaml")" \
+    "$(yq -r '.components."honua-server".sha // ""' "$dir/finalized-manifest.yaml")"
+}
+
+token="$(ghcr_token)"
+release_tag="" release_digest="" release_sha="" release_qualifies=false
+if read -r release_tag release_digest release_sha < <(latest_release_server); then
+  if [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]] && contains_migrate_only "$(image_revision "$release_digest" "$token")"; then
+    release_qualifies=true
+  fi
+fi
+
 digest="${HONUA_MIGRATE_ONLY_IMAGE_DIGEST:-}"
-if [[ -z "$digest" ]]; then
-  digest="$(resolve_digest)"
-  echo "::notice::migration-job smoke resolved ${HONUA_MIGRATE_ONLY_IMAGE_TAG:-nightly-aot} to ${digest}; pin HONUA_MIGRATE_ONLY_IMAGE_DIGEST in ci.yml to make this lane reproducible."
+source="${HONUA_MIGRATE_ONLY_IMAGE_SOURCE:-}"
+if [[ -n "$digest" ]]; then
+  [[ "$source" == release:* || "$source" == nightly ]] \
+    || fail "HONUA_MIGRATE_ONLY_IMAGE_SOURCE must be release:<tag> or nightly for the pinned digest ${digest}"
+  if [[ "$source" == nightly && "$release_qualifies" == true ]]; then
+    fail "the pinned image is a nightly, but published release ${release_tag} (${release_digest}) now ships migrate-only mode; pin that release image instead"
+  fi
+  reason="pinned in ci.yml"
+elif [[ "$release_qualifies" == true ]]; then
+  digest="$release_digest" source="release:${release_tag}" reason="latest published release ships migrate-only mode"
 else
-  jq -n --arg digest "$digest" '{pinnedDigest:$digest}' > "$evidence/image.json"
+  nightly="$(index_digest nightly-aot "$token")"
+  [[ "$nightly" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "could not resolve ${repository}:nightly-aot"
+  digest="$nightly" source=nightly \
+    reason="latest published release ${release_tag:-<none>} (${release_sha:0:7}) predates migrate-only mode; nightly-aot fallback"
 fi
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "image digest '${digest}' is not sha256:<64 hex>"
+revision="$(image_revision "$digest" "$token")"
+contains_migrate_only "$revision" \
+  || fail "no qualifying image: ${source} ${repository}@${digest} is revision ${revision:-<none>}, which does not contain migrate-only mode (${required_commit}). Latest published release: ${release_tag:-<none>} (${release_sha:0:12}). Pin HONUA_MIGRATE_ONLY_IMAGE_DIGEST once a release (preferred) or nightly ships it."
+
+jq -n --arg source "$source" --arg reason "$reason" --arg digest "$digest" --arg revision "$revision" \
+  --arg requiredCommit "$required_commit" --arg latestRelease "$release_tag" --arg latestReleaseDigest "$release_digest" \
+  '{source:$source,reason:$reason,digest:$digest,revision:$revision,requiredCommit:$requiredCommit,latestRelease:$latestRelease,latestReleaseDigest:$latestReleaseDigest}' \
+  > "$evidence/image.json"
+printf '### Migration-job smoke image\n\n- Source: `%s` (%s)\n- Image: `%s@%s`\n- Revision: `%s`\n- Latest published release: `%s`\n' \
+  "$source" "$reason" "$repository" "$digest" "$revision" "${release_tag:-none}" >> "$summary_file"
+echo "migration-job smoke image: ${source} ${repository}@${digest} (${reason})"
 
 # A database of its own, so the install is a fresh journal (no contract gate)
 # and nothing touches the distinct-digest release's schema.

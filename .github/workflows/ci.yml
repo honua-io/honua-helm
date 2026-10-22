@@ -1114,10 +1114,15 @@ jobs:
 
       - name: Install and upgrade with the migration Job (migrate-only mode)
         env:
-          # Pin a honua-server image that contains migrate-only mode
-          # (4087d93, server#6479). Empty resolves nightly-aot and refuses an
-          # image whose revision predates that commit.
+          # The image must contain migrate-only mode (4087d93, server#6479).
+          # Prefer the customer-facing image: the honua-server digest of the
+          # latest published honua-release release. nightly-aot is the fallback
+          # only while no published release ships it. Pin the digest with its
+          # source ("release:<tag>" or "nightly"); empty resolves the same order
+          # and fails (never skips) when no image qualifies. The step summary
+          # names the image used.
           HONUA_MIGRATE_ONLY_IMAGE_DIGEST: ""
+          HONUA_MIGRATE_ONLY_IMAGE_SOURCE: ""
           GH_TOKEN: ${{ github.token }}
         run: scripts/migrate-job-smoke.sh
 
