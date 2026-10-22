@@ -356,10 +356,12 @@ is the source of truth. This is how it maps onto the chart.
    finish. That is why `strategy.type: Recreate` is the default: old pods stop
    before the new version migrates. Use `RollingUpdate` only for an
    expand-only release whose migrations the previous version can still read.
-   The server checks this on startup: an older reader that finds a journal
-   entry it does not recognize refuses to start with
-   `schema_reader_incompatible`. An additive migration is not proof of reader
-   compatibility on its own, so qualify the previous image.
+   The server checks this on startup when the previous image includes the
+   schema-reader guard: an older reader that finds a journal entry it does not
+   recognize refuses to start with `schema_reader_incompatible`. An image
+   without that guard, including `honua-2026.1`, does not refuse. An additive
+   migration is not proof of reader compatibility on its own, so qualify the
+   previous image.
 4. **Contract migrations are gated.** On an existing database the server's
    default `ContractApplyPolicy` is `Gate`. Pending reviewed contract-phase
    migrations are refused, and the server prints a one-shot nonce. To
@@ -367,12 +369,17 @@ is the source of truth. This is how it maps onto the chart.
    `secret.env` (or `extraEnv`) for that one upgrade, then remove it on the
    next upgrade. The chart deliberately has no value for it. Fresh installs
    are not gated.
-5. **Roll back.** Use `helm rollback` only when the previous image recognizes
-   every migration that has been applied. Otherwise the previous pods refuse
-   to start (`schema_reader_incompatible`), and you restore the database from
-   the backup or roll forward. `--atomic` runs that rollback automatically, so
-   a failed upgrade that already applied a contract migration still needs the
-   restore.
+5. **Roll back.** Roll back only to images that include the schema-reader guard:
+   schema 135 or later for additive migrations, and never across a contract-phase
+   migration without a restore. A guarded image that does not recognize an applied
+   migration refuses to start (`schema_reader_incompatible`); restore the database
+   from the backup or roll forward. `honua-2026.1` is not a safe rollback target
+   across any migration, and the only safe way back to 2026.1 is restoring the
+   backup taken before the upgrade. It predates the guard and serves a newer schema
+   with no refusal. There is no release-named immutable tag for that image yet
+   ([honua-io/honua-release#776](https://github.com/honua-io/honua-release/issues/776)).
+   `--atomic` runs `helm rollback` automatically, so a failed upgrade that already
+   applied a contract migration still needs the restore.
 
 The chart exposes the server's `Database:MigrationSafety` settings as values.
 Each renders a `Database__MigrationSafety__*` env var on the server container
@@ -840,7 +847,7 @@ helm history honua
 helm rollback honua <revision>
 ```
 
-Rollback redeploys the prior Helm revision. The chart cannot downgrade database schema; restore from backup or roll forward if the prior app image is not compatible with the migrated schema.
+Rollback redeploys the prior Helm revision. Roll back only to images that include the schema-reader guard: schema 135 or later for additive migrations, and never across a contract-phase migration without a restore. The chart cannot downgrade the database schema. `honua-2026.1` is not a safe rollback target across any migration, and the only safe way back to 2026.1 is restoring the backup taken before the upgrade. There is no release-named immutable tag for that image yet ([honua-io/honua-release#776](https://github.com/honua-io/honua-release/issues/776)).
 
 ## Using an existing secret
 

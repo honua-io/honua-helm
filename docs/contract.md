@@ -53,10 +53,15 @@ server container only when set:
 Render fails when a `Database__MigrationSafety__*` key set by these values is
 also present in `config.env`, `secret.env` or `extraEnv`.
 
-`helm rollback` is safe only when the previous image recognizes every applied
-migration. Otherwise its pods refuse to start with `schema_reader_incompatible`,
-and recovery is a database restore or a roll forward. See the chart README,
-"Upgrades: expand/contract".
+Roll back only to images that include the schema-reader guard: schema 135 or
+later for additive migrations, and never across a contract-phase migration
+without a restore. A guarded image that does not recognize an applied migration
+refuses to start with `schema_reader_incompatible`. `honua-2026.1` is not a safe
+rollback target across any migration, and the only safe way back to 2026.1 is
+restoring the backup taken before the upgrade: that image predates the guard and
+serves a newer schema with no refusal. There is no release-named immutable tag
+for it yet (honua-io/honua-release#776). See the chart README, "Upgrades:
+expand/contract".
 
 The default Deployment strategy is:
 
@@ -364,10 +369,14 @@ UIDs/imageIDs, release metadata, checksums, Helm-test logs, and a runtime marker
 checksum. Rollback must restore revision 1's kubelet imageID and runtime marker
 while preserving the seed; a deliberate non-restoration assertion must fail.
 
-The chart cannot guarantee database schema downgrade compatibility. If a
-migration is not backward compatible with the rolled-back Honua image, the
-operator must restore the database from a backup or roll forward to a
-compatible image.
+Roll back only to images that include the schema-reader guard: schema 135 or
+later for additive migrations, and never across a contract-phase migration
+without a restore. The chart cannot downgrade the database schema.
+`honua-2026.1` is not a safe rollback target across any migration, and the only
+safe way back to 2026.1 is restoring the backup taken before the upgrade. An
+image without the guard does not refuse; a ready pod is not proof the rollback
+is safe. There is no release-named immutable tag for the 2026.1 image yet
+(honua-io/honua-release#776).
 
 ## Contract Versioning
 
