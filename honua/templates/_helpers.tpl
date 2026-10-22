@@ -634,3 +634,64 @@ true
 {{- end -}}
 {{- toJson $env -}}
 {{- end -}}
+
+{{- /* Out-of-band migrations (migrations.job.*). */ -}}
+{{- define "honua.migrationsJob.enabled" -}}
+{{- $job := dig "job" dict (.Values.migrations | default dict) -}}
+{{- if eq (toString (default false (get $job "enabled"))) "true" -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* The Deployment strategy. An empty strategy.type follows the migration
+       path: RollingUpdate when the pre-upgrade migration Job owns migrations,
+       Recreate while they run inline at server startup. */ -}}
+{{- define "honua.strategyType" -}}
+{{- $type := trim (toString (default "" (dig "type" "" (.Values.strategy | default dict)))) -}}
+{{- if $type -}}
+{{- $type -}}
+{{- else if eq (include "honua.migrationsJob.enabled" .) "true" -}}
+RollingUpdate
+{{- else -}}
+Recreate
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.migrationsJobName" -}}
+{{- printf "%s-migrate" (include "honua.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- /* The migration Job runs before the chart's ServiceAccount exists on a first
+       install, so it falls back to the namespace default account then. */ -}}
+{{- define "honua.migrationsJob.serviceAccountName" -}}
+{{- $job := dig "job" dict (.Values.migrations | default dict) -}}
+{{- $explicit := trim (toString (default "" (get $job "serviceAccountName"))) -}}
+{{- if $explicit -}}
+{{- $explicit -}}
+{{- else if and .Values.serviceAccount.create .Release.IsInstall -}}
+default
+{{- else -}}
+{{- include "honua.serviceAccountName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* User env keys the chart owns. Returns a JSON list of "source: key" hits
+       for the given env name across config.env, secret.env and extraEnv;
+       empty values are ignored because they render nothing. */ -}}
+{{- define "honua.userEnvSources" -}}
+{{- $name := .name -}}
+{{- $values := .context.Values -}}
+{{- $hits := list -}}
+{{- $configEnv := ($values.config).env | default dict -}}
+{{- if and (hasKey $configEnv $name) (ne (toString (get $configEnv $name)) "") (ne (toString (get $configEnv $name)) "<nil>") -}}
+{{- $hits = append $hits "config.env" -}}
+{{- end -}}
+{{- $secretEnv := ($values.secret).env | default dict -}}
+{{- if and (hasKey $secretEnv $name) (ne (toString (get $secretEnv $name)) "") (ne (toString (get $secretEnv $name)) "<nil>") -}}
+{{- $hits = append $hits "secret.env" -}}
+{{- end -}}
+{{- range ($values.extraEnv | default list) -}}
+{{- if eq (.name | default "") $name -}}
+{{- $hits = append $hits "extraEnv" -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $hits -}}
+{{- end -}}

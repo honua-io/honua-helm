@@ -12,9 +12,10 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  {{- $strategyType := include "honua.strategyType" . }}
   strategy:
-    type: {{ default "Recreate" .Values.strategy.type }}
-    {{- if eq (default "Recreate" .Values.strategy.type) "RollingUpdate" }}
+    type: {{ $strategyType }}
+    {{- if eq $strategyType "RollingUpdate" }}
     rollingUpdate:
       {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
     {{- end }}
@@ -136,6 +137,13 @@ spec:
             {{- range $name, $value := (include "honua.migrationSafetyEnv" . | fromJson) }}
             - name: {{ $name }}
               value: {{ $value | quote }}
+            {{- end }}
+            {{- /* The pre-upgrade migration Job owns migrations, so the serving
+                   pods only verify the journal against their binary. The key is
+                   chart-owned while the Job is enabled (validations.yaml). */}}
+            {{- if eq (include "honua.migrationsJob.enabled" .) "true" }}
+            - name: HONUA_SKIP_MIGRATIONS
+              value: "true"
             {{- end }}
             {{- /* Telemetry connection auth header values come only from an
                    existing Secret; the non-secret fields are in the

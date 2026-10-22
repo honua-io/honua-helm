@@ -392,3 +392,49 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* Out-of-band migrations. HONUA_MIGRATE_ONLY turns any process into a
+       one-shot migrator that never serves, so it is never user env: only the
+       migration Job sets it. While the Job is enabled, HONUA_SKIP_MIGRATIONS
+       on the serving pods is chart-owned too; a user value would either be
+       shadowed or, from extraEnv, win by list order and re-enable inline
+       migrations under RollingUpdate. */ -}}
+{{- range $source, $env := dict "config.env" ((.Values.config).env | default dict) "secret.env" ((.Values.secret).env | default dict) -}}
+{{- if hasKey $env "HONUA_MIGRATE_ONLY" -}}
+{{- fail (printf "HONUA_MIGRATE_ONLY must not be set in %s: it makes the server migrate and exit instead of serving. Use migrations.job.enabled to run migrations out of band." $source) -}}
+{{- end -}}
+{{- end -}}
+{{- range (.Values.extraEnv | default list) -}}
+{{- if eq (.name | default "") "HONUA_MIGRATE_ONLY" -}}
+{{- fail "HONUA_MIGRATE_ONLY must not be set in extraEnv: it makes the server migrate and exit instead of serving. Use migrations.job.enabled to run migrations out of band." -}}
+{{- end -}}
+{{- end -}}
+{{- if hasKey (dig "kubernetesJobs" "workerEnv" dict (.Values.geoprocessing | default dict)) "HONUA_MIGRATE_ONLY" -}}
+{{- fail "HONUA_MIGRATE_ONLY must not be set in geoprocessing.kubernetesJobs.workerEnv." -}}
+{{- end -}}
+{{- if eq (include "honua.migrationsJob.enabled" .) "true" -}}
+{{- $skipSources := include "honua.userEnvSources" (dict "name" "HONUA_SKIP_MIGRATIONS" "context" .) | fromJsonArray -}}
+{{- if $skipSources -}}
+{{- fail (printf "migrations.job.enabled sets HONUA_SKIP_MIGRATIONS=true on the serving pods; remove HONUA_SKIP_MIGRATIONS from %s." (join ", " $skipSources)) -}}
+{{- end -}}
+{{- if .Values.postgresql.enabled -}}
+{{- fail "migrations.job.enabled cannot be used with the chart-managed postgresql subchart: the migration Job runs as a pre-install hook, before the subchart's database exists. Point secret.env.ConnectionStrings__DefaultConnection at an external PostGIS database, or keep inline migrations (migrations.job.enabled=false) for the dev subchart." -}}
+{{- end -}}
+{{- $job := .Values.migrations.job -}}
+{{- if lt (int (default 0 $job.activeDeadlineSeconds)) 1 -}}
+{{- fail "migrations.job.activeDeadlineSeconds must be a positive number of seconds." -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The schema rejects a zero RollingUpdate budget only when strategy.type is
+       set explicitly; the chart-chosen RollingUpdate (empty type with the
+       migration Job enabled) is checked here. */ -}}
+{{- if eq (include "honua.strategyType" .) "RollingUpdate" -}}
+{{- $rolling := dig "rollingUpdate" dict (.Values.strategy | default dict) -}}
+{{- $zero := list "0" "0%" -}}
+{{- $surge := regexReplaceAll "^0+([0-9])" (toString (get $rolling "maxSurge")) "${1}" -}}
+{{- $unavailable := regexReplaceAll "^0+([0-9])" (toString (get $rolling "maxUnavailable")) "${1}" -}}
+{{- if and (has $surge $zero) (has $unavailable $zero) -}}
+{{- fail "strategy.rollingUpdate needs a non-zero maxSurge or maxUnavailable: with both zero a RollingUpdate can never replace a pod." -}}
+{{- end -}}
+{{- end -}}
