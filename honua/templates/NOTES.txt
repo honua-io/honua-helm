@@ -23,6 +23,12 @@ Evidence:
 Rollback:
   helm history {{ .Release.Name }} -n {{ .Release.Namespace }}
   helm rollback {{ .Release.Name }} <revision> -n {{ .Release.Namespace }}
+Rollback targets: roll back only to images with the schema-reader guard
+(schema >= 135 across additive migrations), never across a contract-phase
+migration without restoring the pre-upgrade backup, and pin the target by
+digest (the tag in the 2026.1 release notes has moved, honua-release#776).
+honua-2026.1 is unguarded and not a safe rollback target across any migration
+(honua-server#6484): restore the pre-upgrade backup instead.
 
 {{- if eq (include "honua.migrationsJob.enabled" .) "true" }}
 Migrations run out of band: the pre-install/pre-upgrade hook Job

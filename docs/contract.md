@@ -406,6 +406,13 @@ published honua-io/honua-release release, falling back to `nightly-aot` only
 while no published release ships migrate-only mode. The step summary names
 the image used, and the lane fails rather than skips when no image qualifies.
 
+Rollback targets must include the server's schema-reader guard (schema 135 or
+later across additive migrations), a contract-phase migration is never rolled
+back without restoring the pre-upgrade backup, and rollback targets are pinned
+by digest. `honua-2026.1` is unguarded and not a safe rollback target across
+any migration (honua-server#6484). See the chart README, "Rollback target
+eligibility".
+
 ## Contract Versioning
 
 Values and behavior described in this document are stability-bearing. A
