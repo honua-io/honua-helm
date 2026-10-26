@@ -4,8 +4,14 @@ kind: Secret
 metadata:
   name: {{ include "honua.redisHost" . }}
 type: Opaque
+{{- $redisPassword := required "redis.auth.password is required when redis.enabled is true." .Values.redis.auth.password | toString }}
+{{- /* redis.conf carries requirepass so the password never appears in the
+       redis-server argv (/proc/<pid>/cmdline). Escape for a Redis
+       double-quoted config string. */}}
+{{- $redisConfPassword := $redisPassword | replace "\\" "\\\\" | replace "\"" "\\\"" | replace "\n" "\\n" | replace "\r" "\\r" }}
 stringData:
-  password: {{ required "redis.auth.password is required when redis.enabled is true." .Values.redis.auth.password | quote }}
+  password: {{ $redisPassword | quote }}
+  redis.conf: {{ printf "requirepass \"%s\"\n" $redisConfPassword | quote }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -30,20 +36,45 @@ spec:
         {{- include "honua.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
+      automountServiceAccountToken: false
+      {{- with .Values.redis.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "honua.redisHost" . }}
+        - name: config
+          secret:
+            secretName: {{ include "honua.redisHost" . }}
+            defaultMode: 0440
+            items:
+              - key: redis.conf
+                path: redis.conf
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
       containers:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
-          args: ["redis-server", "--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+          {{- with .Values.redis.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args: ["redis-server", "/usr/local/etc/redis/redis.conf", "--appendonly", "yes"]
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: config
+              mountPath: /usr/local/etc/redis
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
           env:
-            - name: REDIS_PASSWORD
+            # redis-cli reads REDISCLI_AUTH, so probes never pass -a <password>.
+            - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
                   name: {{ include "honua.redisHost" . }}
@@ -53,10 +84,10 @@ spec:
               containerPort: 6379
           readinessProbe:
             exec:
-              command: ["sh", "-c", "redis-cli --no-auth-warning -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+              command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
           livenessProbe:
             exec:
-              command: ["sh", "-c", "redis-cli --no-auth-warning -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+              command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
