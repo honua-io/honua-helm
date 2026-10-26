@@ -949,7 +949,9 @@ characters. For non-development deployments, it also fails if
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
- | `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+ | `redis.enabled` | false | Enable chart-managed Redis (Docker Official `redis` image). Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+ | `redis.podSecurityContext` | `fsGroup: 1000`, `fsGroupChangePolicy: OnRootMismatch`, RuntimeDefault seccomp | Pod securityContext for the chart-managed Redis pod. `fsGroup` makes the `/data` PVC writable by the redis user. |
+ | `redis.securityContext` | non-root uid 999 / gid 1000, no privilege escalation, read-only root filesystem, RuntimeDefault seccomp, drop `ALL` | Container securityContext for Redis. Defaults match the `redis:*-alpine` image's redis user; Debian-based tags use gid 999. The password is loaded from a Secret-mounted `redis.conf` and probes authenticate with `REDISCLI_AUTH`, so it never appears in a process command line. |
  | `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
  | `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
  | `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |

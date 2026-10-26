@@ -62,6 +62,43 @@ assert f'claimName: {service_name}' in deployment
 assert 'mountPath: /data' in deployment and 'type: Recreate' in deployment
 assert base64.b64encode(f'{service_name}:6379,password=ci-redis-password'.encode()).decode() in first
 assert 'name: HONUA_PREFLIGHT_REDIS_CHECK\n              value: "false"' in first
+# The Redis pod is hardened and never carries the password in argv or probe commands.
+redis_documents = [document for document in yaml.safe_load_all(first) if document]
+redis_deployment = next(document for document in redis_documents
+                        if document.get('kind') == 'Deployment'
+                        and document['metadata']['name'] == service_name)
+redis_pod = redis_deployment['spec']['template']['spec']
+assert redis_pod['automountServiceAccountToken'] is False
+assert redis_pod['securityContext']['seccompProfile'] == {'type': 'RuntimeDefault'}
+assert redis_pod['securityContext']['fsGroup'] == 1000
+redis_container = redis_pod['containers'][0]
+redis_security = redis_container['securityContext']
+assert redis_security['runAsNonRoot'] is True and redis_security['runAsUser'] == 999
+assert redis_security['allowPrivilegeEscalation'] is False
+assert redis_security['readOnlyRootFilesystem'] is True
+assert redis_security['capabilities'] == {'drop': ['ALL']}
+assert redis_security['seccompProfile'] == {'type': 'RuntimeDefault'}
+mounts = {mount['mountPath']: mount['name'] for mount in redis_container['volumeMounts']}
+volumes = {volume['name']: volume for volume in redis_pod['volumes']}
+assert 'persistentVolumeClaim' in volumes[mounts['/data']]
+assert 'emptyDir' in volumes[mounts['/tmp']]
+config_volume = volumes[mounts['/usr/local/etc/redis']]['secret']
+assert config_volume['secretName'] == service_name
+assert config_volume['items'] == [{'key': 'redis.conf', 'path': 'redis.conf'}]
+assert redis_container['args'] == ['redis-server', '/usr/local/etc/redis/redis.conf', '--appendonly', 'yes']
+assert [env['name'] for env in redis_container['env']] == ['REDISCLI_AUTH']
+for probe in ('readinessProbe', 'livenessProbe'):
+    assert redis_container[probe]['exec']['command'] == ['sh', '-c', 'redis-cli ping | grep -q PONG']
+assert 'ci-redis-password' not in yaml.safe_dump(redis_deployment)
+redis_secret = next(document for document in redis_documents
+                    if document.get('kind') == 'Secret' and document['metadata']['name'] == service_name)
+assert redis_secret['stringData']['password'] == 'ci-redis-password'
+assert redis_secret['stringData']['redis.conf'] == 'requirepass "ci-redis-password"\n'
+overridden = yaml.safe_dump(next(
+    document for document in yaml.safe_load_all(render(
+        '--set', 'redis.securityContext.runAsUser=1999', '--set', 'redis.podSecurityContext.fsGroup=1999'))
+    if document and document.get('kind') == 'Deployment' and document['metadata']['name'] == service_name))
+assert 'runAsUser: 1999' in overridden and 'fsGroup: 1999' in overridden
 rotated = render('--set-string', 'redis.auth.password=rotated-password')
 assert field(deployment, 'checksum/redis-password') != field(resource(rotated, 'Deployment'), 'checksum/redis-password')
 assert field(resource(rotated, 'PersistentVolumeClaim'), 'name') == service_name
