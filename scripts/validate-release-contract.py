@@ -22,7 +22,7 @@ NIGHTLY_REQUIRED = {
     "SBOM attestation": "cosign attest --yes --type cyclonedx",
     "provenance predicate": "actions/attest-build-provenance/predicate@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0",
     "provenance bound to the source revision": "chart_publication.py provenance-predicate",
-    "provenance attestation": "actions/attest@daf44fb950173508f38bd2406030372c1d1162b1 # v3.0.0",
+    "provenance attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2",
     "provenance in the registry": "push-to-registry: true",
     "exact provenance identity": '--cert-identity "${IDENTITY}"',
     "exact signing identity": '--certificate-identity "${IDENTITY}"',
