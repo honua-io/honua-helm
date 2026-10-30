@@ -139,11 +139,28 @@ kubectl exec -n "$namespace" deployment/honua-postgis -- psql -U honua -d honua 
   -c "drop database if exists ${database}" -c "create database ${database}"
 
 connection="Host=honua-postgis;Port=5432;Database=${database};Username=honua;Password=ci-password"
+
+# With Redis on, current servers turn on the durable operation secret channel and
+# refuse to start without a key-ring certificate. Generate a disposable one
+# outside the evidence directory and pass it through the runtime Secret, as the
+# GP Kubernetes Jobs smoke does (never as a command-line literal). The key is
+# throwaway and lives only for this kind cluster.
+keyring_dir="$(mktemp -d)"
+chmod 700 "$keyring_dir"
+trap 'rm -rf "$keyring_dir"' EXIT
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=migrate-job-smoke' \
+  -keyout "$keyring_dir/key.pem" -out "$keyring_dir/cert.pem" 2>/dev/null
+openssl pkcs12 -export -passout pass: -inkey "$keyring_dir/key.pem" \
+  -in "$keyring_dir/cert.pem" -out "$keyring_dir/keyring.pfx"
+base64 -w0 "$keyring_dir/keyring.pfx" > "$keyring_dir/keyring.b64"
+
 common=(-n "$namespace" --wait --timeout 15m
   -f honua/ci-values/upgrade-base.yaml
   --set image.repository="$repository" --set image.tag= --set image.digest="$digest" --set image.pullPolicy=IfNotPresent
   --set-string secret.env.ConnectionStrings__DefaultConnection="$connection"
   --set-string config.env.Public__BaseUrl="http://${fullname}"
+  --set-string config.env.Operations__SecretChannel__KeyRingCertificatePkcs12=env:MIGRATE_SMOKE_KEYRING_PFX
+  --set-file secret.env.MIGRATE_SMOKE_KEYRING_PFX="$keyring_dir/keyring.b64"
   --set migrations.job.enabled=true)
 
 check_phase() {
