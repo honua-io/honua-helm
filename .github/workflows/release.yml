@@ -377,6 +377,8 @@ jobs:
           path: expected
 
       - name: Pull and verify without credentials
+        # runner exists only inside a step. Job-level env that references it
+        # makes GitHub reject the workflow before any job starts (honua-helm#72).
         env:
           HELM_REGISTRY_CONFIG: ${{ runner.temp }}/anonymous-registry-config.json
           CHART_VERSION: ${{ needs.package-and-publish.outputs.chart-version }}
