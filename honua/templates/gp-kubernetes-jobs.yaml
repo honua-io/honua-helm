@@ -37,9 +37,11 @@ data:
   ControlPlane__Kubernetes__DefaultImagePullSecrets__{{ $i }}: {{ $name | quote }}
   {{- end }}
   {{- if eq (include "honua.gpJobs.envFromMode" .) "true" }}
-  # Every Job imports the server's runtime Secret and ConfigMap (and any
-  # extraEnvFrom sources) through envFrom (honua-server >= bebaada00). Only the
-  # names reach the server; the kubelet resolves the values at pod start.
+  # Every Job imports its environment through envFrom (honua-server >=
+  # bebaada00): by default the scoped worker Secret and ConfigMap below
+  # (environmentScope=worker), or the server's own sources with
+  # environmentScope=server. Only the names reach the server; the kubelet
+  # resolves the values at pod start.
   {{- range $i, $name := (include "honua.gpJobs.envFromSources" (dict "kind" "secretRef" "context" .) | fromJsonArray) }}
   ControlPlane__Kubernetes__DefaultEnvFromSecrets__{{ $i }}: {{ $name | quote }}
   {{- end }}
@@ -109,12 +111,69 @@ data:
   {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ printf "%s:%s" .Values.licensing.licenseSecretRef.name .Values.licensing.licenseSecretRef.key | b64enc | quote }}
   {{- $entry = add1 $entry }}
   {{- end }}
+  {{- if and (eq (include "honua.gpJobs.envFromMode" .) "true") (eq (include "honua.gpJobs.scoped" .) "true") }}
+  {{- $keyRefs := include "honua.gpJobs.workerSecretKeyRefs" . | fromJson }}
+  {{- range $key := keys $keyRefs | sortAlpha }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Key: {{ printf "k8s.env.%s.secretKeyRef" $key | b64enc | quote }}
+  {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ get $keyRefs $key | b64enc | quote }}
+  {{- $entry = add1 $entry }}
+  {{- end }}
+  {{- end }}
   {{- $workerEnv := include "honua.gpJobs.workerEnv" . | fromJson }}
   {{- range $key := keys $workerEnv | sortAlpha }}
   {{ $prefix }}ParameterEntries__{{ $entry }}__Key: {{ printf "env.%s" $key | b64enc | quote }}
   {{ $prefix }}ParameterEntries__{{ $entry }}__Value: {{ get $workerEnv $key | b64enc | quote }}
   {{- $entry = add1 $entry }}
   {{- end }}
+{{- if and (eq (include "honua.gpJobs.envFromMode" .) "true") (eq (include "honua.gpJobs.scoped" .) "true") }}
+{{- if .Values.config.create }}
+{{- $workerConfig := include "honua.gpJobs.workerConfigData" . | fromJson }}
+---
+# The GP worker's configuration (honua-helm#110): the server's config.env
+# without the listener, the control-plane settings and any credential a worker
+# does not need (admin password, audit-chain key, OIDC signing keys, ...).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.gpJobs.workerEnvName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing-job
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+{{- if $workerConfig }}
+data:
+  {{- range $key := keys $workerConfig | sortAlpha }}
+  {{ $key }}: {{ get $workerConfig $key | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.secret.create }}
+{{- $workerSecret := include "honua.gpJobs.workerSecretData" . | fromJson }}
+---
+# The GP worker's credentials (honua-helm#110): only the database, Redis job
+# store, connection-encryption master key, operation key ring, licensing and
+# file storage entries of the runtime Secret, plus workerSecretKeys.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "honua.gpJobs.workerEnvName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing-job
+  annotations:
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+type: Opaque
+{{- if $workerSecret }}
+data:
+  {{- range $key := keys $workerSecret | sortAlpha }}
+  {{ $key }}: {{ get $workerSecret $key | b64enc | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if eq (toString (ternary true (get $sa "create") (not (hasKey $sa "create")))) "true" }}
 ---
 # The identity GP Job pods run as. Bind the worker's cloud identity (EKS Pod

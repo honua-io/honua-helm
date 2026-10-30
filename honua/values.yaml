@@ -622,9 +622,12 @@ controlPlane:
 # Requirements (enforced at render time where the chart can see them):
 #   * Redis: the durable job store. ConnectionStrings__redis is required.
 #   * Worker environment: with envFromServer (the default) every Job
-#     imports the server's runtime Secret and ConfigMap through envFrom, so the
-#     worker gets the same database, Redis and master key as the server. This
-#     needs a honua-server image at or after bebaada00 (server#5796). Older
+#     imports its environment through envFrom. By default it is scoped to what
+#     a worker needs (environmentScope: worker, honua-helm#110): the same
+#     database, Redis, master key, key ring, licensing and file storage as the
+#     server, but not the admin password, audit-chain key or other server-only
+#     credentials. This needs a honua-server image at or after bebaada00
+#     (server#5796). Older
 #     servers, or Jobs in another namespace, fall back to literal env, where
 #     credentials must be cloud secret references (aws:secretsmanager: /
 #     azure:keyvault:). See honua/README.md "Geoprocessing on Kubernetes Jobs".
@@ -718,6 +721,37 @@ geoprocessing:
     # resolve in the Job's namespace); otherwise the legacy literal mode below
     # is used. Set false to force the legacy mode for an older server.
     envFromServer: true
+    # Which server settings a worker receives (honua-helm#110).
+    #   worker (default): only what a worker host needs. The chart renders a
+    #     "<fullname>-gp-worker-env" Secret and ConfigMap for the Jobs:
+    #     - the ConfigMap is config.env without ASPNETCORE_URLS, ControlPlane__*
+    #       and any credential a worker does not need (a credential is a
+    #       sensitive name, or a value that is an aws:secretsmanager: /
+    #       azure:keyvault: reference);
+    #     - the Secret holds only the worker credentials from the chart-managed
+    #       runtime Secret: ConnectionStrings__DefaultConnection,
+    #       ConnectionStrings__redis, Security__ConnectionEncryption__*,
+    #       Operations__SecretChannel__*, Licensing__*, FileStorage__* and
+    #       workerSecretKeys.
+    #     With an existing Secret (secret.create=false) the worker takes the
+    #     database, Redis and master key (plus workerSecretKeys) from it by key
+    #     (secretKeyRef), so those keys must exist in it. extraEnvFrom sources
+    #     are not imported; list worker sources in workerExtraEnvFrom.
+    #     The admin password, audit-chain key, OIDC signing keys and other
+    #     server-only credentials never reach a worker, so the job identity
+    #     does not need to read them. Legacy literal mode is scoped the same way.
+    #   server: the pre-#110 behaviour. Every Job imports the server's runtime
+    #     Secret, ConfigMap and extraEnvFrom sources whole, and the job
+    #     identity must be able to resolve every secret reference they carry.
+    environmentScope: worker
+    # Extra server credential names a worker needs (environmentScope=worker),
+    # for example FileStorage credentials under another name or an env:
+    # reference target. Each is forwarded from config.env / secret.env, or by
+    # key from an existing Secret.
+    workerSecretKeys: []
+    # envFrom sources for the workers only (environmentScope=worker), in the
+    # extraEnvFrom shape: secretRef/configMapRef name plus optional prefix.
+    workerExtraEnvFrom: []
     # Copy the server's environment into the worker as literal env. In envFrom
     # mode that is only what the Deployment sets directly (licensing values,
     # OTLP endpoint; a license Secret travels as a secretKeyRef). In legacy

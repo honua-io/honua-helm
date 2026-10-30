@@ -102,6 +102,18 @@ Workers import {{ join ", " (include "honua.gpJobs.envFromSources" (dict "kind" 
 through envFrom. This needs a honua-server image at or after bebaada00
 (server#5796); an older server ignores ControlPlane__Kubernetes__DefaultEnvFrom*
 and its workers start without database, Redis or master-key settings.
+{{- if eq (include "honua.gpJobs.scoped" .) "true" }}
+The worker environment is scoped (environmentScope=worker, honua-helm#110): the
+admin password, audit-chain key and other server-only credentials are withheld.
+{{- with (include "honua.gpJobs.workerSecretKeyRefs" . | fromJson) }}
+Workers read {{ keys . | sortAlpha | join ", " }}
+by key from the existing Secret {{ $.Values.secret.name }}; each key must exist there.
+{{- end }}
+{{- if .Values.extraEnvFrom }}
+extraEnvFrom sources are not imported by workers; list any they need in
+geoprocessing.kubernetesJobs.workerExtraEnvFrom.
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if $missing }}
 

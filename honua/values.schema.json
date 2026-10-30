@@ -239,6 +239,24 @@
               }
             },
             "envFromServer": { "type": "boolean", "description": "Import the server's runtime Secret and ConfigMap into every Job through envFrom (honua-server >= bebaada00, server#5796)." },
+            "environmentScope": { "type": "string", "enum": ["worker", "server"], "description": "worker (default): Jobs get only the settings a worker needs (honua-helm#110). server: Jobs import the server's runtime Secret, ConfigMap and extraEnvFrom sources whole." },
+            "workerSecretKeys": {
+              "type": "array",
+              "description": "Extra server credential names forwarded to workers when environmentScope=worker.",
+              "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$" }
+            },
+            "workerExtraEnvFrom": {
+              "type": "array",
+              "description": "envFrom sources (extraEnvFrom shape) imported by workers only when environmentScope=worker.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "secretRef": { "type": "object", "properties": { "name": { "type": "string", "minLength": 1 } }, "required": ["name"] },
+                  "configMapRef": { "type": "object", "properties": { "name": { "type": "string", "minLength": 1 } }, "required": ["name"] },
+                  "prefix": { "type": "string" }
+                }
+              }
+            },
             "inheritServerEnvironment": { "type": "boolean" },
             "workerEnv": {
               "type": "object",
