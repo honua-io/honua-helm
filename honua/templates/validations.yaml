@@ -95,10 +95,34 @@
        connection string. Reject the delimiter/keyword characters that would
        corrupt it; operators with such passwords must set the connection string
        explicitly via secret.env. */ -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- if and (dig "enabled" false $postgis) .Values.postgresql.enabled -}}
+{{- fail "postgis.enabled and postgresql.enabled cannot both be true. The development quick start uses the chart-managed PostGIS database. The Bitnami postgresql subchart does not include PostGIS, so it cannot apply Honua migrations." -}}
+{{- end -}}
+{{- if and .Values.secret.generateCredentials (eq (include "honua.runtimeEnvironment" .) "Production") -}}
+{{- fail "secret.generateCredentials cannot be used when ASPNETCORE_ENVIRONMENT is Production. Set secret.env.HONUA_ADMIN_PASSWORD and secret.env.Security__ConnectionEncryption__MasterKey explicitly." -}}
+{{- end -}}
 {{- if eq (include "honua.usesChartManagedPostgresqlConnection" .) "true" -}}
+{{- if .Values.postgresql.enabled -}}
 {{- $pgPassword := toString (default "" .Values.postgresql.auth.password) -}}
 {{- if regexMatch "[;=]" $pgPassword -}}
 {{- fail "postgresql.auth.password must not contain ';' or '=' when the chart derives ConnectionStrings__DefaultConnection: those characters are parsed by Npgsql as additional connection keywords and corrupt the credential. Set secret.env.ConnectionStrings__DefaultConnection explicitly for such passwords." -}}
+{{- end -}}
+{{- end -}}
+{{- if dig "enabled" false $postgis -}}
+{{- $postgisPassword := toString (default "" (dig "auth" "password" "" $postgis)) -}}
+{{- if and $postgisPassword (regexMatch "[;=]" $postgisPassword) -}}
+{{- fail "postgis.auth.password must not contain ';' or '=' when the chart derives ConnectionStrings__DefaultConnection: those characters are parsed by Npgsql as additional connection keywords and corrupt the credential. Set secret.env.ConnectionStrings__DefaultConnection explicitly for such passwords." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $image := list .Values.preflight.image .Values.preflight.licenseStatusImage .Values.redis.image (dig "image" dict $postgis) -}}
+{{- if $image -}}
+{{- $digest := trim (default "" (get $image "digest")) -}}
+{{- $policy := default "" (get $image "pullPolicy") -}}
+{{- if and $digest (not (or (eq $policy "IfNotPresent") (eq $policy "Never"))) -}}
+{{- fail "pullPolicy must be IfNotPresent or Never when an image digest is set." -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if eq (include "honua.usesChartManagedRedisConnection" .) "true" -}}

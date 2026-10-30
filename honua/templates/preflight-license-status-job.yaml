@@ -32,7 +32,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: license-status
-          image: "{{ .Values.preflight.licenseStatusImage.repository }}:{{ .Values.preflight.licenseStatusImage.tag }}"
+          image: {{ include "honua.referencedImage" (dict "repository" .Values.preflight.licenseStatusImage.repository "tag" .Values.preflight.licenseStatusImage.tag "digest" (default "" .Values.preflight.licenseStatusImage.digest)) | quote }}
           imagePullPolicy: {{ .Values.preflight.licenseStatusImage.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
