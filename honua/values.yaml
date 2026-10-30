@@ -789,3 +789,23 @@ redis:
   auth:
     enabled: true
     password: ""
+  # Redis pod/container security. The defaults match the Docker Official
+  # redis:*-alpine image's redis user (uid 999, gid 1000); Debian-based tags
+  # use gid 999. The root filesystem is read-only: /data (the PVC) and /tmp
+  # (an emptyDir) are the only writable paths, and fsGroup makes /data writable.
+  podSecurityContext:
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 1000
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL

@@ -76,6 +76,11 @@ Honua Server runs database migrations inline at startup behind a PostgreSQL advi
 The chart defaults `strategy.type` to `Recreate` so old pods stop before new ones start during
 a migrating upgrade; use `RollingUpdate` only when the migration set is forward and backward
 compatible. `helm rollback` restores the prior release but cannot downgrade database schema.
+Roll back only to images that include the schema-reader guard: schema 135 or later for additive
+migrations, and never across a contract-phase migration without a restore. `honua-2026.1` is not
+a safe rollback target across any migration, and the only safe way back to 2026.1 is restoring
+the backup taken before the upgrade. There is no release-named immutable tag for that image yet
+([honua-io/honua-release#776](https://github.com/honua-io/honua-release/issues/776)).
 Details: [docs/contract.md](docs/contract.md) (operator contract) and
 [honua/README.md](honua/README.md) (upgrade and rollback commands). Operators moving from the
 old in-monorepo chart (`honua-server/infrastructure/helm/honua`) need no value migrations

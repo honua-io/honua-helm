@@ -70,18 +70,18 @@ server container only when set:
 Render fails when a `Database__MigrationSafety__*` key set by these values is
 also present in `config.env`, `secret.env` or `extraEnv`.
 
-`helm rollback` is safe only when the previous image recognizes every applied
-migration. Otherwise its pods refuse to start with `schema_reader_incompatible`,
-and recovery is a database restore or a roll forward. The chart cannot
-downgrade the schema, and `helm rollback` runs no pre-upgrade hook. Images at
-schema 135 and later (honua-server#6478) record forward-compatibility
-declarations, and a rolled-back image at schema 135 or later that migrates
-inline accepts an expand-only migration it does not ship once it verifies that
-declaration, so such a rollback needs no restore. Images at schema 134 and
-earlier, journals written before 135, contract scripts and scripts marked
-reader-incompatible still refuse. Pods with `HONUA_SKIP_MIGRATIONS=true` never
-accept declarations and keep the strict check. See the chart README,
-"Upgrades: expand/contract".
+Roll back only to images that include the schema-reader guard: schema 135 or
+later for additive migrations, and never across a contract-phase migration
+without a restore. A guarded image that does not recognize an applied migration
+refuses to start with `schema_reader_incompatible`. `honua-2026.1` is not a safe
+rollback target across any migration, and the only safe way back to 2026.1 is
+restoring the backup taken before the upgrade: that image predates the guard and
+serves a newer schema with no refusal. There is no release-named immutable tag
+for it yet (honua-io/honua-release#776). See the chart README, "Upgrades:
+expand/contract". `helm rollback` runs no pre-upgrade hook, and pods with
+`HONUA_SKIP_MIGRATIONS=true` (the migration Job path) never accept
+forward-compatibility declarations: they refuse any journal entry their image
+does not ship.
 
 The default `strategy.type` is empty, which the chart resolves to `Recreate`
 on the inline path and `RollingUpdate` when `migrations.job.enabled` is true.
@@ -392,10 +392,14 @@ UIDs/imageIDs, release metadata, checksums, Helm-test logs, and a runtime marker
 checksum. Rollback must restore revision 1's kubelet imageID and runtime marker
 while preserving the seed; a deliberate non-restoration assertion must fail.
 
-The chart cannot guarantee database schema downgrade compatibility. If a
-migration is not backward compatible with the rolled-back Honua image, the
-operator must restore the database from a backup or roll forward to a
-compatible image.
+Roll back only to images that include the schema-reader guard: schema 135 or
+later for additive migrations, and never across a contract-phase migration
+without a restore. The chart cannot downgrade the database schema.
+`honua-2026.1` is not a safe rollback target across any migration, and the only
+safe way back to 2026.1 is restoring the backup taken before the upgrade. An
+image without the guard does not refuse; a ready pod is not proof the rollback
+is safe. There is no release-named immutable tag for the 2026.1 image yet
+(honua-io/honua-release#776).
 
 CI also runs the out-of-band path in kind: a fresh install and an upgrade with
 `migrations.job.enabled=true` must each run the `<release>-honua-migrate` hook

@@ -375,13 +375,29 @@ Constraints:
 
 ### Guarded upgrades
 
-For an atomic guarded upgrade on Helm 3, prefer `--atomic` with an explicit
-timeout so a failed rollout auto-rolls-back to the prior revision instead of
-leaving a partially-applied Deployment:
+`--atomic` is only for an upgrade whose current revision includes the
+schema-reader guard. An unguarded source, including `honua-2026.1`, must
+upgrade without `--atomic`. If the target applies a migration and then fails
+readiness, Helm immediately restarts the previous revision against the migrated
+database. An unguarded image serves that newer schema with no guard. A failed
+upgrade from an unguarded source is recovered by restoring the backup taken
+before the upgrade, not by Helm's automatic rollback onto 2026.1.
+
+For an atomic upgrade from a guarded image on Helm 3, prefer `--atomic` with
+an explicit timeout so a failed rollout auto-rolls-back to the prior revision
+instead of leaving a partially-applied Deployment:
 
 ```bash
 helm upgrade --install honua ./honua -f honua/values-prod.yaml \
   --atomic --timeout 10m
+```
+
+Do not pass `--atomic` when the current revision is an unguarded image. Omit
+it and keep the same timeout:
+
+```bash
+helm upgrade --install honua ./honua -f honua/values-prod.yaml \
+  --timeout 10m
 ```
 
 `--atomic` waits for the readiness scope described above (startup + migrations
@@ -395,6 +411,7 @@ Job or a new pod already applied. `helm history` retains prior revisions (and
 their values/manifest) so a subsequent manual `helm rollback` remains available
 even without `--atomic`; see [Release evidence and rollback](#release-evidence-and-rollback)
 for what that rollback can and cannot restore.
+A manual rollback onto an unguarded image is not a recovery either.
 
 ## Upgrades: expand/contract
 
@@ -422,8 +439,10 @@ is the source of truth. This is how it maps onto the chart.
    Either way, under `RollingUpdate` old pods keep serving the migrated schema
    until they are replaced, so the release must be expand-only: its
    migrations must be readable by the previous version. The server checks
-   this on startup: an older reader that finds a journal entry it does not
-   recognize refuses to start with `schema_reader_incompatible`. An additive
+   this on startup when the previous image includes the schema-reader guard:
+   an older reader that finds a journal entry it does not recognize refuses to
+   start with `schema_reader_incompatible`. An image without that guard,
+   including `honua-2026.1`, does not refuse. An additive
    migration is not proof of reader compatibility on its own, so qualify the
    previous image.
 4. **Contract migrations are gated.** On an existing database the server's
@@ -434,22 +453,23 @@ is the source of truth. This is how it maps onto the chart.
    `secret.env` (or `extraEnv`) for that one upgrade, then remove it on the
    next upgrade. The chart deliberately has no value for it. Fresh installs
    are not gated.
-5. **Roll back.** Use `helm rollback` only when the previous image recognizes
-   every migration that has been applied. Otherwise the previous pods refuse
-   to start (`schema_reader_incompatible`), and you restore the database from
-   the backup or roll forward. The chart cannot downgrade the schema.
-   `--atomic` runs that rollback automatically, so a failed upgrade that
-   already applied a contract migration still needs the restore. Images at
-   schema 135 and later ([honua-io/honua-server#6478](https://github.com/honua-io/honua-server/pull/6478))
-   record a forward-compatibility declaration for every migration they apply.
-   A rolled-back image at schema 135 or later that migrates inline accepts an
-   unknown migration only when its declaration says `expand` and the image
-   verifies that declaration itself, so rolling back across expand-only
-   migrations written by such an image needs no restore. Images at schema 134
-   and earlier, journals written before 135, and contract or
-   reader-incompatible scripts still refuse, and recovery is a restore. Pods
-   running with `HONUA_SKIP_MIGRATIONS=true` (the Job path) never accept
-   declarations: they refuse any journal entry their image does not ship.
+5. **Roll back.** Roll back only to images that include the schema-reader guard:
+   schema 135 or later for additive migrations, and never across a contract-phase
+   migration without a restore. A guarded image that does not recognize an applied
+   migration refuses to start (`schema_reader_incompatible`); restore the database
+   from the backup or roll forward. `honua-2026.1` is not a safe rollback target
+   across any migration, and the only safe way back to 2026.1 is restoring the
+   backup taken before the upgrade. It predates the guard and serves a newer schema
+   with no refusal. There is no release-named immutable tag for that image yet
+   ([honua-io/honua-release#776](https://github.com/honua-io/honua-release/issues/776)).
+   An unguarded source must upgrade without `--atomic`. A failed upgrade is
+   recovered by restoring the backup taken before the upgrade, not by Helm's
+   automatic rollback onto 2026.1. `--atomic` still runs `helm rollback` when
+   the source image is guarded, so a failed upgrade that already applied a
+   contract migration needs that same restore.
+   Pods running with `HONUA_SKIP_MIGRATIONS=true` (the migration Job path)
+   never accept forward-compatibility declarations: they refuse any journal
+   entry their image does not ship.
 
 The chart exposes the server's `Database:MigrationSafety` settings as values.
 Each renders a `Database__MigrationSafety__*` env var on the server container
@@ -913,7 +933,7 @@ helm history honua
 helm rollback honua <revision>
 ```
 
-Rollback redeploys the prior Helm revision. The chart cannot downgrade database schema; restore from backup or roll forward if the prior app image is not compatible with the migrated schema. `helm rollback` runs no pre-upgrade hook, so the migration Job does not run on a rollback, and with `migrations.job.enabled` the rolled-back pods keep `HONUA_SKIP_MIGRATIONS=true` and its strict schema check.
+Rollback redeploys the prior Helm revision. Roll back only to images that include the schema-reader guard: schema 135 or later for additive migrations, and never across a contract-phase migration without a restore. The chart cannot downgrade the database schema. `honua-2026.1` is not a safe rollback target across any migration, and the only safe way back to 2026.1 is restoring the backup taken before the upgrade. There is no release-named immutable tag for that image yet ([honua-io/honua-release#776](https://github.com/honua-io/honua-release/issues/776)). `helm rollback` runs no pre-upgrade hook, so the migration Job does not run on a rollback, and with `migrations.job.enabled` the rolled-back pods keep `HONUA_SKIP_MIGRATIONS=true` and its strict schema check.
 
 ### Rollback target eligibility
 
@@ -1024,7 +1044,9 @@ characters. For non-development deployments, it also fails if
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
- | `redis.enabled` | false | Enable Bitnami Redis subchart. Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+ | `redis.enabled` | false | Enable chart-managed Redis (Docker Official `redis` image). Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
+ | `redis.podSecurityContext` | `fsGroup: 1000`, `fsGroupChangePolicy: OnRootMismatch`, RuntimeDefault seccomp | Pod securityContext for the chart-managed Redis pod. `fsGroup` makes the `/data` PVC writable by the redis user. |
+ | `redis.securityContext` | non-root uid 999 / gid 1000, no privilege escalation, read-only root filesystem, RuntimeDefault seccomp, drop `ALL` | Container securityContext for Redis. Defaults match the `redis:*-alpine` image's redis user; Debian-based tags use gid 999. The password is loaded from a Secret-mounted `redis.conf` and probes authenticate with `REDISCLI_AUTH`, so it never appears in a process command line. |
  | `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
  | `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
  | `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |

@@ -844,6 +844,14 @@
               "type": "string"
             }
           }
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Pod securityContext for the chart-managed Redis pod."
+        },
+        "securityContext": {
+          "type": "object",
+          "description": "Container securityContext for the chart-managed Redis container."
         }
       }
     },
