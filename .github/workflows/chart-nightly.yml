@@ -88,6 +88,12 @@ concurrency:
 jobs:
   publish:
     name: Publish chart by digest
+    # chart-publication allows only trunk, so a non-trunk run of this job does not
+    # start. A proof dispatch uses chart-publication-proof (any branch, no secrets)
+    # and publishes charts/honua-ci-proof only. The environment does not narrow
+    # GITHUB_TOKEN package scope; that is the package's Actions access list.
+    environment:
+      name: ${{ inputs.proof == true && 'chart-publication-proof' || 'chart-publication' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
