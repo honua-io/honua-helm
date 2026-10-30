@@ -16,6 +16,22 @@ type: Opaque
 stringData:
   password: {{ $password | quote }}
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.postgisHost" . }}-init
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+data:
+  # The pinned image ships an empty /docker-entrypoint-initdb.d, so the
+  # entrypoint never creates extensions. Official entrypoint runs *.sql
+  # before it listens on TCP, and only when PGDATA is empty.
+  10-extensions.sql: |
+    CREATE EXTENSION IF NOT EXISTS postgis;
+    CREATE EXTENSION IF NOT EXISTS postgis_topology;
+    CREATE EXTENSION IF NOT EXISTS pgrouting;
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -60,6 +76,9 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        - name: init
+          configMap:
+            name: {{ include "honua.postgisHost" . }}-init
       containers:
         - name: postgis
           image: {{ include "honua.referencedImage" (dict "repository" (required "postgis.image.repository is required when postgis.enabled is true." (get $image "repository")) "tag" (default "" (get $image "tag")) "digest" (default "" (get $image "digest"))) | quote }}
@@ -94,6 +113,9 @@ spec:
               mountPath: /var/run/postgresql
             - name: tmp
               mountPath: /tmp
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
           readinessProbe:
             exec:
               command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ $username | quote }}, "-d", {{ $database | quote }}]

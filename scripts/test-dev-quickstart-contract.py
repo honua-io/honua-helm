@@ -80,6 +80,21 @@ def render_once():
     assert postgis_image.startswith('pgrouting/pgrouting@sha256:')
     assert 'readOnlyRootFilesystem' not in yaml.safe_dump(
         postgis['spec']['template']['spec']['containers'][0].get('securityContext', {}))
+    init = next(
+        document for document in docs
+        if document.get('kind') == 'ConfigMap'
+        and document['metadata']['name'].endswith('-postgis-init'))
+    script = init['data']['10-extensions.sql']
+    for extension in ('postgis', 'postgis_topology', 'pgrouting'):
+        assert f'CREATE EXTENSION IF NOT EXISTS {extension}' in script
+    mounts = postgis['spec']['template']['spec']['containers'][0]['volumeMounts']
+    assert any(
+        mount.get('name') == 'init' and mount.get('mountPath') == '/docker-entrypoint-initdb.d'
+        for mount in mounts)
+    init_volume = next(
+        volume for volume in postgis['spec']['template']['spec']['volumes']
+        if volume.get('name') == 'init')
+    assert init_volume['configMap']['name'] == init['metadata']['name']
     redis = next(
         document for document in docs
         if document.get('kind') == 'Deployment'

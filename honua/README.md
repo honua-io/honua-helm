@@ -222,9 +222,11 @@ For production, point `ConnectionStrings__DefaultConnection` at a managed PostGI
 ## Chart-managed PostGIS (development quick start)
 
 `honua/values-dev.yaml` sets `postgis.enabled=true` and leaves `postgresql.enabled`
-false. The database pod runs the digest-pinned pgrouting image, which provides
-PostGIS, and the chart derives `ConnectionStrings__DefaultConnection` when you
-do not set one. Preflight skips the database TCP check on the first install
+false. The database pod runs the digest-pinned pgrouting image. That image
+leaves `/docker-entrypoint-initdb.d` empty, so the chart mounts a first-init
+script that creates the `postgis`, `postgis_topology`, and `pgrouting`
+extensions before PostgreSQL listens. The chart derives
+`ConnectionStrings__DefaultConnection` when you do not set one. Preflight skips the database TCP check on the first install
 because the pre-install hook runs before the PostGIS pod exists. Redis in this
 overlay uses an emptyDir (`redis.persistence.enabled=false`) so a kind cluster
 does not need a StorageClass. The database pod does the same.
