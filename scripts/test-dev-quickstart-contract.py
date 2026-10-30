@@ -122,6 +122,17 @@ def main():
     second = render_once()
     assert first != second
 
+    upgrade_docs = documents(render('--is-upgrade'))
+    preflight = next(
+        document for document in upgrade_docs
+        if document.get('kind') == 'Job' and document['metadata']['name'].endswith('-preflight'))
+    preflight_env = {
+        item['name']: item['value']
+        for item in preflight['spec']['template']['spec']['containers'][0]['env']
+    }
+    assert preflight_env['HONUA_PREFLIGHT_DATABASE_CHECK'] == 'false'
+    assert preflight_env['HONUA_PREFLIGHT_REDIS_CHECK'] == 'false'
+
     pdb_text = render('--set', 'podDisruptionBudget.enabled=true')
     pdb = next(document for document in documents(pdb_text)
                if document.get('kind') == 'PodDisruptionBudget')

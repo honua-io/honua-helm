@@ -201,8 +201,19 @@ false
 {{- end -}}
 {{- end -}}
 
+{{- define "honua.managedDatabaseHost" -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- if dig "enabled" false $postgis -}}
+{{- include "honua.postgisHost" . -}}
+{{- else if .Values.postgresql.enabled -}}
+{{- include "honua.postgresqlHost" . -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.preflightDatabaseCheck" -}}
-{{- if and .Release.IsInstall (eq (include "honua.usesChartManagedPostgresqlConnection" .) "true") -}}
+{{- $managed := eq (include "honua.usesChartManagedPostgresqlConnection" .) "true" -}}
+{{- $host := include "honua.managedDatabaseHost" . -}}
+{{- if and $managed (or .Release.IsInstall (not (lookup "v1" "Service" .Release.Namespace $host))) -}}
 false
 {{- else -}}
 true

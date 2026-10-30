@@ -158,7 +158,7 @@ jobs:
             echo "Redis-free Production unexpectedly rendered a bundled Redis workload."
             exit 1
           fi
-          grep -q 'image: "redis:7.4-alpine"' /tmp/honua-rendered-redis-auth.yaml
+          grep -q 'image: "redis@sha256:' /tmp/honua-rendered-redis-auth.yaml
           grep -A1 'name: HONUA_PREFLIGHT_REDIS_CHECK' /tmp/honua-rendered-redis-auth.yaml | grep -q 'value: "false"'
           if grep -q 'bitnami/redis' /tmp/honua-rendered-redis-auth.yaml; then
             echo "Withdrawn Bitnami Redis repository remains in the rendered chart."
@@ -1062,6 +1062,9 @@ jobs:
         uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           cluster_name: honua-dev-quickstart
+
+      - name: Add Bitnami chart repository
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
 
       - name: Update dependencies
         run: helm dependency build honua
