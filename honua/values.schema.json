@@ -159,6 +159,27 @@
         }
       }
     },
+    "migrations": {
+      "type": "object",
+      "description": "Out-of-band database migrations through honua-server migrate-only mode.",
+      "additionalProperties": false,
+      "properties": {
+        "job": {
+          "type": "object",
+          "description": "Pre-install/pre-upgrade hook Job running the server image with HONUA_MIGRATE_ONLY=true. When enabled the Deployment gets HONUA_SKIP_MIGRATIONS=true and defaults to RollingUpdate.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "ttlSecondsAfterFinished": { "type": ["integer", "null"], "minimum": 0 },
+            "resources": { "type": "object" },
+            "serviceAccountName": { "type": "string" },
+            "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "podLabels": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        }
+      }
+    },
     "geoprocessing": {
       "type": "object",
       "description": "Geoprocessing execution settings.",
@@ -255,7 +276,8 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["Recreate", "RollingUpdate"]
+          "enum": ["", "Recreate", "RollingUpdate"],
+          "description": "Empty lets the chart choose: RollingUpdate when migrations.job.enabled, otherwise Recreate."
         },
         "rollingUpdate": {
           "type": "object",

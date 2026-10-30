@@ -23,18 +23,35 @@ Secret controllers, or cloud marketplace entitlement flows.
 
 ## Migrations
 
-Honua Server runs database migrations inline during application startup.
-Migrations are serialized by the server with a PostgreSQL advisory lock. The
-chart does not run a separate migration Job because Honua Server does not
-currently expose a migrate-and-exit mode. A full server start is the only way
-to apply migrations, and it also starts background services. The opt-in
-pre-upgrade migration Job (`migrations.job.enabled`) is blocked on
-[honua-io/honua-server#6470](https://github.com/honua-io/honua-server/issues/6470).
+The chart supports two migration paths. With the default
+`migrations.job.enabled: false`, Honua Server runs database migrations inline
+during application startup, serialized by a PostgreSQL advisory lock, and the
+effective strategy is `Recreate`. With `migrations.job.enabled: true`, a
+`pre-install,pre-upgrade` hook Job runs the same image in migrate-only mode
+(`HONUA_MIGRATE_ONLY=true`, honua-server#6479) with the Deployment's
+configuration and `migrationSafety.*` env. The Job applies the migrations under
+every `Database:MigrationSafety` gate, prints one `honua.migrate-only/v1` JSON
+summary line to stdout and exits with a typed code. It has `backoffLimit: 0`,
+`restartPolicy: Never`, `activeDeadlineSeconds` (default 1800) and
+`hook-delete-policy: before-hook-creation`. Helm applies the Deployment only
+after it exits `0`; the Deployment then carries `HONUA_SKIP_MIGRATIONS=true`
+and an effective strategy of `RollingUpdate` unless `strategy.type` is set. A
+non-zero exit fails the install or upgrade with the Deployment unchanged. Exit
+`5` means a reviewed contract migration needs `HONUA_APPROVE_CONTRACT_MIGRATIONS`
+set to the printed nonce for one upgrade. The chart README lists every exit
+code.
 
-The chart default keeps `config.env.HONUA_SKIP_MIGRATIONS=false`. If an
-operator overrides this to `true`, the chart does not provide an alternate
-migration path. Nothing converges the schema, and the operator owns that
-before serving traffic.
+The Job is off by default for now and becomes the recommended production path.
+It requires a server image at or after the first release that ships
+`HONUA_MIGRATE_ONLY` (today: the next release after 2026.1); an older image
+ignores the switch, serves, and the hook fails at `activeDeadlineSeconds`.
+
+The chart owns `HONUA_SKIP_MIGRATIONS` while the Job is enabled and
+`HONUA_MIGRATE_ONLY` always: render fails when either is set in `config.env`,
+`secret.env` or `extraEnv` (and `HONUA_MIGRATE_ONLY` in the GP worker env). The
+chart does not set `HONUA_SKIP_MIGRATIONS` on the inline path. If an operator
+sets it there through an external source, nothing converges the schema, and the
+operator owns that before serving traffic.
 
 ### Contract-phase migrations
 
@@ -61,14 +78,14 @@ rollback target across any migration, and the only safe way back to 2026.1 is
 restoring the backup taken before the upgrade: that image predates the guard and
 serves a newer schema with no refusal. There is no release-named immutable tag
 for it yet (honua-io/honua-release#776). See the chart README, "Upgrades:
-expand/contract".
+expand/contract". `helm rollback` runs no pre-upgrade hook, and pods with
+`HONUA_SKIP_MIGRATIONS=true` (the migration Job path) never accept
+forward-compatibility declarations: they refuse any journal entry their image
+does not ship.
 
-The default Deployment strategy is:
-
-```yaml
-strategy:
-  type: Recreate
-```
+The default `strategy.type` is empty, which the chart resolves to `Recreate`
+on the inline path and `RollingUpdate` when `migrations.job.enabled` is true.
+An explicit `Recreate` or `RollingUpdate` always wins.
 
 `Recreate` is the safe default for inline migrations because it scales old
 pods down before new pods start. This prevents old and new Honua versions from
@@ -79,7 +96,9 @@ upgrade downtime while old pods are stopped and replacement pods start.
 Operators may opt into `RollingUpdate` only when the target migration set is
 forward and backward compatible across the old and new images. In practice
 that means an expand-only release whose migrations the previous version can
-read:
+read. This holds on the migration-Job path too: the Job removes the race
+between migrating pods, but old pods still serve the migrated schema until
+they are replaced.
 
 ```yaml
 strategy:
@@ -92,6 +111,8 @@ strategy:
 When `strategy.type=RollingUpdate`, the values schema rejects a zero rollout
 budget where both `maxSurge` and `maxUnavailable` are `0`, `"0"`, or `"0%"`.
 At least one of those values must allow Kubernetes to make rollout progress.
+`templates/validations.yaml` applies the same rule when the chart chooses
+`RollingUpdate`.
 
 ## Upgrade Execution
 
@@ -108,7 +129,9 @@ previous revision if the upgrade does not reach a ready state before
 migrations, and dependency checks must all complete. Size `--timeout` above
 the worst-case migration duration; migrations run inline in the new pod
 during a `Recreate` rollout, and a timeout that is too tight aborts a slow but
-otherwise successful migrating upgrade.
+otherwise successful migrating upgrade. With `migrations.job.enabled`, also size
+it above `migrations.job.activeDeadlineSeconds`, because Helm waits for the
+hook Job before it applies the Deployment.
 
 Migration compatibility is the operator's responsibility, not something the
 chart can verify: `RollingUpdate` requires forward/backward-compatible
@@ -377,6 +400,22 @@ safe way back to 2026.1 is restoring the backup taken before the upgrade. An
 image without the guard does not refuse; a ready pod is not proof the rollback
 is safe. There is no release-named immutable tag for the 2026.1 image yet
 (honua-io/honua-release#776).
+
+CI also runs the out-of-band path in kind: a fresh install and an upgrade with
+`migrations.job.enabled=true` must each run the `<release>-honua-migrate` hook
+Job to exit `0`, print the `honua.migrate-only/v1` summary line, and leave the
+Deployment on `RollingUpdate` with `HONUA_SKIP_MIGRATIONS=true`.
+That lane runs the customer-facing image: the honua-server digest of the latest
+published honua-io/honua-release release, falling back to `nightly-aot` only
+while no published release ships migrate-only mode. The step summary names
+the image used, and the lane fails rather than skips when no image qualifies.
+
+Rollback targets must include the server's schema-reader guard (schema 135 or
+later across additive migrations), a contract-phase migration is never rolled
+back without restoring the pre-upgrade backup, and rollback targets are pinned
+by digest. `honua-2026.1` is unguarded and not a safe rollback target across
+any migration (honua-server#6484). See the chart README, "Rollback target
+eligibility".
 
 ## Contract Versioning
 

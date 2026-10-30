@@ -680,6 +680,98 @@ jobs:
             fi
           done
 
+      - name: Verify out-of-band migration Job (migrate-only mode)
+        run: |
+          set -euo pipefail
+          # Default: inline migrations stay byte-for-byte what they were.
+          base=/tmp/honua-rendered-base.yaml
+          for key in 'honua-honua-migrate' 'HONUA_MIGRATE_ONLY' 'HONUA_SKIP_MIGRATIONS'; do
+            if grep -q "${key}" "${base}"; then
+              echo "Default render unexpectedly carries ${key}."
+              exit 1
+            fi
+          done
+          grep -q 'type: Recreate' "${base}"
+
+          for overlay in honua/ci-values/base.yaml honua/values-dev.yaml honua/values-stage.yaml; do
+            helm template honua ./honua -f "${overlay}" --set migrations.job.enabled=true \
+              --set postgresql.enabled=false \
+              --set-string secret.env.ConnectionStrings__DefaultConnection='Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password' \
+              > /tmp/honua-rendered-migrate.yaml
+          done
+          helm template honua ./honua -f honua/values-prod.yaml --set image.tag=v1.2.3-aot --set migrations.job.enabled=true \
+            > /tmp/honua-rendered-migrate-prod.yaml
+          helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/upgrade-safety.yaml \
+            -f honua/ci-values/migrations-job.yaml > /tmp/honua-rendered-migrate.yaml
+          rendered=/tmp/honua-rendered-migrate.yaml
+          job="$(yq 'select(.kind == "Job" and .metadata.name == "honua-honua-migrate")' "${rendered}")"
+          test -n "${job}"
+          test "$(yq '.metadata.annotations."helm.sh/hook"' <<<"${job}")" = 'pre-install,pre-upgrade'
+          test "$(yq '.metadata.annotations."helm.sh/hook-delete-policy"' <<<"${job}")" = 'before-hook-creation'
+          test "$(yq '.metadata.annotations."helm.sh/hook-weight"' <<<"${job}")" = '0'
+          test "$(yq '.spec.backoffLimit' <<<"${job}")" = '0'
+          test "$(yq '.spec.activeDeadlineSeconds' <<<"${job}")" = '900'
+          test "$(yq '.spec.template.spec.restartPolicy' <<<"${job}")" = 'Never'
+          test "$(yq '.spec.template.spec.containers[0].image' <<<"${job}")" = "$(yq 'select(.kind == "Deployment" and .metadata.name == "honua-honua") | .spec.template.spec.containers[0].image' "${rendered}")"
+          test "$(yq '.spec.template.spec.containers[0].env[] | select(.name == "HONUA_MIGRATE_ONLY") | .value' <<<"${job}")" = 'true'
+          # The same MigrationSafety gates and extra env as the serving pods.
+          test "$(yq '.spec.template.spec.containers[0].env[] | select(.name == "Database__MigrationSafety__ContractApplyPolicy") | .value' <<<"${job}")" = 'Gate'
+          test "$(yq '.spec.template.spec.containers[0].env[] | select(.name == "Database__MigrationSafety__BackupCommand") | .value' <<<"${job}")" = '/opt/backup/pre-contract-backup.sh'
+          test "$(yq '.spec.template.spec.containers[0].env[] | select(.name == "HONUA_APPROVE_CONTRACT_MIGRATIONS") | .value' <<<"${job}")" = 'ci-nonce'
+          # Hook-scoped copies of the chart-managed ConfigMap/Secret, created before the Job.
+          test "$(yq '.spec.template.spec.containers[0].envFrom[0].configMapRef.name' <<<"${job}")" = 'honua-honua-migrate'
+          test "$(yq '.spec.template.spec.containers[0].envFrom[1].secretRef.name' <<<"${job}")" = 'honua-honua-migrate'
+          for kind in ConfigMap Secret; do
+            test "$(yq "select(.kind == \"${kind}\" and .metadata.name == \"honua-honua-migrate\") | .metadata.annotations.\"helm.sh/hook-weight\"" "${rendered}")" = '-10'
+          done
+          test "$(yq 'select(.kind == "Secret" and .metadata.name == "honua-honua-migrate") | .data.ConnectionStrings__DefaultConnection' "${rendered}")" \
+            = "$(yq 'select(.kind == "Secret" and .metadata.name == "honua-honua-secret") | .data.ConnectionStrings__DefaultConnection' "${rendered}")"
+          # A first install runs before the chart's ServiceAccount exists.
+          test "$(yq '.spec.template.spec.serviceAccountName' <<<"${job}")" = 'default'
+          helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/migrations-job.yaml \
+            --set migrations.job.serviceAccountName=honua-migrator \
+            | yq 'select(.kind == "Job" and .metadata.name == "honua-honua-migrate") | .spec.template.spec.serviceAccountName' | grep -qx 'honua-migrator'
+          # The serving pods skip migrations and roll with RollingUpdate.
+          deployment="$(yq 'select(.kind == "Deployment" and .metadata.name == "honua-honua")' "${rendered}")"
+          test "$(yq '.spec.strategy.type' <<<"${deployment}")" = 'RollingUpdate'
+          test "$(yq '.spec.template.spec.containers[0].env[] | select(.name == "HONUA_SKIP_MIGRATIONS") | .value' <<<"${deployment}")" = 'true'
+          if yq '.spec.template.spec.containers[0].env[].name' <<<"${deployment}" | grep -qx 'HONUA_MIGRATE_ONLY'; then
+            echo "The Deployment must never carry HONUA_MIGRATE_ONLY."
+            exit 1
+          fi
+          # An explicit strategy still wins.
+          helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/migrations-job.yaml --set strategy.type=Recreate \
+            | yq 'select(.kind == "Deployment") | .spec.strategy.type' | grep -qx 'Recreate'
+          helm template honua ./honua -f honua/ci-values/base.yaml --set strategy.type=RollingUpdate \
+            | yq 'select(.kind == "Deployment") | .spec.strategy.type' | grep -qx 'RollingUpdate'
+          # Each invalid configuration fails render with a message naming the source.
+          for case in \
+            "config.env|-f honua/ci-values/migrations-job.yaml --set-string config.env.HONUA_SKIP_MIGRATIONS=true" \
+            "config.env|-f honua/ci-values/migrations-job.yaml --set-string config.env.HONUA_SKIP_MIGRATIONS=false" \
+            "secret.env|-f honua/ci-values/migrations-job.yaml --set-string secret.env.HONUA_SKIP_MIGRATIONS=true" \
+            "extraEnv|-f honua/ci-values/migrations-job.yaml --set extraEnv[0].name=HONUA_SKIP_MIGRATIONS --set-string extraEnv[0].value=false" \
+            "HONUA_MIGRATE_ONLY|--set-string config.env.HONUA_MIGRATE_ONLY=true" \
+            "HONUA_MIGRATE_ONLY|--set-string secret.env.HONUA_MIGRATE_ONLY=true" \
+            "HONUA_MIGRATE_ONLY|--set extraEnv[0].name=HONUA_MIGRATE_ONLY --set-string extraEnv[0].value=true" \
+            "HONUA_MIGRATE_ONLY|-f honua/ci-values/migrations-job.yaml --set extraEnv[0].name=HONUA_MIGRATE_ONLY --set-string extraEnv[0].value=false" \
+            "postgresql|-f honua/ci-values/migrations-job.yaml --set postgresql.enabled=true --set postgresql.auth.password=ci-password" \
+            "activeDeadlineSeconds|-f honua/ci-values/migrations-job.yaml --set migrations.job.activeDeadlineSeconds=0" \
+            "rollingUpdate|-f honua/ci-values/migrations-job.yaml --set strategy.rollingUpdate.maxSurge=0 --set strategy.rollingUpdate.maxUnavailable=0" \
+            "migrations|--set migrations.job.unknown=true"; do
+            needle="${case%%|*}"
+            args="${case#*|}"
+            set +e
+            # shellcheck disable=SC2086
+            helm template honua ./honua -f honua/ci-values/base.yaml ${args} > /tmp/honua-rendered-migrate-invalid.txt 2>&1
+            status=$?
+            set -e
+            if [[ "${status}" -eq 0 ]] || ! grep -q -- "${needle}" /tmp/honua-rendered-migrate-invalid.txt; then
+              echo "Expected render to fail (mentioning ${needle}) for: ${args}"
+              cat /tmp/honua-rendered-migrate-invalid.txt
+              exit 1
+            fi
+          done
+
       - name: Validate ASPNETCORE_URLS / targetPort mismatch guard fails invalid config
         run: |
           set +e
@@ -859,7 +951,7 @@ jobs:
 
   install-upgrade-rollback-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1020,6 +1112,20 @@ jobs:
           kubectl get deployment honua-honua -n honua-smoke \
             -o jsonpath='{.spec.template.spec.containers[0].envFrom}' | grep -q 'honua-honua-deploy-target'
 
+      - name: Install and upgrade with the migration Job (migrate-only mode)
+        env:
+          # The image must contain migrate-only mode (4087d93, server#6479).
+          # Prefer the customer-facing image: the honua-server digest of the
+          # latest published honua-release release. nightly-aot is the fallback
+          # only while no published release ships it. Pin the digest with its
+          # source ("release:<tag>" or "nightly"); empty resolves the same order
+          # and fails (never skips) when no image qualifies. The step summary
+          # names the image used.
+          HONUA_MIGRATE_ONLY_IMAGE_DIGEST: ""
+          HONUA_MIGRATE_ONLY_IMAGE_SOURCE: ""
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/migrate-job-smoke.sh
+
       - name: Capture smoke evidence
         if: always()
         run: |
@@ -1033,6 +1139,11 @@ jobs:
           kubectl get configmap honua-honua-deploy-target -n honua-smoke -o yaml > /tmp/honua-smoke/deploy-target.yaml
           kubectl get events -n honua-smoke --sort-by=.lastTimestamp > /tmp/honua-smoke/events.txt
           kubectl get pods -n honua-smoke -o wide > /tmp/honua-smoke/pods.txt
+          mkdir -p /tmp/honua-smoke/migration-job
+          kubectl logs -n honua-smoke job/honua-mj-honua-migrate > /tmp/honua-smoke/migration-job/last-job.log 2>&1
+          kubectl logs -n honua-smoke deployment/honua-mj-honua > /tmp/honua-smoke/migration-job/server.log 2>&1
+          helm history honua-mj -n honua-smoke > /tmp/honua-smoke/migration-job/helm-history.txt 2>&1
+          true
 
       - name: Upload smoke evidence
         if: always()
