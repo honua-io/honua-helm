@@ -23,9 +23,12 @@ pods stop before new pods start during a migrating upgrade.
   single source of truth; `appVersion` is a `"0.0.0"` placeholder stamped at
   release. Do not restate the concrete version here or elsewhere in docs.
 - Subchart dependencies (Bitnami, from `https://charts.bitnami.com/bitnami`):
-  - `postgresql` `>=12.0.0 <16.0.0` (gated by `postgresql.enabled`, dev only —
-    Bitnami PostgreSQL does NOT include PostGIS, which Honua requires).
+  - `postgresql` `>=12.0.0 <16.0.0` (gated by `postgresql.enabled`. This subchart
+    does NOT include PostGIS, so it cannot apply Honua migrations).
   - `Chart.lock` pins `postgresql 15.5.38`.
+- The development quick start (`honua/values-dev.yaml`) uses chart-managed
+  PostGIS (`postgis.enabled`) and chart-managed Redis. It generates credentials
+  (`secret.generateCredentials`) instead of storing them in the overlay.
 - Optional chart-managed Redis uses the Docker Official `redis` image directly;
   it is not a subchart dependency.
 - Values validation via `honua/values.schema.json` (JSON Schema) plus
@@ -141,9 +144,10 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
   `HONUA_ADMIN_PASSWORD` (>=16 chars, mixed case + digit + special),
   `Security__ConnectionEncryption__MasterKey` (>=32 chars), and
   `ConnectionStrings__redis` for non-development deployments.
-- `image.tag` defaults to `latest-aot` (dev-only). Release CI stamps a concrete
-  `vX.Y.Z-aot` tag. Pin by digest in production; `image.pullPolicy` must be
-  `IfNotPresent` or `Never` when `image.digest` is set.
+- `image.tag` defaults to `latest-aot` (dev-only). Release CI stamps the verified
+  server image digest, clears `image.tag`, and sets `image.pullPolicy` to
+  `IfNotPresent`. `image.pullPolicy` must be `IfNotPresent` or `Never` when
+  `image.digest` is set.
 - `strategy.type` defaults to `Recreate` (safe for inline migrations). Use
   `RollingUpdate` only with forward/backward-compatible migrations; the schema
   rejects `RollingUpdate` when both `maxSurge` and `maxUnavailable` are zero
@@ -151,11 +155,13 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
 - `release.id` and the effective app version are used as Kubernetes label
   values: <=63 chars, only letters/numbers/`_`/`.`/`-`, start/end alphanumeric,
   no `+` build metadata. Put free-form build info in `release.manifest`.
-- Bitnami PostgreSQL has no PostGIS — for anything beyond local dev, point
+- Bitnami PostgreSQL has no PostGIS. The development quick start uses
+  `postgis.enabled`. For anything beyond that, point
   `ConnectionStrings__DefaultConnection` at an external PostGIS database.
 - Versioning: chart tagged with a signed annotated `chart-vX.Y.Z` here; release workflow validates
   SemVer (no `v` prefix, no `+`), verifies the server image exists, then stamps
-  `Chart.yaml` version/appVersion and `values.yaml` `image.tag` before packaging,
+  `Chart.yaml` version/appVersion and `values.yaml` `image.digest` (clearing
+  `image.tag`) before packaging,
   refuses an existing OCI version, and requires an anonymous byte-identical pull
   before creating the GitHub Release. Manual dispatch is dry-run only.
   See `RELEASING.md`.

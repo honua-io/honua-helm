@@ -34,8 +34,10 @@ helm upgrade --install honua ./honua \
 | Condition | Required values | Evidence |
 | --- | --- | --- |
 | Image identity | Exactly one of `image.tag` or `image.digest`; when `image.digest` is set, `image.pullPolicy` must be `IfNotPresent` or `Never` | `honua/values.schema.json`, `honua/templates/validations.yaml` |
-| Chart-managed Secret (`secret.create=true`) | `secret.env.HONUA_ADMIN_PASSWORD` at least 16 characters with uppercase, lowercase, digit, and special characters; `secret.env.Security__ConnectionEncryption__MasterKey` at least 32 characters long | `honua/templates/secret.yaml` |
-| Chart-managed Secret with external PostgreSQL (`postgresql.enabled=false`) | `secret.env.ConnectionStrings__DefaultConnection` | `honua/templates/secret.yaml` |
+| Chart-managed Secret (`secret.create=true`, `secret.generateCredentials=false`) | `secret.env.HONUA_ADMIN_PASSWORD` at least 16 characters with uppercase, lowercase, digit, and special characters; `secret.env.Security__ConnectionEncryption__MasterKey` at least 32 characters long | `honua/templates/secret.yaml` |
+| Development credential generation (`secret.generateCredentials=true`) | Refused when `ASPNETCORE_ENVIRONMENT` is `Production`. Empty admin password, master key, PostGIS password, and Redis password are generated into Secrets | `honua/templates/validations.yaml`, `honua/templates/secret.yaml` |
+| Chart-managed Secret with external PostgreSQL (`postgresql.enabled=false` and `postgis.enabled=false`) | `secret.env.ConnectionStrings__DefaultConnection` | `honua/templates/secret.yaml` |
+| Chart-managed PostGIS (`postgis.enabled=true`) | `postgis.auth.username` and `postgis.auth.database`. Password may be empty only when `secret.generateCredentials=true`. Mutually exclusive with `postgresql.enabled` | `honua/templates/postgis.yaml` |
 | Non-development chart-managed Secret without Redis subchart (`config.env.ASPNETCORE_ENVIRONMENT` not `Development` or `Test`, `redis.enabled=false`) | `secret.env.ConnectionStrings__redis` | `honua/templates/secret.yaml` |
 | PostgreSQL subchart enabled (`postgresql.enabled=true`) | `postgresql.auth.username`, `postgresql.auth.password`, `postgresql.auth.database` | `honua/values.schema.json`, `honua/templates/secret.yaml` |
 | Existing Secret mode (`secret.create=false`) | `secret.name` or at least one `extraEnvFrom` source | `honua/values.schema.json`, `honua/templates/validations.yaml` |
@@ -104,7 +106,7 @@ health probes alone do not prove API host validation passes. Set
 `preflight.licenseStatusHost` when the allowed host is supplied through external
 configuration. The kind smoke declares its Service URL explicitly and keeps
 Production host validation enabled.
-`preflight.licenseStatusImage` defaults to `python:3.12-alpine`; mirror this image
+`preflight.licenseStatusImage` defaults to `python:3.12-alpine` pinned by digest; mirror this image
 for private registries along with `preflight.image`, and supply `image.pullSecrets`
 when needed. The existing pre-install/pre-upgrade dependency checks stay in place.
 

@@ -33,4 +33,7 @@ spec:
   selector:
     matchLabels:
       {{- include "honua.selectorLabels" . | nindent 6 }}
+      {{- if eq (include "honua.pdbSelectsServerComponent" .) "true" }}
+      app.kubernetes.io/component: server
+      {{- end }}
 {{- end }}

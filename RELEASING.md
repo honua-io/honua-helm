@@ -18,14 +18,15 @@ Tag schemes are deliberately decoupled:
 - Chart releases use `chart-vX.Y.Z` in this repo.
 - Server releases use `vX.Y.Z` in `honua-server`.
 
-### Image tag stamping
+### Image digest stamping
 
 The chart's checked-in `values.yaml` ships `image.tag: "latest-aot"` for local
-development ergonomics. The release workflow stamps `image.tag` to
-`v${app_version}-aot` at package time, so an operator who installs the published
-OCI chart without overrides gets an immutable, version-pinned image. AOT is the
-chart's default posture; operators that need JIT can override `image.tag` at
-install time.
+development ergonomics. The release workflow verifies `v${app_version}-aot`,
+then writes that image's manifest digest into `image.digest`, clears `image.tag`,
+and sets `image.pullPolicy` to `IfNotPresent`. A tag is not an immutable pin.
+An operator who installs the published OCI chart without overrides gets the
+verified digest. AOT is the chart's default posture; operators that need JIT
+override `image.digest` or `image.tag` at install time.
 
 ## Nightly publication by digest
 
@@ -179,5 +180,5 @@ helm show chart oci://ghcr.io/honua-io/charts/honua --version X.Y.Z
 ```
 
 Confirm the rendered `Chart.yaml` shows the expected `version` and `appVersion`,
-and that `values.yaml` shows the stamped `image.tag`. Do not log in for this
+and that `values.yaml` shows the stamped `image.digest` with `image.tag` empty. Do not log in for this
 check: anonymous success is the public-install evidence.

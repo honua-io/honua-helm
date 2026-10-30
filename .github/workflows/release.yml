@@ -159,11 +159,16 @@ jobs:
           CHART_VERSION: ${{ steps.versions.outputs.chart_version }}
           APP_VERSION: ${{ steps.versions.outputs.app_version }}
           IMAGE_TAG: ${{ steps.versions.outputs.image_tag }}
+          SERVER_IMAGE_DIGEST: ${{ steps.verify-image.outputs.image_digest }}
         run: |
           set -euo pipefail
           yq -i '.version = strenv(CHART_VERSION)' honua/Chart.yaml
           yq -i '.appVersion = strenv(APP_VERSION)' honua/Chart.yaml
-          yq -i '.image.tag = strenv(IMAGE_TAG)' honua/values.yaml
+          # Pin the packaged chart to the digest that was just verified. A tag
+          # alone is mutable; pullPolicy Always would re-resolve it.
+          yq -i '.image.digest = strenv(SERVER_IMAGE_DIGEST)' honua/values.yaml
+          yq -i '.image.tag = ""' honua/values.yaml
+          yq -i '.image.pullPolicy = "IfNotPresent"' honua/values.yaml
           echo "--- Chart.yaml after stamp ---"
           yq '.' honua/Chart.yaml
           echo "--- values.yaml image block after stamp ---"
@@ -255,8 +260,8 @@ jobs:
             echo "- Registry: \`${OCI_REGISTRY}/honua\`"
             echo "- Chart version: \`${CHART_VERSION}\`"
             echo "- App version: \`${APP_VERSION}\`"
-            echo "- Image tag stamped: \`${IMAGE_TAG}\`"
-            echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
+            echo "- Server image: \`ghcr.io/honua-io/honua-server@${SERVER_IMAGE_DIGEST}\`"
+            echo "- Verified tag (cleared from packaged values): \`${IMAGE_TAG}\`"
             echo "- OCI digest: \`${digest}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -276,8 +281,8 @@ jobs:
             echo ""
             echo "- Chart version: \`${CHART_VERSION}\`"
             echo "- App version: \`${APP_VERSION}\`"
-            echo "- Image tag stamped: \`${IMAGE_TAG}\`"
-            echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
+            echo "- Server image: \`ghcr.io/honua-io/honua-server@${SERVER_IMAGE_DIGEST}\`"
+            echo "- Verified tag (cleared from packaged values): \`${IMAGE_TAG}\`"
             echo "- Packaged artifact: \`${ARTIFACT}\` (not pushed)"
             echo ""
             echo "Push a signed annotated tag \`chart-v${CHART_VERSION}\` to publish to \`${OCI_REGISTRY}\`, verify anonymous pull, and create a GitHub Release."
@@ -308,9 +313,8 @@ jobs:
             echo "## Honua Helm chart ${tag}"
             echo ""
             echo "- App version: \`${APP_VERSION}\`"
-            echo "- Image tag stamped: \`${IMAGE_TAG}\`"
-            echo "- Server image: \`ghcr.io/honua-io/honua-server:${IMAGE_TAG}\`"
-            echo "- Server image digest (verified pre-publish): \`${SERVER_IMAGE_DIGEST}\`"
+            echo "- Server image: \`ghcr.io/honua-io/honua-server@${SERVER_IMAGE_DIGEST}\`"
+            echo "- Verified tag (cleared from packaged values): \`${IMAGE_TAG}\`"
             echo "- OCI: \`oci://ghcr.io/honua-io/charts/honua\` version \`${CHART_VERSION}\`"
             if [[ -n "${DIGEST}" ]]; then
               echo "- Digest: \`${DIGEST}\`"

@@ -238,7 +238,7 @@ Job reads from `secret.name` when provided and from every `extraEnvFrom` source.
 When `secret.create=false`, values validation requires either `secret.name` or
 at least one `extraEnvFrom` source.
 
-The default hook image is `curlimages/curl:8.5.0`, and the default reachability
+The default hook image is `curlimages/curl:8.5.0` pinned by digest, and the default reachability
 timeout is `preflight.timeoutSeconds=5`. Operators can set
 `preflight.registryCheck.enabled=false` to keep secret and database checks while
 skipping the registry `/v2/` check.

@@ -1,7 +1,7 @@
 # Development overlay for local clusters and ephemeral preview namespaces.
-# This overlay is self-contained for Helm rendering and development smoke tests.
-# The bundled PostgreSQL dependency is not PostGIS-enabled and is not intended
-# for production data.
+# Self-contained: digest-pinned server, chart-managed PostGIS and Redis.
+# Credentials are generated at install (secret.generateCredentials) and are not
+# stored in this file. Not for production data.
 
 replicaCount: 1
 
@@ -30,20 +30,24 @@ config:
     ASPNETCORE_URLS: "http://+:8080"
 
 secret:
-  env:
-    HONUA_ADMIN_PASSWORD: "DevAdminPassword1!"
-    Security__ConnectionEncryption__MasterKey: "dev-connection-encryption-master-key-00000001"
+  generateCredentials: true
+  env: {}
+
+postgis:
+  enabled: true
 
 postgresql:
-  enabled: true
-  auth:
-    username: honua
-    password: honua-dev-password
-    database: honua
+  enabled: false
 
 redis:
   enabled: true
-  architecture: standalone
+  persistence:
+    enabled: false
   auth:
     enabled: true
-    password: honua-dev-redis
+    password: ""
+
+tests:
+  connection:
+    attempts: 60
+    sleepSeconds: 10

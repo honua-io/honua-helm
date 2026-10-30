@@ -44,10 +44,13 @@ helm upgrade --install honua honua -f honua/values-dev.yaml
 helm test honua
 ```
 
-The dev overlay is self-contained: the digest-pinned 2026.1 candidate server image, bundled
-(non-PostGIS) PostgreSQL and Redis, dev-grade secrets, and
-`ASPNETCORE_ENVIRONMENT=Development`. Do not use it for real data. Readiness at
-`/healthz/ready` signals that startup and database migrations completed.
+The dev overlay is self-contained: the digest-pinned 2026.1 candidate server image, chart-managed
+PostGIS (the customer-install pgrouting pin) and Redis, and
+`ASPNETCORE_ENVIRONMENT=Development`. Admin, master-key, database, and Redis
+passwords are generated at install into Secrets and are not in the values file.
+Read them back with `kubectl get secret` if you need them. Do not use this
+overlay for real data. Readiness at `/healthz/ready` signals that startup and
+database migrations completed.
 
 Note that `helm template honua honua` with **no** values file fails by design: the baseline
 `values.yaml` is a documented contract that intentionally leaves runtime secrets empty. Always

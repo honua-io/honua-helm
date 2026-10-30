@@ -402,6 +402,10 @@
               "type": "string",
               "minLength": 1
             },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            },
             "pullPolicy": {
               "type": "string",
               "enum": ["Always", "IfNotPresent", "Never"]
@@ -419,6 +423,10 @@
             "tag": {
               "type": "string",
               "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
             },
             "pullPolicy": {
               "type": "string",
@@ -757,6 +765,10 @@
         "name": {
           "type": "string"
         },
+        "generateCredentials": {
+          "type": "boolean",
+          "description": "Development only. Generate empty admin, master-key, PostGIS, and Redis credentials at install and reuse them from the live Secret on upgrade. Refused when ASPNETCORE_ENVIRONMENT is Production."
+        },
         "env": {
           "type": "object",
           "properties": {
@@ -798,6 +810,7 @@
         "persistence": {
           "type": "object",
           "properties": {
+            "enabled": { "type": "boolean" },
             "size": { "type": "string", "minLength": 1 },
             "storageClass": { "type": "string" }
           },
@@ -808,10 +821,14 @@
           "properties": {
             "repository": { "type": "string", "minLength": 1 },
             "tag": { "type": "string", "minLength": 1 },
+            "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
             "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
           },
           "required": ["repository", "tag", "pullPolicy"]
         },
+        "imagePullSecrets": { "type": "array" },
+        "maxmemory": { "type": "string" },
+        "resources": { "type": "object" },
         "auth": {
           "type": "object",
           "properties": {
@@ -830,6 +847,54 @@
         "securityContext": {
           "type": "object",
           "description": "Container securityContext for the chart-managed Redis container."
+        }
+      }
+    },
+    "postgis": {
+      "type": "object",
+      "description": "Chart-managed PostGIS for the development quick start. Not for production data. Do not enable together with postgresql.enabled.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string" },
+            "password": { "type": "string" },
+            "database": { "type": "string" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string" },
+            "storageClass": { "type": "string" }
+          }
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "imagePullSecrets": { "type": "array" },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "resources": { "type": "object" }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "connection": {
+          "type": "object",
+          "properties": {
+            "attempts": { "type": "integer", "minimum": 1 },
+            "sleepSeconds": { "type": "integer", "minimum": 0 }
+          }
         }
       }
     },
@@ -1051,24 +1116,54 @@
         }
       },
       "then": {
-        "properties": {
-          "redis": {
-            "type": "object",
+        "allOf": [
+          {
             "properties": {
-              "auth": {
+              "redis": {
                 "type": "object",
                 "properties": {
-                  "enabled": {
-                    "const": true
-                  },
-                  "password": { "type": "string", "minLength": 1 }
+                  "auth": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": { "const": true }
+                    },
+                    "required": ["enabled"]
+                  }
                 },
-                "required": ["enabled", "password"]
+                "required": ["auth"]
               }
-            },
-            "required": ["auth"]
+            }
           }
-        }
+        ],
+        "anyOf": [
+          {
+            "properties": {
+              "redis": {
+                "type": "object",
+                "properties": {
+                  "auth": {
+                    "type": "object",
+                    "properties": {
+                      "password": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["password"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": {
+                  "generateCredentials": { "const": true }
+                },
+                "required": ["generateCredentials"]
+              }
+            }
+          }
+        ]
       }
     },
     {
@@ -1142,6 +1237,17 @@
                   }
                 },
                 "required": ["auth"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": {
+                  "generateCredentials": { "const": true }
+                },
+                "required": ["generateCredentials"]
               }
             }
           }

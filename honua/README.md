@@ -69,10 +69,14 @@ For local development and Helm smoke testing, use the development overlay:
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm dependency build honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
+helm test honua
 ```
 
-The development overlay pins the 2026.1 candidate server image by digest so the quick start
-does not depend on the moving `latest-aot` tag.
+The development overlay pins the 2026.1 candidate server image by digest and
+starts a chart-managed PostGIS database (pgrouting, pinned by digest) plus
+Redis. `secret.generateCredentials` fills the admin password, connection
+master key, and database passwords at install time and reuses the live Secret
+on upgrade. Do not point this overlay at production data.
 
 For direct installs with external data services, the default preflight hook
 checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment
@@ -213,9 +217,21 @@ helm upgrade --install honua honua -f honua/values-prod.yaml -f customer-prod.ya
 
 For production, point `ConnectionStrings__DefaultConnection` at a managed PostGIS database (e.g., Amazon RDS, Azure Flexible Server) rather than using the Bitnami subchart.
 
-> The Bitnami PostgreSQL subchart **does not include PostGIS**. Honua requires PostGIS for migrations and spatial queries. For anything beyond local development, use an external PostGIS-enabled database.
+> The Bitnami PostgreSQL subchart **does not include PostGIS**. Honua requires PostGIS for migrations and spatial queries. The development quick start uses `postgis.enabled` (chart-managed PostGIS). For production, use an external PostGIS-enabled database.
 
-## PostgreSQL subchart (dev only)
+## Chart-managed PostGIS (development quick start)
+
+`honua/values-dev.yaml` sets `postgis.enabled=true` and leaves `postgresql.enabled`
+false. The database pod runs the digest-pinned pgrouting image. That image
+leaves `/docker-entrypoint-initdb.d` empty, so the chart mounts a first-init
+script that creates the `postgis`, `postgis_topology`, and `pgrouting`
+extensions before PostgreSQL listens. The chart derives
+`ConnectionStrings__DefaultConnection` when you do not set one. Preflight skips the database TCP check on the first install
+because the pre-install hook runs before the PostGIS pod exists. Redis in this
+overlay uses an emptyDir (`redis.persistence.enabled=false`) so a kind cluster
+does not need a StorageClass. The database pod does the same.
+
+## PostgreSQL subchart (not migration-capable)
 
 ```bash
 helm upgrade --install honua honua \
@@ -256,7 +272,8 @@ helm upgrade --install honua honua \
 
 When `redis.enabled=true`, `redis.auth.enabled` must remain true and
 `redis.auth.password` must be nonempty, even with an explicit client connection
-string. Delimiter-containing passwords require both the server password and an
+string, unless `secret.generateCredentials` fills an empty password for a
+development install. Delimiter-containing passwords require both the server password and an
 explicit, correctly escaped client connection string. In
 chart-managed-secret mode, the chart auto-populates `ConnectionStrings__redis`
 from `redis.auth.password` unless you set `secret.env.ConnectionStrings__redis`

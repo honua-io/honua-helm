@@ -134,6 +134,13 @@ select `server` immediately.
 they show the narrowed selector even when a live upgrade will defer it for one
 revision. `podLabels` cannot set `app.kubernetes.io/component`.
 
+The PodDisruptionBudget selector is immutable. New releases select only
+`app.kubernetes.io/component: server`, so preflight Jobs and chart-managed
+Redis or PostGIS pods are outside the budget. An existing budget whose selector
+does not already require that label must be deleted once before the narrowed
+selector can be adopted. The chart keeps the live selector on upgrade until
+that happens.
+
 ## Prometheus SLO selector upgrade note
 
 An empty `metrics.prometheusRule.slo.metricSelector` now scopes application

@@ -86,6 +86,7 @@ jobs:
             -f honua/ci-values/base.yaml \
             --set-string preflight.image.repository=registry.airgap.example/honua/curl \
             --set-string preflight.image.tag=8.5.0-airgap \
+            --set-string preflight.image.digest= \
             > /tmp/honua-rendered-private-preflight-image.yaml
 
       - name: Assert preflight image is reused by Helm test hook
@@ -138,7 +139,9 @@ jobs:
         run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
 
       - name: Verify managed Redis review regressions
-        run: python3 scripts/test-redis-review.py
+        run: |
+          python3 scripts/test-redis-review.py
+          python3 scripts/test-dev-quickstart-contract.py
 
       - name: Verify geoprocessing on Kubernetes Jobs rendering
         run: |
@@ -155,7 +158,7 @@ jobs:
             echo "Redis-free Production unexpectedly rendered a bundled Redis workload."
             exit 1
           fi
-          grep -q 'image: "redis:7.4-alpine"' /tmp/honua-rendered-redis-auth.yaml
+          grep -q 'image: "redis@sha256:' /tmp/honua-rendered-redis-auth.yaml
           grep -A1 'name: HONUA_PREFLIGHT_REDIS_CHECK' /tmp/honua-rendered-redis-auth.yaml | grep -q 'value: "false"'
           if grep -q 'bitnami/redis' /tmp/honua-rendered-redis-auth.yaml; then
             echo "Withdrawn Bitnami Redis repository remains in the rendered chart."
@@ -701,6 +704,10 @@ jobs:
           set +e
           helm template honua ./honua \
             -f honua/values-dev.yaml \
+            --set postgis.enabled=false \
+            --set postgresql.enabled=true \
+            --set postgresql.auth.username=honua \
+            --set postgresql.auth.database=honua \
             --set postgresql.auth.password='bad;pass' \
             > /tmp/honua-rendered-pg-password-invalid.yaml 2>&1
           status=$?
@@ -1040,6 +1047,57 @@ jobs:
         with:
           name: honua-smoke-evidence
           path: /tmp/honua-smoke
+
+  dev-quickstart:
+    name: Development quick start on kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Create kind cluster
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: honua-dev-quickstart
+
+      - name: Add Bitnami chart repository
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Update dependencies
+        run: helm dependency build honua
+
+      - name: Install the documented development quick start
+        run: |
+          set -euo pipefail
+          kubectl create namespace honua-dev
+          helm upgrade --install honua honua \
+            --namespace honua-dev \
+            -f honua/values-dev.yaml \
+            --wait --timeout 15m
+          kubectl rollout status deployment/honua-honua-postgis -n honua-dev --timeout=180s
+          kubectl rollout status deployment/honua-honua-redis -n honua-dev --timeout=180s
+          helm test honua --namespace honua-dev --logs --timeout 15m
+
+      - name: Capture quick start evidence
+        if: always()
+        run: |
+          set +e
+          mkdir -p /tmp/honua-dev-quickstart
+          helm status honua -n honua-dev > /tmp/honua-dev-quickstart/status.txt
+          kubectl get pods -n honua-dev -o wide > /tmp/honua-dev-quickstart/pods.txt
+          kubectl get events -n honua-dev --sort-by=.lastTimestamp > /tmp/honua-dev-quickstart/events.txt
+          kubectl logs -n honua-dev deployment/honua-honua > /tmp/honua-dev-quickstart/server.log
+          kubectl logs -n honua-dev deployment/honua-honua-postgis > /tmp/honua-dev-quickstart/postgis.log
+
+      - name: Upload quick start evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: honua-dev-quickstart
+          path: /tmp/honua-dev-quickstart
 
   gp-kubernetes-jobs-smoke:
     name: GP on Kubernetes Jobs kind smoke
