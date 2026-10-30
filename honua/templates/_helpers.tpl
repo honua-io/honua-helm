@@ -212,8 +212,14 @@ false
 
 {{- define "honua.preflightDatabaseCheck" -}}
 {{- $managed := eq (include "honua.usesChartManagedPostgresqlConnection" .) "true" -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- $postgisOn := dig "enabled" false $postgis -}}
 {{- $host := include "honua.managedDatabaseHost" . -}}
-{{- if and $managed (or .Release.IsInstall (not (lookup "v1" "Service" .Release.Namespace $host))) -}}
+{{- /* Bitnami upgrades keep the existing check: that Service is already there.
+       PostGIS skips until lookup sees the new Service, including the upgrade
+       that first replaces Bitnami. helm template has no cluster, so that
+       upgrade render skips; a live upgrade with the Service present checks. */ -}}
+{{- if and $managed (or .Release.IsInstall (and $postgisOn (not (lookup "v1" "Service" .Release.Namespace $host)))) -}}
 false
 {{- else -}}
 true
