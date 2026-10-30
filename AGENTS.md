@@ -176,6 +176,9 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
     `scripts/test-chart-publication.py` in `lint-chart`.
   - A branch can prove it only with `proof: true`, which publishes to
     `charts/honua-ci-proof/honua` and then deletes it.
+  - `publish` deploys to the `chart-publication` environment (branch policy: `trunk`
+    only). A proof dispatch deploys to `chart-publication-proof` instead, which is
+    what lets a branch publish the throwaway package.
 
   See `docs/release/CHART-PUBLICATION.md`.
 - When changing pinned subchart versions, update both `Chart.yaml` ranges and
