@@ -115,7 +115,7 @@ within chart 0.x — see [docs/MIGRATION.md](docs/MIGRATION.md).
 | [honua-console](https://github.com/honua-io/honua-console) | Web console for display-and-approve workflows; Studio is Preview. |
 | [honua-sdk-js](https://github.com/honua-io/honua-sdk-js) | JavaScript/TypeScript SDKs + MCP server |
 | [honua-sdk-python](https://github.com/honua-io/honua-sdk-python) | Python SDK |
-| [honua-migrate](https://github.com/honua-io/honua-migrate) | Esri migration CLI suite — read-only footprint assessment, service and content migration, codemods, durable runs, reconciliation |
+| [honua-migrate](https://github.com/honua-io/honua-migrate) | GeoServices REST migration CLI suite — read-only footprint assessment, service and content migration, codemods, durable runs, reconciliation |
 
 ## Security
 
