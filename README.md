@@ -126,4 +126,4 @@ public issues for security reports.
 ## License
 
 [Apache-2.0](LICENSE) for this chart repository. Honua Server itself is distributed under the
-Elastic License 2.0 — see the [honua-server license](https://github.com/honua-io/honua-server/blob/trunk/LICENSE).
+Fair Core License, Version 1.0, ALv2 Future License (FCL-1.0-ALv2) — see the [honua-server license](https://github.com/honua-io/honua-server/blob/trunk/LICENSE).
