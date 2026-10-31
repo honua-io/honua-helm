@@ -68,6 +68,49 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- $postgis := .Values.postgis | default dict }}
+      {{- if dig "enabled" false $postgis }}
+      {{- $postgisImage := dig "image" dict $postgis }}
+      {{- /* The server applies migrations once, at startup. If it starts before the
+             chart-managed PostGIS accepts TCP connections, the attempt fails and is
+             not retried, so the pod never becomes ready. Wait for PostGIS first. */}}
+      initContainers:
+        - name: wait-for-postgis
+          image: {{ include "honua.referencedImage" (dict "repository" (get $postgisImage "repository") "tag" (default "" (get $postgisImage "tag")) "digest" (default "" (get $postgisImage "digest"))) | quote }}
+          imagePullPolicy: {{ default "IfNotPresent" (get $postgisImage "pullPolicy") }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              attempt=0
+              until pg_isready -q -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 150 ]; then
+                  echo "PostGIS at $PGHOST:$PGPORT did not accept connections" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "PostGIS at $PGHOST:$PGPORT accepts connections"
+          env:
+            - name: PGHOST
+              value: {{ include "honua.postgisHost" . | quote }}
+            - name: PGPORT
+              value: {{ include "honua.postgisPort" . | quote }}
+            - name: PGUSER
+              value: {{ dig "auth" "username" "" $postgis | quote }}
+            - name: PGDATABASE
+              value: {{ dig "auth" "database" "" $postgis | quote }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      {{- end }}
       containers:
         - name: honua
           image: {{ include "honua.imageReference" . | quote }}

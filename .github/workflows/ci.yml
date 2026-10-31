@@ -1093,7 +1093,10 @@ jobs:
           helm status honua -n honua-dev > /tmp/honua-dev-quickstart/status.txt
           kubectl get pods -n honua-dev -o wide > /tmp/honua-dev-quickstart/pods.txt
           kubectl get events -n honua-dev --sort-by=.lastTimestamp > /tmp/honua-dev-quickstart/events.txt
-          kubectl logs -n honua-dev deployment/honua-honua > /tmp/honua-dev-quickstart/server.log
+          # deployment/honua-honua's selector also matches the redis and postgis pods,
+          # so select the server pods by component.
+          kubectl describe pods -n honua-dev > /tmp/honua-dev-quickstart/describe-pods.txt
+          kubectl logs -n honua-dev -l app.kubernetes.io/component=server --all-containers --prefix --tail=-1 > /tmp/honua-dev-quickstart/server.log
           kubectl logs -n honua-dev deployment/honua-honua-postgis > /tmp/honua-dev-quickstart/postgis.log
 
       - name: Upload quick start evidence
