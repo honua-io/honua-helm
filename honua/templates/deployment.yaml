@@ -61,14 +61,26 @@ spec:
       {{- /* The Kubernetes Job backend authenticates to the API server with the
              pod's projected service account token. */}}
       automountServiceAccountToken: {{ or .Values.serviceAccount.automount $gpJobs }}
-      {{- with .Values.image.pullSecrets }}
+      {{- $postgis := .Values.postgis | default dict }}
+      {{- $pullSecrets := .Values.image.pullSecrets | default list }}
+      {{- if dig "enabled" false $postgis }}
+      {{- $seen := dict }}
+      {{- $merged := list }}
+      {{- range concat $pullSecrets (dig "imagePullSecrets" list $postgis) }}
+      {{- if not (hasKey $seen .name) }}
+      {{- $_ := set $seen .name true }}
+      {{- $merged = append $merged . }}
+      {{- end }}
+      {{- end }}
+      {{- $pullSecrets = $merged }}
+      {{- end }}
+      {{- with $pullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
-      {{- $postgis := .Values.postgis | default dict }}
       {{- if dig "enabled" false $postgis }}
       {{- $postgisImage := dig "image" dict $postgis }}
       {{- /* The server applies migrations once, at startup. If it starts before the

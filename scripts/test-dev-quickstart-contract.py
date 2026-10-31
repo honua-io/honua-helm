@@ -200,6 +200,23 @@ def main():
     assert 'pg_isready' in wait['command'][-1]
     assert wait['securityContext']['readOnlyRootFilesystem'] is True
     assert 'PASSWORD' not in yaml.safe_dump(wait).upper()
+    # Pull credentials are pod-scoped and must cover both container images.
+    for enabled, expected in (
+            (True, ['server-registry', 'shared-registry', 'postgis-registry']),
+            (False, ['server-registry', 'shared-registry'])):
+        configured = documents(render(
+            '--set', f'postgis.enabled={str(enabled).lower()}',
+            '--set', 'secret.env.ConnectionStrings__DefaultConnection=Host=external;Database=honua',
+            '--set', 'image.pullSecrets[0].name=server-registry',
+            '--set', 'image.pullSecrets[1].name=shared-registry',
+            '--set', 'postgis.imagePullSecrets[0].name=shared-registry',
+            '--set', 'postgis.imagePullSecrets[1].name=postgis-registry'))
+        server = next(d for d in configured if d.get('kind') == 'Deployment'
+                      and d['metadata']['name'] == 'honua-dev-honua')
+        pod = server['spec']['template']['spec']
+        assert [secret['name'] for secret in pod['imagePullSecrets']] == expected
+        assert any(c['name'] == 'wait-for-postgis' for c in pod.get('initContainers', [])) == enabled
+
     external = subprocess.run(
         ['helm', 'template', 'honua', './honua', '-f', 'honua/ci-values/base.yaml'],
         capture_output=True, text=True)
