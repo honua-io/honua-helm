@@ -270,7 +270,7 @@ jobs:
             -f honua/ci-values/request-secret-references.yaml \
             > /tmp/honua-rendered-request-secret-references.yaml
           rendered=/tmp/honua-rendered-request-secret-references.yaml
-          grep -A1 'name: Security__RequestSecretReferences__AllowedEnvironmentVariables__0$' "${rendered}" | grep -q 'value: "HONUA_IMPORT_ARCGIS_TOKEN"'
+          grep -A1 'name: Security__RequestSecretReferences__AllowedEnvironmentVariables__0$' "${rendered}" | grep -q 'value: "HONUA_IMPORT_TOKEN"'
           grep -A1 'name: Security__RequestSecretReferences__AllowedEnvironmentVariablePrefixes__0$' "${rendered}" | grep -q 'value: "HONUA_IMPORT_"'
           grep -A1 'name: Security__RequestSecretReferences__AllowedSecretReferencePrefixes__0$' "${rendered}" | grep -q 'value: "aws:secretsmanager:honua/imports/"'
           grep -A1 'name: Security__RequestSecretReferences__AllowedSecretReferencePrefixes__1$' "${rendered}" | grep -q 'value: "azure:keyvault:honua-imports:"'
