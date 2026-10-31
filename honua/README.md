@@ -601,7 +601,10 @@ The server Deployment also changes in two ways:
 | `nodeSelector` | `{}` | The workload's `k8s.node_selector` parameter |
 | `workload.index` / `id` / `name` | `2` / `geoprocessing-kubernetes-job` / `Geoprocessing (Kubernetes Job)` | `ControlPlane:ExecutionWorkloads:<index>` |
 | `workload.runtimeProfile` | `managed` | Required image runtime (`managed` or `native`). |
-| `envFromServer` | `true` | `ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}`: every Job imports the server's runtime Secret and ConfigMap. Needs honua-server at or after `bebaada00` (server#5796). See below. |
+| `envFromServer` | `true` | `ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}`: every Job imports its environment through `envFrom`. Needs honua-server at or after `bebaada00` (server#5796). See below. |
+| `environmentScope` | `worker` | `worker`: Jobs get only the settings a worker needs; server-only credentials are withheld (honua-helm#110). `server`: Jobs import the server's runtime Secret, ConfigMap and `extraEnvFrom` whole (the behaviour before #110). See below. |
+| `workerSecretKeys` | `[]` | Extra server credential names forwarded to workers in the `worker` scope. |
+| `workerExtraEnvFrom` | `[]` | `envFrom` sources (the `extraEnvFrom` shape) for workers only, in the `worker` scope. |
 | `inheritServerEnvironment` | `true` | Copies the server's environment into the worker as literal env (see below). |
 | `workerEnv` | `{}` | Extra literal worker env. Wins over `envFrom`. An empty value clears the variable. |
 | `allowInlineWorkerSecrets` | `false` | Legacy mode, disposable clusters only (see below). |
@@ -640,7 +643,66 @@ the assigned-operation entry point delivered by honua-server#6065.
 A worker composes the same services as the server, so it needs the same
 database, the Redis job store and the connection-encryption master key.
 Redis-backed non-development deployments also need the operation key-ring
-certificate.
+certificate. It does not serve HTTP, authenticate admins or verify the audit
+chain, so it does not need the admin password, the audit-chain key or the OIDC
+signing keys.
+
+#### Scope (`environmentScope`)
+
+With `environmentScope: worker` (the default, honua-helm#110) the chart gives
+workers only what a worker host needs. A worker never receives the admin
+password, the audit-chain key, OIDC signing keys or other server-only
+credentials, so the job service account's cloud identity does not need to read
+them either.
+
+The worker credentials are:
+
+- `ConnectionStrings__DefaultConnection` and `ConnectionStrings__redis`;
+- `Security__ConnectionEncryption__*` (the master key);
+- `Operations__SecretChannel__*` (the operation key ring);
+- `Licensing__*` and `FileStorage__*`;
+- every name in `workerSecretKeys`.
+
+A *credential* is a name that looks secret (`ConnectionStrings__*`, or a name
+containing password, master key, API key, token, PKCS#12, secret, signing key,
+private key, credential, license content or the audit-chain key), or a value
+that is an `aws:secretsmanager:` / `azure:keyvault:` reference. Every other
+setting is configuration, and workers get all of it.
+
+In envFrom mode the chart renders `<fullname>-gp-worker-env` and the Jobs
+import it instead of the server's sources:
+
+| Object | Contents |
+| --- | --- |
+| ConfigMap `<fullname>-gp-worker-env` (with `config.create`) | `config.env`, minus `ASPNETCORE_URLS`, `ControlPlane__*` and every credential that is not a worker credential |
+| Secret `<fullname>-gp-worker-env` (with `secret.create`) | Only the worker credentials from the runtime Secret, including the chart-derived PostgreSQL and Redis connection strings |
+
+The runtime Secret is a credential store, so its entries are allowlisted
+rather than filtered.
+
+With an existing runtime Secret (`secret.create: false`, `secret.name`), the
+chart cannot read or filter it. The worker takes
+`ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis`,
+`Security__ConnectionEncryption__MasterKey` and each `workerSecretKeys` name
+from it by key, as `k8s.env.<NAME>.secretKeyRef` workload parameters. Those keys
+must exist in the Secret, or the Job pod cannot start. A key the worker already
+gets from `config.env` or `workerEnv` is skipped. An existing ConfigMap
+(`config.name` with `config.create: false`) is imported whole, because the
+chart cannot filter it, so keep server-only secret references out of it.
+
+`extraEnvFrom` sources stay with the server. List anything workers need in
+`workerExtraEnvFrom`. The install NOTES say so when `extraEnvFrom` is set.
+
+Legacy literal mode is scoped the same way:
+
+- `config.env` is filtered as above;
+- only worker credentials are copied from the `secret.env` references.
+
+`environmentScope: server` restores the earlier behaviour: workers import the
+server's runtime Secret, ConfigMap and `extraEnvFrom` sources whole. Their
+identity must then be able to resolve every secret reference those sources
+carry. Use it only as a temporary fallback when a worker needs a setting the
+scope withholds; `workerSecretKeys` is the narrower fix.
 
 The worker receives these settings in one of two ways, depending on the server
 version and the Job namespace.
@@ -656,8 +718,10 @@ the release namespace.
 The chart sets
 `ControlPlane__Kubernetes__DefaultEnvFromSecrets__<i>` and
 `ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__<i>`. The server then adds
-container `envFrom` to every Job it launches, so the worker imports the same
-sources the server Deployment mounts:
+container `envFrom` to every Job it launches. With `environmentScope: worker`
+(the default) the sources are the scoped `<fullname>-gp-worker-env` objects
+above, then each `workerExtraEnvFrom` source. With `environmentScope: server`
+the worker imports the same sources the server Deployment mounts:
 
 | Order | Source | Kind |
 | --- | --- | --- |
@@ -672,7 +736,8 @@ in the Job object, the durable job record or the server logs. This covers:
 
 - a chart-managed Secret with plain credentials;
 - the chart-derived PostgreSQL and Redis connection strings;
-- an existing Secret, such as the release harness's `honua-runtime`.
+- an existing Secret, such as the release harness's `honua-runtime`, read by
+  key in the `worker` scope or whole in the `server` scope.
 
 None of these needs a cloud secret reference any more. Neither the job
 ServiceAccount nor the server's Role needs any Secret permission, because the
@@ -717,7 +782,8 @@ as **cloud secret references**: `aws:secretsmanager:<arn>` or
 `azure:keyvault:<vault>/<secret>`. The worker resolves them at startup with
 the job service account's cloud identity.
 
-With `inheritServerEnvironment: true`, the worker gets:
+With `inheritServerEnvironment: true`, the worker gets the following, scoped
+as described above unless `environmentScope: server`:
 
 - every `config.env` entry, except `ASPNETCORE_URLS` and `ControlPlane__*`;
 - the licensing values;

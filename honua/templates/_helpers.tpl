@@ -705,22 +705,154 @@ true
 {{- if and $on (eq (include "honua.gpJobs.namespace" .) .Release.Namespace) -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
+{{- /* Worker environment scope (honua-helm#110). "worker" (the default) gives
+       each Job only the settings a worker host needs: the server's
+       non-credential configuration plus the database, Redis job store,
+       connection-encryption master key, operation key ring, licensing and
+       file storage credentials. Server-only credentials (the admin password,
+       the audit-chain key, OIDC signing keys, SMTP and API keys) never reach
+       a worker, so the job identity need not be able to read them. "server"
+       restores the pre-#110 behaviour: the worker imports the server's whole
+       runtime Secret, ConfigMap and extraEnvFrom sources. */ -}}
+{{- define "honua.gpJobs.scoped" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- if eq (toString (default "worker" (get $gp "environmentScope"))) "server" -}}false{{- else -}}true{{- end -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.workerEnvName" -}}
+{{- printf "%s-gp-worker-env" (include "honua.fullname" . | trunc 49 | trimSuffix "-") -}}
+{{- end -}}
+
+{{- /* workerSecretKeys, plus the target of every env:<NAME> reference a
+       worker credential in config.env or secret.env points at, since the
+       worker resolves that reference from its own environment. */ -}}
+{{- define "honua.gpJobs.workerSecretKeys" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $keys := list -}}
+{{- range (get $gp "workerSecretKeys" | default list) -}}
+{{- $keys = append $keys (toString .) -}}
+{{- end -}}
+{{- $settings := dict -}}
+{{- include "honua.nonEmptyEnv" (dict "src" (get (.Values.secret | default dict) "env") "dst" $settings) -}}
+{{- include "honua.nonEmptyEnv" (dict "src" (get (.Values.config | default dict) "env") "dst" $settings) -}}
+{{- range $key, $value := $settings -}}
+{{- if and (hasPrefix "env:" $value) (eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $key "extra" $keys)) "true") -}}
+{{- $target := trim (trimPrefix "env:" $value) -}}
+{{- if and $target (not (has $target $keys)) -}}
+{{- $keys = append $keys $target -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $keys -}}
+{{- end -}}
+
+{{- /* A credential a worker host needs: the database, the Redis job store,
+       the connection-encryption master key, the operation key ring,
+       licensing, file storage, or a name listed in workerSecretKeys.
+       Called with (dict "name" <key> "extra" <workerSecretKeys>). */ -}}
+{{- define "honua.gpJobs.isWorkerCredential" -}}
+{{- if or (has .name .extra) (regexMatch "^(ConnectionStrings__(DefaultConnection|redis)|(Security__ConnectionEncryption|Operations__SecretChannel|Licensing|FileStorage)__[A-Za-z0-9_.-]+)$" .name) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* A setting that carries or points at a credential: a sensitive name
+       (honua.gpJobs.isSensitiveName, plus secret/signing-key/credential
+       names) or a cloud secret reference value. Called with
+       (dict "name" <key> "value" <value>). */ -}}
+{{- define "honua.gpJobs.isCredential" -}}
+{{- if or (eq (include "honua.gpJobs.isSensitiveName" .name) "true") (regexMatch "(?i)(secret|signingkey|credential)" .name) (eq (include "honua.isSecretReference" .value) "true") -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* Scoped worker ConfigMap data (name => value): the non-empty config.env
+       entries, minus the server listener, the control-plane settings and every
+       credential a worker does not need. */ -}}
+{{- define "honua.gpJobs.workerConfigData" -}}
+{{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
+{{- $src := dict -}}
+{{- $out := dict -}}
+{{- if .Values.config.create -}}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $src) -}}
+{{- end -}}
+{{- range $key, $value := $src -}}
+{{- $credential := eq (include "honua.gpJobs.isCredential" (dict "name" $key "value" $value)) "true" -}}
+{{- $allowed := eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $key "extra" $extra)) "true" -}}
+{{- if and (ne $key "ASPNETCORE_URLS") (not (hasPrefix "ControlPlane__" $key)) (or (not $credential) $allowed) -}}
+{{- $_ := set $out $key $value -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- /* Scoped worker Secret data (name => plain value): only the worker
+       credentials from the chart-managed runtime Secret, including the
+       chart-derived PostgreSQL and Redis connection strings. The runtime
+       Secret is the credential store, so this is a strict allowlist. */ -}}
+{{- define "honua.gpJobs.workerSecretData" -}}
+{{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
+{{- $out := dict -}}
+{{- if .Values.secret.create -}}
+{{- range $line := splitList "\n" (include "honua.secretData" .) -}}
+{{- if contains ": " $line -}}
+{{- $parts := splitn ": " 2 (trim $line) -}}
+{{- if eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $parts._0 "extra" $extra)) "true" -}}
+{{- $_ := set $out $parts._0 (b64dec $parts._1) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- /* Scoped mode with an existing runtime Secret (secret.create=false): the
+       chart cannot read or filter it, so each worker credential is taken by
+       key (secretKeyRef) instead of importing the whole Secret: the database,
+       Redis and master key, plus workerSecretKeys. A key the worker already
+       gets from the scoped ConfigMap or a workerEnv literal is skipped.
+       Result: name => "<secret>:<key>". */ -}}
+{{- define "honua.gpJobs.workerSecretKeyRefs" -}}
+{{- $refs := dict -}}
+{{- if and (not .Values.secret.create) .Values.secret.name -}}
+{{- $config := include "honua.gpJobs.workerConfigData" . | fromJson -}}
+{{- $literals := include "honua.gpJobs.workerEnv" . | fromJson -}}
+{{- if .Values.licensing.licenseSecretRef.name -}}
+{{- $_ := set $literals "Licensing__LicenseContent" "" -}}
+{{- end -}}
+{{- $keys := concat (list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey") (include "honua.gpJobs.workerSecretKeys" . | fromJsonArray) -}}
+{{- range $key := $keys -}}
+{{- if and (not (hasKey $config $key)) (not (hasKey $literals $key)) -}}
+{{- $_ := set $refs $key (printf "%s:%s" $.Values.secret.name $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $refs -}}
+{{- end -}}
+
 {{- /* "<name>" or "<name>:<prefix>" entries for one envFrom kind
-       ("secretRef" or "configMapRef"), in the server Deployment's order. */ -}}
+       ("secretRef" or "configMapRef"). With environmentScope=server they are
+       the server Deployment's sources, in its order. Scoped, they are the
+       chart's worker Secret and ConfigMap (an existing ConfigMap, config.name
+       with config.create=false, is imported whole because the chart cannot
+       filter it), then each workerExtraEnvFrom source. */ -}}
 {{- define "honua.gpJobs.envFromSources" -}}
 {{- $kind := .kind -}}
 {{- $root := .context -}}
+{{- $scoped := eq (include "honua.gpJobs.scoped" $root) "true" -}}
+{{- $gp := include "honua.gpJobs.values" $root | fromJson -}}
 {{- $names := list -}}
 {{- if eq $kind "secretRef" -}}
-{{- if or $root.Values.secret.create $root.Values.secret.name -}}
+{{- if and $scoped $root.Values.secret.create -}}
+{{- $names = append $names (include "honua.gpJobs.workerEnvName" $root) -}}
+{{- else if and (not $scoped) (or $root.Values.secret.create $root.Values.secret.name) -}}
 {{- $names = append $names (include "honua.secretName" $root) -}}
 {{- end -}}
 {{- else -}}
-{{- if or $root.Values.config.create $root.Values.config.name -}}
+{{- if and $scoped $root.Values.config.create -}}
+{{- $names = append $names (include "honua.gpJobs.workerEnvName" $root) -}}
+{{- else if or $root.Values.config.create $root.Values.config.name -}}
 {{- $names = append $names (include "honua.configmapName" $root) -}}
 {{- end -}}
 {{- end -}}
-{{- range ($root.Values.extraEnvFrom | default list) -}}
+{{- $sources := ternary (get $gp "workerExtraEnvFrom" | default list) ($root.Values.extraEnvFrom | default list) $scoped -}}
+{{- range $sources -}}
 {{- $ref := get . $kind -}}
 {{- if and $ref (get $ref "name") -}}
 {{- $entry := toString (get $ref "name") -}}
@@ -735,6 +867,8 @@ true
 {{- $gp := include "honua.gpJobs.values" . | fromJson -}}
 {{- $allowInline := eq (toString (default false (get $gp "allowInlineWorkerSecrets"))) "true" -}}
 {{- $envFromMode := eq (include "honua.gpJobs.envFromMode" .) "true" -}}
+{{- $scoped := eq (include "honua.gpJobs.scoped" .) "true" -}}
+{{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
 {{- $env := dict -}}
 {{- if eq (toString (ternary true (get $gp "inheritServerEnvironment") (not (hasKey $gp "inheritServerEnvironment")))) "true" -}}
 {{- if $envFromMode -}}
@@ -749,7 +883,9 @@ true
 {{- $_ := set $env "OTEL_EXPORTER_OTLP_PROTOCOL" (toString (default "grpc" (dig "otlpProtocol" "grpc" ($.Values.observability | default dict)))) -}}
 {{- end -}}
 {{- else -}}
-{{- if .Values.config.create -}}
+{{- if $scoped -}}
+{{- $env = include "honua.gpJobs.workerConfigData" . | fromJson -}}
+{{- else if .Values.config.create -}}
 {{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $env) -}}
 {{- end -}}
 {{- $_ := set $env "Licensing__Mode" (toString .Values.licensing.mode) -}}
@@ -769,7 +905,7 @@ true
 {{- include "honua.nonEmptyEnv" (dict "src" .Values.secret.env "dst" $secretEnv) -}}
 {{- end -}}
 {{- range $key, $value := $secretEnv -}}
-{{- if or $allowInline (eq (include "honua.isSecretReference" $value) "true") -}}
+{{- if and (or $allowInline (eq (include "honua.isSecretReference" $value) "true")) (or (not $scoped) (eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $key "extra" $extra)) "true")) -}}
 {{- $_ := set $env $key $value -}}
 {{- end -}}
 {{- end -}}
