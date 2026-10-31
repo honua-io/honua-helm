@@ -42,6 +42,14 @@ def password_from_connection(connection):
     raise AssertionError('connection string has no Password field')
 
 
+def postgis_image_ref():
+    postgis = next(
+        document for document in documents(render())
+        if document.get('kind') == 'Deployment'
+        and document['metadata']['name'].endswith('-postgis'))
+    return postgis['spec']['template']['spec']['containers'][0]['image']
+
+
 def render_once():
     text = render()
     for forbidden in FORBIDDEN:
@@ -174,6 +182,46 @@ def main():
         '--set', 'postgresql.auth.database=honua')
     assert both.returncode != 0
     assert 'cannot both be true' in both.stderr
+
+    # The server runs migrations once, at startup, and does not retry them in
+    # Development mode. It must not start before chart-managed PostGIS accepts
+    # TCP connections, or the pod never becomes ready.
+    server = next(
+        document for document in documents(render())
+        if document.get('kind') == 'Deployment'
+        and document['metadata']['name'] == 'honua-dev-honua')
+    init_containers = server['spec']['template']['spec'].get('initContainers', [])
+    wait = next(c for c in init_containers if c['name'] == 'wait-for-postgis')
+    assert wait['image'] == postgis_image_ref(), wait['image']
+    wait_env = {item['name']: item['value'] for item in wait['env']}
+    assert wait_env == {
+        'PGHOST': 'honua-dev-honua-postgis', 'PGPORT': '5432',
+        'PGUSER': 'honua', 'PGDATABASE': 'honua'}
+    assert 'pg_isready' in wait['command'][-1]
+    assert wait['securityContext']['readOnlyRootFilesystem'] is True
+    assert 'PASSWORD' not in yaml.safe_dump(wait).upper()
+    # Pull credentials are pod-scoped and must cover both container images.
+    for enabled, expected in (
+            (True, ['server-registry', 'shared-registry', 'postgis-registry']),
+            (False, ['server-registry', 'shared-registry'])):
+        configured = documents(render(
+            '--set', f'postgis.enabled={str(enabled).lower()}',
+            '--set', 'secret.env.ConnectionStrings__DefaultConnection=Host=external;Database=honua',
+            '--set', 'image.pullSecrets[0].name=server-registry',
+            '--set', 'image.pullSecrets[1].name=shared-registry',
+            '--set', 'postgis.imagePullSecrets[0].name=shared-registry',
+            '--set', 'postgis.imagePullSecrets[1].name=postgis-registry'))
+        server = next(d for d in configured if d.get('kind') == 'Deployment'
+                      and d['metadata']['name'] == 'honua-dev-honua')
+        pod = server['spec']['template']['spec']
+        assert [secret['name'] for secret in pod['imagePullSecrets']] == expected
+        assert any(c['name'] == 'wait-for-postgis' for c in pod.get('initContainers', [])) == enabled
+
+    external = subprocess.run(
+        ['helm', 'template', 'honua', './honua', '-f', 'honua/ci-values/base.yaml'],
+        capture_output=True, text=True)
+    assert external.returncode == 0, external.stderr
+    assert 'wait-for-postgis' not in external.stdout
 
     release = open('.github/workflows/release.yml', encoding='utf-8').read()
     assert ".image.digest = strenv(SERVER_IMAGE_DIGEST)" in release
