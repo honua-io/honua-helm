@@ -25,7 +25,7 @@
 
   NUMERATOR: transport 5xx PLUS every in-band (HTTP < 400 body-envelope) error. Not 5xx alone, which
   is blind to the GeoServices 200-with-{error} class these alerts exist for; and not every error
-  envelope either, because that counts ordinary 4xx — an Esri client probing capabilities and
+  envelope either, because that counts ordinary 4xx — a client probing capabilities and
   collecting 404s would permanently breach a 99.0% availability target through no fault of the
   platform. The two selectors are disjoint (in_band is defined as error_code < 400).
 
@@ -128,7 +128,7 @@ spec:
             {{- end }}
           annotations:
             summary: "Honua GeoServices in-band (HTTP 200) error rate high"
-            description: 'GeoServices returns HTTP 200 with an {error} body for Esri compatibility, so these failures are invisible to load-balancer 5xx metrics. The in-band error rate over {{ .window }} is above {{ .threshold }}.'
+            description: 'GeoServices REST can return HTTP 200 with an {error} body, so these failures are invisible to load-balancer 5xx metrics. The in-band error rate over {{ .window }} is above {{ .threshold }}.'
             {{- with $runbook }}
             runbook_url: {{ . | quote }}
             {{- end }}

@@ -1118,7 +1118,7 @@ The `PrometheusRule` has two rule groups when `metrics.prometheusRule.enabled`:
   built on the server's `honua_request_error_total` counter over the
   `honua_serving_request_duration_ms_count` request total. These deliberately
   **include the GeoServices in-band 200-with-`{error}` signal**: GeoServices returns
-  HTTP 200 with an `{error}` body for Esri-client compatibility, so those failures
+  HTTP 200 with an `{error}` body, so those failures
   are invisible to load-balancer 5xx metrics. The server increments
   `honua_request_error_total` with `in_band="true"` for them, so the budgeted ratio
   is transport 5xx plus in-band errors, and `HonuaGeoServicesInBandErrorRateHigh`
