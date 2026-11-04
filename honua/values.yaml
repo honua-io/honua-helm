@@ -320,7 +320,7 @@ affinity: {}
 security:
   requestSecretReferences:
     # Exact environment variable names a request may name as env:NAME
-    # (case-sensitive), e.g. ["HONUA_IMPORT_TOKEN"].
+    # (case-sensitive), e.g. ["HONUA_IMPORT_ARCGIS_TOKEN"].
     allowedEnvironmentVariables: []
     # Environment variable name prefixes a request may name as env:NAME, e.g.
     # ["HONUA_IMPORT_"]. A prefix never matches a name containing "__".
