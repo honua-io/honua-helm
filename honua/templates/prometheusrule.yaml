@@ -15,7 +15,7 @@
   rules used to divide by was never emitted by anything, and an absent series does not error in
   PromQL — rate() over it is an empty vector, so every ratio evaluated to nothing and no alert could
   ever fire. The canonical list of names the server exports is honua-server's
-  observability/slo-metric-contract.json, and honua-release's gate-observability fails if this file
+  eng/telemetry/slo-metric-contract.v1.json, and honua-release's gate-observability fails if this file
   drifts from it (honua-release#5).
 
   It is not the only request-volume series available — OpenTelemetry's ASP.NET Core instrumentation

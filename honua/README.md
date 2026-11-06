@@ -1124,7 +1124,7 @@ The `PrometheusRule` has two rule groups when `metrics.prometheusRule.enabled`:
   is transport 5xx plus in-band errors, and `HonuaGeoServicesInBandErrorRateHigh`
   alerts on the GeoServices-scoped slice directly. Ordinary out-of-band 4xx is
   excluded so routine client probing cannot burn the budget. Series names and scopes
-  come from honua-server's `observability/slo-metric-contract.json`.
+  come from honua-server's `eng/telemetry/slo-metric-contract.v1.json`.
   Thresholds/windows mirror the honua-devops SLO rules and are fully overridable
   under `metrics.prometheusRule.slo`.
 

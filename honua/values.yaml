@@ -456,7 +456,7 @@ metrics:
     # protocols. A ratio whose denominator is broader than its numerator understates
     # the error rate, which is how an error budget ends up failing open.
     #
-    # honua-server's observability/slo-metric-contract.json is the canonical list of
+    # honua-server's eng/telemetry/slo-metric-contract.v1.json is the canonical list of
     # names and scopes, and honua-release's gate-observability fails if these rules
     # drift from it — a ratio over a series nobody emits is an empty PromQL vector,
     # which produces no alert and no error (honua-release#5).
