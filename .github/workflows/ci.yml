@@ -200,7 +200,7 @@ jobs:
           # assertions previously pinned honua_http_requests_total, a metric no Honua
           # component has ever emitted — so this step did not merely miss the drift, it
           # enforced it. Keep them in step with honua-server's
-          # observability/slo-metric-contract.json.
+          # eng/telemetry/slo-metric-contract.v1.json.
           grep -q 'honua_serving_request_duration_ms_count{service="honua-server"}' /tmp/honua-rendered-observability.yaml
           if grep -q 'honua_serving_request_duration_ms_count{namespace="default",service="honua-server"}' /tmp/honua-rendered-observability.yaml; then
             echo "An explicit SLO metricSelector must override the default scope."
