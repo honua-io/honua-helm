@@ -320,7 +320,7 @@ affinity: {}
 security:
   requestSecretReferences:
     # Exact environment variable names a request may name as env:NAME
-    # (case-sensitive), e.g. ["HONUA_IMPORT_ARCGIS_TOKEN"].
+    # (case-sensitive), e.g. ["HONUA_IMPORT_GEOSERVICES_TOKEN"].
     allowedEnvironmentVariables: []
     # Environment variable name prefixes a request may name as env:NAME, e.g.
     # ["HONUA_IMPORT_"]. A prefix never matches a name containing "__".
@@ -431,9 +431,9 @@ metrics:
     #
     # Numerator — transport 5xx plus every in-band error. "In-band" means the error
     # envelope was delivered with a non-error HTTP status: GeoServices returns HTTP
-    # 200 with an {error} body for Esri-client compatibility, so a load-balancer or
+    # 200 with an {error} body, so a load-balancer or
     # transport-5xx metric cannot see those failures at all. Ordinary out-of-band
-    # 4xx is deliberately EXCLUDED — an Esri client probing capabilities and
+    # 4xx is deliberately EXCLUDED — a client probing capabilities and
     # collecting 404s is normal behaviour and must not burn an availability budget.
     # The two selectors are disjoint, because in_band is defined as HTTP < 400.
     # `or` rather than `+`: PromQL arithmetic drops any group missing from either
@@ -456,7 +456,7 @@ metrics:
     # protocols. A ratio whose denominator is broader than its numerator understates
     # the error rate, which is how an error budget ends up failing open.
     #
-    # honua-server's observability/slo-metric-contract.json is the canonical list of
+    # honua-server's eng/telemetry/slo-metric-contract.v1.json is the canonical list of
     # names and scopes, and honua-release's gate-observability fails if these rules
     # drift from it — a ratio over a series nobody emits is an empty PromQL vector,
     # which produces no alert and no error (honua-release#5).
