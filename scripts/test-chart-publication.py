@@ -15,6 +15,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.dont_write_bytecode = True  # the import below must not leave scripts/__pycache__ in the tree
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -459,4 +461,29 @@ assert bound_predicate['buildDefinition']['externalParameters']['chart']['source
 refused(lambda: cp.provenance_predicate({}, resolve()), 'no buildDefinition')
 
 assert os.path.exists(ROOT / '.github/workflows/chart-nightly.yml')
+
+# honua-helm#90: the release publish job is the only writer of charts/honua, and it
+# deploys to chart-publication. A proof dispatch uses a different environment so a
+# branch can still publish the throwaway package. Workflow-level permissions stay
+# contents: read; packages: write is not inherited by a new job.
+workflow = yaml.safe_load((ROOT / '.github/workflows/chart-nightly.yml').read_text())
+assert workflow['permissions'] == {'contents': 'read'}
+publish = workflow['jobs']['publish']
+assert publish.get('environment') == {
+    'name': "${{ inputs.proof == true && 'chart-publication-proof' || 'chart-publication' }}",
+}
+assert publish['permissions'] == {
+    'contents': 'read',
+    'packages': 'write',
+    'id-token': 'write',
+    'attestations': 'write',
+}
+delete_proof = workflow['jobs']['delete-proof']
+assert delete_proof['permissions'] == {'packages': 'write'}
+assert delete_proof['env']['PACKAGE'] == 'charts%2Fhonua-ci-proof%2Fhonua'
+assert 'inputs.proof == true' in delete_proof['if']
+assert 'environment' not in delete_proof
+writers = [name for name, job in workflow['jobs'].items()
+           if (job.get('permissions') or {}).get('packages') == 'write']
+assert writers == ['publish', 'delete-proof'], writers
 print('chart publication: OK')

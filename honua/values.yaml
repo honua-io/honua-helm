@@ -12,6 +12,9 @@ replicaCount: 1
 # Honua Server image. For production, prefer image.digest with image.tag left
 # empty. If digest pinning is not available, override image.tag with an
 # immutable release tag instead of relying on the moving latest-aot tag.
+# The release workflow stamps image.digest, clears image.tag, and sets
+# pullPolicy IfNotPresent in the packaged chart. This checkout default stays
+# a moving tag for local development only.
 image:
   repository: ghcr.io/honua-io/honua-server
   tag: "latest-aot"
@@ -261,10 +264,14 @@ preflight:
   licenseStatusImage:
     repository: python
     tag: "3.12-alpine"
+    # Index digest of python:3.12-alpine resolved 2026-10-30. The tag moves;
+    # the digest is what the hook runs.
+    digest: "sha256:e6dae589c1c05976188fd3bd019afd091445fc533ed2ea29001beddc7368a9c8"
     pullPolicy: IfNotPresent
   image:
     repository: curlimages/curl
     tag: "8.5.0"
+    digest: "sha256:08e466006f0860e54fc299378de998935333e0e130a15f6f98482e9f8dab3058"
     pullPolicy: IfNotPresent
   timeoutSeconds: 5
   # The preflight hook runs with backoffLimit: 0 (a single Pod attempt), so a
@@ -352,7 +359,7 @@ affinity: {}
 security:
   requestSecretReferences:
     # Exact environment variable names a request may name as env:NAME
-    # (case-sensitive), e.g. ["HONUA_IMPORT_ARCGIS_TOKEN"].
+    # (case-sensitive), e.g. ["HONUA_IMPORT_GEOSERVICES_TOKEN"].
     allowedEnvironmentVariables: []
     # Environment variable name prefixes a request may name as env:NAME, e.g.
     # ["HONUA_IMPORT_"]. A prefix never matches a name containing "__".
@@ -391,6 +398,11 @@ config:
 secret:
   create: true
   name: ""
+  # Development only. When true, empty admin password, master key, and
+  # chart-managed PostGIS/Redis passwords are generated at install and reused
+  # from the live Secret on upgrade. Refused when ASPNETCORE_ENVIRONMENT is
+  # Production. Never commit the generated values.
+  generateCredentials: false
   env:
     ConnectionStrings__DefaultConnection: ""
     HONUA_ADMIN_PASSWORD: ""
@@ -457,9 +469,9 @@ metrics:
     #
     # Numerator — transport 5xx plus every in-band error. "In-band" means the error
     # envelope was delivered with a non-error HTTP status: GeoServices returns HTTP
-    # 200 with an {error} body for Esri-client compatibility, so a load-balancer or
+    # 200 with an {error} body, so a load-balancer or
     # transport-5xx metric cannot see those failures at all. Ordinary out-of-band
-    # 4xx is deliberately EXCLUDED — an Esri client probing capabilities and
+    # 4xx is deliberately EXCLUDED — a client probing capabilities and
     # collecting 404s is normal behaviour and must not burn an availability budget.
     # The two selectors are disjoint, because in_band is defined as HTTP < 400.
     # `or` rather than `+`: PromQL arithmetic drops any group missing from either
@@ -482,7 +494,7 @@ metrics:
     # protocols. A ratio whose denominator is broader than its numerator understates
     # the error rate, which is how an error budget ends up failing open.
     #
-    # honua-server's observability/slo-metric-contract.json is the canonical list of
+    # honua-server's eng/telemetry/slo-metric-contract.v1.json is the canonical list of
     # names and scopes, and honua-release's gate-observability fails if these rules
     # drift from it — a ratio over a series nobody emits is an empty PromQL vector,
     # which produces no alert and no error (honua-release#5).
@@ -648,9 +660,12 @@ controlPlane:
 # Requirements (enforced at render time where the chart can see them):
 #   * Redis: the durable job store. ConnectionStrings__redis is required.
 #   * Worker environment: with envFromServer (the default) every Job
-#     imports the server's runtime Secret and ConfigMap through envFrom, so the
-#     worker gets the same database, Redis and master key as the server. This
-#     needs a honua-server image at or after bebaada00 (server#5796). Older
+#     imports its environment through envFrom. By default it is scoped to what
+#     a worker needs (environmentScope: worker, honua-helm#110): the same
+#     database, Redis, master key, key ring, licensing and file storage as the
+#     server, but not the admin password, audit-chain key or other server-only
+#     credentials. This needs a honua-server image at or after bebaada00
+#     (server#5796). Older
 #     servers, or Jobs in another namespace, fall back to literal env, where
 #     credentials must be cloud secret references (aws:secretsmanager: /
 #     azure:keyvault:). See honua/README.md "Geoprocessing on Kubernetes Jobs".
@@ -744,6 +759,37 @@ geoprocessing:
     # resolve in the Job's namespace); otherwise the legacy literal mode below
     # is used. Set false to force the legacy mode for an older server.
     envFromServer: true
+    # Which server settings a worker receives (honua-helm#110).
+    #   worker (default): only what a worker host needs. The chart renders a
+    #     "<fullname>-gp-worker-env" Secret and ConfigMap for the Jobs:
+    #     - the ConfigMap is config.env without ASPNETCORE_URLS, ControlPlane__*
+    #       and any credential a worker does not need (a credential is a
+    #       sensitive name, or a value that is an aws:secretsmanager: /
+    #       azure:keyvault: reference);
+    #     - the Secret holds only the worker credentials from the chart-managed
+    #       runtime Secret: ConnectionStrings__DefaultConnection,
+    #       ConnectionStrings__redis, Security__ConnectionEncryption__*,
+    #       Operations__SecretChannel__*, Licensing__*, FileStorage__* and
+    #       workerSecretKeys.
+    #     With an existing Secret (secret.create=false) the worker takes the
+    #     database, Redis and master key (plus workerSecretKeys) from it by key
+    #     (secretKeyRef), so those keys must exist in it. extraEnvFrom sources
+    #     are not imported; list worker sources in workerExtraEnvFrom.
+    #     The admin password, audit-chain key, OIDC signing keys and other
+    #     server-only credentials never reach a worker, so the job identity
+    #     does not need to read them. Legacy literal mode is scoped the same way.
+    #   server: the pre-#110 behaviour. Every Job imports the server's runtime
+    #     Secret, ConfigMap and extraEnvFrom sources whole, and the job
+    #     identity must be able to resolve every secret reference they carry.
+    environmentScope: worker
+    # Extra server credential names a worker needs (environmentScope=worker),
+    # for example FileStorage credentials under another name or an env:
+    # reference target. Each is forwarded from config.env / secret.env, or by
+    # key from an existing Secret.
+    workerSecretKeys: []
+    # envFrom sources for the workers only (environmentScope=worker), in the
+    # extraEnvFrom shape: secretRef/configMapRef name plus optional prefix.
+    workerExtraEnvFrom: []
     # Copy the server's environment into the worker as literal env. In envFrom
     # mode that is only what the Deployment sets directly (licensing values,
     # OTLP endpoint; a license Secret travels as a secretKeyRef). In legacy
@@ -762,9 +808,55 @@ geoprocessing:
     # readable by anyone who can read Jobs in the namespace or the job store.
     allowInlineWorkerSecrets: false
 
-# Optional Bitnami PostgreSQL dependency. This is development-only because the
-# subchart does not include PostGIS; production should use an external
-# PostGIS-enabled database and provide ConnectionStrings__DefaultConnection.
+# Chart-managed PostGIS for the development quick start. The image is the same
+# pgrouting pin as the customer install manifest. Production installs leave this
+# disabled and set ConnectionStrings__DefaultConnection to an external PostGIS
+# database. Do not enable this together with postgresql.enabled.
+postgis:
+  enabled: false
+  auth:
+    username: honua
+    password: ""
+    database: honua
+  persistence:
+    enabled: false
+    size: 8Gi
+    storageClass: ""
+  image:
+    repository: pgrouting/pgrouting
+    tag: "17-3.5-3.7.3"
+    digest: "sha256:5e6767abbd1fd9ead84c9988aa31bac71ca292ef8a1fc2e4a5ee2b613ac6a7bb"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# Optional Bitnami PostgreSQL dependency. This subchart does not include
+# PostGIS, so Honua migrations cannot succeed against it. Prefer postgis.enabled
+# for the development quick start, or an external PostGIS database.
 postgresql:
   enabled: false
   auth:
@@ -779,13 +871,28 @@ postgresql:
 redis:
   enabled: false
   persistence:
+    # The development quick start sets this false (emptyDir). Every other
+    # install keeps the append-only file on a claim.
+    enabled: true
     size: 8Gi
     # Empty uses the cluster default StorageClass.
     storageClass: ""
   image:
     repository: redis
     tag: "7.4-alpine"
+    digest: "sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f"
     pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # Kept below the memory limit. allkeys-lru is not set; Redis evicts only keys
+  # with a TTL once this cap is reached, matching the default policy.
+  maxmemory: "200mb"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
   auth:
     enabled: true
     password: ""

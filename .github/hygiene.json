@@ -1,0 +1,15 @@
+{
+  "roots": [
+    ".github/",
+    ".gitignore",
+    "AGENTS.md",
+    "LICENSE",
+    "README.md",
+    "RELEASING.md",
+    "docs/",
+    "honua/",
+    "release/",
+    "scripts/"
+  ],
+  "gate_inputs": {}
+}

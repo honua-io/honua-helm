@@ -44,10 +44,13 @@ helm upgrade --install honua honua -f honua/values-dev.yaml
 helm test honua
 ```
 
-The dev overlay is self-contained: the digest-pinned 2026.1 candidate server image, bundled
-(non-PostGIS) PostgreSQL and Redis, dev-grade secrets, and
-`ASPNETCORE_ENVIRONMENT=Development`. Do not use it for real data. Readiness at
-`/healthz/ready` signals that startup and database migrations completed.
+The dev overlay is self-contained: the digest-pinned 2026.1 candidate server image, chart-managed
+PostGIS (the customer-install pgrouting pin) and Redis, and
+`ASPNETCORE_ENVIRONMENT=Development`. Admin, master-key, database, and Redis
+passwords are generated at install into Secrets and are not in the values file.
+Read them back with `kubectl get secret` if you need them. Do not use this
+overlay for real data. Readiness at `/healthz/ready` signals that startup and
+database migrations completed.
 
 Note that `helm template honua honua` with **no** values file fails by design: the baseline
 `values.yaml` is a documented contract that intentionally leaves runtime secrets empty. Always
@@ -112,7 +115,7 @@ within chart 0.x — see [docs/MIGRATION.md](docs/MIGRATION.md).
 | [honua-console](https://github.com/honua-io/honua-console) | Web console for display-and-approve workflows; Studio is Preview. |
 | [honua-sdk-js](https://github.com/honua-io/honua-sdk-js) | JavaScript/TypeScript SDKs + MCP server |
 | [honua-sdk-python](https://github.com/honua-io/honua-sdk-python) | Python SDK |
-| [honua-migrate](https://github.com/honua-io/honua-migrate) | Esri migration CLI suite — read-only footprint assessment, service and content migration, codemods, durable runs, reconciliation |
+| [honua-migrate](https://github.com/honua-io/honua-migrate) | GeoServices REST migration CLI suite — read-only footprint assessment, service and content migration, codemods, durable runs, reconciliation |
 
 ## Security
 
@@ -123,4 +126,4 @@ public issues for security reports.
 ## License
 
 [Apache-2.0](LICENSE) for this chart repository. Honua Server itself is distributed under the
-Elastic License 2.0 — see the [honua-server license](https://github.com/honua-io/honua-server/blob/trunk/LICENSE).
+Fair Core License, Version 1.0, ALv2 Future License (FCL-1.0-ALv2) — see the [honua-server license](https://github.com/honua-io/honua-server/blob/trunk/LICENSE).

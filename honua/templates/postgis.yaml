@@ -1,0 +1,165 @@
+{{- $postgis := .Values.postgis | default dict -}}
+{{- if dig "enabled" false $postgis }}
+{{- $password := include "honua.postgisPassword" . -}}
+{{- $username := required "postgis.auth.username is required when postgis.enabled is true." (dig "auth" "username" "" $postgis) -}}
+{{- $database := required "postgis.auth.database is required when postgis.enabled is true." (dig "auth" "database" "" $postgis) -}}
+{{- $image := dig "image" dict $postgis -}}
+{{- $persistence := dig "persistence" dict $postgis -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "honua.postgisHost" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+type: Opaque
+stringData:
+  password: {{ $password | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.postgisHost" . }}-init
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+data:
+  # The pinned image ships an empty /docker-entrypoint-initdb.d, so the
+  # entrypoint never creates extensions. Official entrypoint runs *.sql
+  # before it listens on TCP, and only when PGDATA is empty.
+  10-extensions.sql: |
+    CREATE EXTENSION IF NOT EXISTS postgis;
+    CREATE EXTENSION IF NOT EXISTS postgis_topology;
+    CREATE EXTENSION IF NOT EXISTS pgrouting;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "honua.postgisHost" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "honua.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgis
+  template:
+    metadata:
+      labels:
+        {{- include "honua.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgis
+    spec:
+      automountServiceAccountToken: false
+      {{- with (dig "imagePullSecrets" nil $postgis) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (dig "podSecurityContext" nil $postgis) }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          {{- if dig "enabled" false $persistence }}
+          persistentVolumeClaim:
+            claimName: {{ include "honua.postgisHost" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: run
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: init
+          configMap:
+            name: {{ include "honua.postgisHost" . }}-init
+      containers:
+        - name: postgis
+          image: {{ include "honua.referencedImage" (dict "repository" (required "postgis.image.repository is required when postgis.enabled is true." (get $image "repository")) "tag" (default "" (get $image "tag")) "digest" (default "" (get $image "digest"))) | quote }}
+          imagePullPolicy: {{ default "IfNotPresent" (get $image "pullPolicy") }}
+          {{- with (dig "securityContext" nil $postgis) }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with (dig "resources" nil $postgis) }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ $username | quote }}
+            - name: POSTGRES_DB
+              value: {{ $database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "honua.postgisHost" . }}
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ $username | quote }}, "-d", {{ $database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ $username | quote }}, "-d", {{ $database | quote }}]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+---
+{{- if dig "enabled" false $persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "honua.postgisHost" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if ne (default "" (get $persistence "storageClass")) "" }}
+  storageClassName: {{ get $persistence "storageClass" | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ default "8Gi" (get $persistence "size") | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "honua.postgisHost" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+spec:
+  selector:
+    {{- include "honua.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgis
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+{{- end }}

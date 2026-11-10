@@ -74,7 +74,8 @@ for args, expected in [
     assert env_values(container(render(*args), 'Job', '-preflight-license-status'))['HONUA_LICENSE_STATUS_HOST'] == expected
 private = container(render('--set', 'preflight.licenseStatusImage.repository=registry.example/python',
                            '--set', 'image.pullSecrets[0].name=registry-key'), 'Job', '-preflight-license-status')
-assert private['image'] == 'registry.example/python:3.12-alpine'
+license_image = yaml.safe_load(open('honua/values.yaml', encoding='utf-8'))['preflight']['licenseStatusImage']
+assert private['image'] == 'registry.example/python@' + license_image['digest']
 
 # Hand-authored from the server API contract, never captured from chart output.
 good = {'success': True, 'data': {'mode': 'disabled', 'validationState': 'Disabled', 'isValid': True}}

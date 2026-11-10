@@ -31,7 +31,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: preflight
-          image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
+          image: {{ include "honua.referencedImage" (dict "repository" .Values.preflight.image.repository "tag" .Values.preflight.image.tag "digest" (default "" .Values.preflight.image.digest)) | quote }}
           imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}

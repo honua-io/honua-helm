@@ -260,6 +260,24 @@
               }
             },
             "envFromServer": { "type": "boolean", "description": "Import the server's runtime Secret and ConfigMap into every Job through envFrom (honua-server >= bebaada00, server#5796)." },
+            "environmentScope": { "type": "string", "enum": ["worker", "server"], "description": "worker (default): Jobs get only the settings a worker needs (honua-helm#110). server: Jobs import the server's runtime Secret, ConfigMap and extraEnvFrom sources whole." },
+            "workerSecretKeys": {
+              "type": "array",
+              "description": "Extra server credential names forwarded to workers when environmentScope=worker.",
+              "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$" }
+            },
+            "workerExtraEnvFrom": {
+              "type": "array",
+              "description": "envFrom sources (extraEnvFrom shape) imported by workers only when environmentScope=worker.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "secretRef": { "type": "object", "properties": { "name": { "type": "string", "minLength": 1 } }, "required": ["name"] },
+                  "configMapRef": { "type": "object", "properties": { "name": { "type": "string", "minLength": 1 } }, "required": ["name"] },
+                  "prefix": { "type": "string" }
+                }
+              }
+            },
             "inheritServerEnvironment": { "type": "boolean" },
             "workerEnv": {
               "type": "object",
@@ -424,6 +442,10 @@
               "type": "string",
               "minLength": 1
             },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            },
             "pullPolicy": {
               "type": "string",
               "enum": ["Always", "IfNotPresent", "Never"]
@@ -441,6 +463,10 @@
             "tag": {
               "type": "string",
               "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
             },
             "pullPolicy": {
               "type": "string",
@@ -779,6 +805,10 @@
         "name": {
           "type": "string"
         },
+        "generateCredentials": {
+          "type": "boolean",
+          "description": "Development only. Generate empty admin, master-key, PostGIS, and Redis credentials at install and reuse them from the live Secret on upgrade. Refused when ASPNETCORE_ENVIRONMENT is Production."
+        },
         "env": {
           "type": "object",
           "properties": {
@@ -820,6 +850,7 @@
         "persistence": {
           "type": "object",
           "properties": {
+            "enabled": { "type": "boolean" },
             "size": { "type": "string", "minLength": 1 },
             "storageClass": { "type": "string" }
           },
@@ -830,10 +861,14 @@
           "properties": {
             "repository": { "type": "string", "minLength": 1 },
             "tag": { "type": "string", "minLength": 1 },
+            "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
             "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
           },
           "required": ["repository", "tag", "pullPolicy"]
         },
+        "imagePullSecrets": { "type": "array" },
+        "maxmemory": { "type": "string" },
+        "resources": { "type": "object" },
         "auth": {
           "type": "object",
           "properties": {
@@ -852,6 +887,54 @@
         "securityContext": {
           "type": "object",
           "description": "Container securityContext for the chart-managed Redis container."
+        }
+      }
+    },
+    "postgis": {
+      "type": "object",
+      "description": "Chart-managed PostGIS for the development quick start. Not for production data. Do not enable together with postgresql.enabled.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string" },
+            "password": { "type": "string" },
+            "database": { "type": "string" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string" },
+            "storageClass": { "type": "string" }
+          }
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
+            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "imagePullSecrets": { "type": "array" },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "resources": { "type": "object" }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "connection": {
+          "type": "object",
+          "properties": {
+            "attempts": { "type": "integer", "minimum": 1 },
+            "sleepSeconds": { "type": "integer", "minimum": 0 }
+          }
         }
       }
     },
@@ -1073,24 +1156,54 @@
         }
       },
       "then": {
-        "properties": {
-          "redis": {
-            "type": "object",
+        "allOf": [
+          {
             "properties": {
-              "auth": {
+              "redis": {
                 "type": "object",
                 "properties": {
-                  "enabled": {
-                    "const": true
-                  },
-                  "password": { "type": "string", "minLength": 1 }
+                  "auth": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": { "const": true }
+                    },
+                    "required": ["enabled"]
+                  }
                 },
-                "required": ["enabled", "password"]
+                "required": ["auth"]
               }
-            },
-            "required": ["auth"]
+            }
           }
-        }
+        ],
+        "anyOf": [
+          {
+            "properties": {
+              "redis": {
+                "type": "object",
+                "properties": {
+                  "auth": {
+                    "type": "object",
+                    "properties": {
+                      "password": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["password"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": {
+                  "generateCredentials": { "const": true }
+                },
+                "required": ["generateCredentials"]
+              }
+            }
+          }
+        ]
       }
     },
     {
@@ -1164,6 +1277,17 @@
                   }
                 },
                 "required": ["auth"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "secret": {
+                "type": "object",
+                "properties": {
+                  "generateCredentials": { "const": true }
+                },
+                "required": ["generateCredentials"]
               }
             }
           }

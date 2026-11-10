@@ -42,6 +42,19 @@ honua.io/release-id: {{ . | quote }}
 {{- end -}}
 {{- end -}}
 
+{{- /* repository + optional digest. A digest wins over the tag so a moving tag cannot
+       change the bytes. Pass digest as "" to force the tag (airgap overrides). */ -}}
+{{- define "honua.referencedImage" -}}
+{{- $repository := required "image repository is required." .repository -}}
+{{- $digest := trim (default "" .digest) -}}
+{{- $tag := trim (default "" .tag) -}}
+{{- if $digest -}}
+{{- printf "%s@%s" $repository $digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repository (required "image tag is required when digest is empty." $tag) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.imageRegistryHost" -}}
 {{- $repository := required "image.repository is required." .Values.image.repository -}}
 {{- $firstPart := first (splitList "/" $repository) -}}
@@ -100,6 +113,27 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if $select }}true{{ else }}false{{ end -}}
 {{- end -}}
 
+{{- /* PDB spec.selector is immutable. New releases select only server pods so
+       preflight Jobs and chart-managed Redis/PostGIS are not disruption-budgeted.
+       An existing PDB keeps the selector it already has. */ -}}
+{{- define "honua.pdbSelectsServerComponent" -}}
+{{- $live := lookup "policy/v1" "PodDisruptionBudget" .Release.Namespace (include "honua.fullname" .) -}}
+{{- if and .Release.IsUpgrade $live -}}
+{{- $labels := dig "spec" "selector" "matchLabels" dict $live -}}
+{{- $component := "" -}}
+{{- if hasKey $labels "app.kubernetes.io/component" -}}
+{{- $component = index $labels "app.kubernetes.io/component" -}}
+{{- end -}}
+{{- if eq (toString $component) "server" -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- else -}}
+{{- include "honua.applicationServiceSelectsServerComponent" . -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "honua.fullname" .) .Values.serviceAccount.name -}}
@@ -147,7 +181,9 @@ false
 {{- $secretValues := .Values.secret | default dict -}}
 {{- $secretEnv := get $secretValues "env" | default dict -}}
 {{- $conn := trim (default "" (get $secretEnv "ConnectionStrings__DefaultConnection")) -}}
-{{- if and .Values.postgresql.enabled .Values.secret.create (not $conn) -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- $managed := or .Values.postgresql.enabled (dig "enabled" false $postgis) -}}
+{{- if and $managed .Values.secret.create (not $conn) -}}
 true
 {{- else -}}
 false
@@ -165,8 +201,25 @@ false
 {{- end -}}
 {{- end -}}
 
+{{- define "honua.managedDatabaseHost" -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- if dig "enabled" false $postgis -}}
+{{- include "honua.postgisHost" . -}}
+{{- else if .Values.postgresql.enabled -}}
+{{- include "honua.postgresqlHost" . -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "honua.preflightDatabaseCheck" -}}
-{{- if and .Release.IsInstall (eq (include "honua.usesChartManagedPostgresqlConnection" .) "true") -}}
+{{- $managed := eq (include "honua.usesChartManagedPostgresqlConnection" .) "true" -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- $postgisOn := dig "enabled" false $postgis -}}
+{{- $host := include "honua.managedDatabaseHost" . -}}
+{{- /* Bitnami upgrades keep the existing check: that Service is already there.
+       PostGIS skips until lookup sees the new Service, including the upgrade
+       that first replaces Bitnami. helm template has no cluster, so that
+       upgrade render skips; a live upgrade with the Service present checks. */ -}}
+{{- if and $managed (or .Release.IsInstall (and $postgisOn (not (lookup "v1" "Service" .Release.Namespace $host)))) -}}
 false
 {{- else -}}
 true
@@ -334,7 +387,14 @@ true
 {{- define "honua.secretData" -}}
 {{- $data := dict -}}
 {{- include "honua.nonEmptyEnv" (dict "src" .Values.secret.env "dst" $data) -}}
-{{- if and (not (hasKey $data "ConnectionStrings__DefaultConnection")) .Values.postgresql.enabled }}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- if and (not (hasKey $data "ConnectionStrings__DefaultConnection")) (dig "enabled" false $postgis) }}
+{{- $pgUser := required "postgis.auth.username is required when postgis.enabled is true and secret.env.ConnectionStrings__DefaultConnection is not set." (dig "auth" "username" "" $postgis) }}
+{{- $pgDatabase := required "postgis.auth.database is required when postgis.enabled is true and secret.env.ConnectionStrings__DefaultConnection is not set." (dig "auth" "database" "" $postgis) }}
+{{- $pgPassword := include "honua.postgisPassword" . }}
+{{- $pgConn := printf "Host=%s;Port=%s;Database=%s;Username=%s;Password=%s" (include "honua.postgisHost" .) (include "honua.postgisPort" .) $pgDatabase $pgUser $pgPassword }}
+{{- $_ := set $data "ConnectionStrings__DefaultConnection" $pgConn }}
+{{- else if and (not (hasKey $data "ConnectionStrings__DefaultConnection")) .Values.postgresql.enabled }}
 {{- $pgHost := include "honua.postgresqlHost" . }}
 {{- $pgPort := include "honua.postgresqlPort" . }}
 {{- $pgUser := required "postgresql.auth.username is required when postgresql.enabled is true and secret.env.ConnectionStrings__DefaultConnection is not set." .Values.postgresql.auth.username }}
@@ -343,7 +403,7 @@ true
 {{- $pgConn := printf "Host=%s;Port=%s;Database=%s;Username=%s;Password=%s" $pgHost $pgPort $pgDatabase $pgUser $pgPassword }}
 {{- $_ := set $data "ConnectionStrings__DefaultConnection" $pgConn }}
 {{- else if not (hasKey $data "ConnectionStrings__DefaultConnection") }}
-{{- required "secret.env.ConnectionStrings__DefaultConnection is required when postgresql.enabled is false. Set it to your PostgreSQL connection string." .Values.secret.env.ConnectionStrings__DefaultConnection }}
+{{- required "secret.env.ConnectionStrings__DefaultConnection is required when postgresql.enabled and postgis.enabled are false. Set it to your PostgreSQL connection string." .Values.secret.env.ConnectionStrings__DefaultConnection }}
 {{- end }}
 {{- if and (not (hasKey $data "ConnectionStrings__redis")) .Values.redis.enabled }}
 {{- $redisHost := include "honua.redisHost" . }}
@@ -351,16 +411,16 @@ true
 {{- if not .Values.redis.auth.enabled }}
 {{- fail "redis.auth.enabled must be true when redis.enabled is true unless secret.env.ConnectionStrings__redis is explicitly provided." }}
 {{- end }}
-{{- $redisPassword := required "redis.auth.password is required when redis.enabled and redis.auth.enabled are true and secret.env.ConnectionStrings__redis is not set." .Values.redis.auth.password }}
+{{- $redisPassword := include "honua.redisPassword" . }}
 {{- $_ := set $data "ConnectionStrings__redis" (printf "%s:%s,password=%s" $redisHost $redisPort $redisPassword) }}
 {{- else if and (not (hasKey $data "ConnectionStrings__redis")) (eq (include "honua.requiresRedisConnection" .) "true") }}
 {{- required "secret.env.ConnectionStrings__redis is required for non-development Honua deployments unless redis.enabled derives the connection string." .Values.secret.env.ConnectionStrings__redis }}
 {{- end }}
 {{- if not (hasKey $data "HONUA_ADMIN_PASSWORD") }}
-{{- required "secret.env.HONUA_ADMIN_PASSWORD is required. Set it to a strong admin password." .Values.secret.env.HONUA_ADMIN_PASSWORD }}
+{{- $_ := set $data "HONUA_ADMIN_PASSWORD" (include "honua.adminPassword" .) }}
 {{- end }}
 {{- if not (hasKey $data "Security__ConnectionEncryption__MasterKey") }}
-{{- required "secret.env.Security__ConnectionEncryption__MasterKey is required. Set it to a secure random string of at least 32 characters." .Values.secret.env.Security__ConnectionEncryption__MasterKey }}
+{{- $_ := set $data "Security__ConnectionEncryption__MasterKey" (include "honua.masterKey" .) }}
 {{- end }}
 {{- /* Credential complexity/length policy lives in honua.validateSecretComplexity
        and is enforced from templates/validations.yaml; this helper only resolves
@@ -413,6 +473,112 @@ true
 
 {{- define "honua.redisPort" -}}
 6379
+{{- end -}}
+
+{{- /* Stable for one render. Reused from the live Secret on upgrade so a
+       generated credential is not rotated by a later helm upgrade. */ -}}
+{{- define "honua.lookupSecretKey" -}}
+{{- $existing := lookup "v1" "Secret" .namespace .name -}}
+{{- if and $existing $existing.data (hasKey $existing.data .key) -}}
+{{- index $existing.data .key | b64dec -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.adminPassword" -}}
+{{- if not (hasKey .Values "_honuaResolved") -}}
+{{- $_ := set .Values "_honuaResolved" dict -}}
+{{- end -}}
+{{- if hasKey (index .Values "_honuaResolved") "adminPassword" -}}
+{{- index (index .Values "_honuaResolved") "adminPassword" -}}
+{{- else -}}
+{{- $value := toString (default "" (get (.Values.secret.env | default dict) "HONUA_ADMIN_PASSWORD")) -}}
+{{- if not $value -}}
+{{- if not .Values.secret.generateCredentials -}}
+{{- fail "secret.env.HONUA_ADMIN_PASSWORD is required. Set it to a strong admin password, or set secret.generateCredentials for a development install." -}}
+{{- end -}}
+{{- $value = include "honua.lookupSecretKey" (dict "namespace" .Release.Namespace "name" (include "honua.secretName" .) "key" "HONUA_ADMIN_PASSWORD") -}}
+{{- if not $value -}}
+{{- $value = printf "Aa1!%s" (randAlphaNum 24) -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set (index .Values "_honuaResolved") "adminPassword" $value -}}
+{{- $value -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.masterKey" -}}
+{{- if not (hasKey .Values "_honuaResolved") -}}
+{{- $_ := set .Values "_honuaResolved" dict -}}
+{{- end -}}
+{{- if hasKey (index .Values "_honuaResolved") "masterKey" -}}
+{{- index (index .Values "_honuaResolved") "masterKey" -}}
+{{- else -}}
+{{- $value := toString (default "" (get (.Values.secret.env | default dict) "Security__ConnectionEncryption__MasterKey")) -}}
+{{- if not $value -}}
+{{- if not .Values.secret.generateCredentials -}}
+{{- fail "secret.env.Security__ConnectionEncryption__MasterKey is required. Set it to a secure random string of at least 32 characters, or set secret.generateCredentials for a development install." -}}
+{{- end -}}
+{{- $value = include "honua.lookupSecretKey" (dict "namespace" .Release.Namespace "name" (include "honua.secretName" .) "key" "Security__ConnectionEncryption__MasterKey") -}}
+{{- if not $value -}}
+{{- $value = randAlphaNum 48 -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set (index .Values "_honuaResolved") "masterKey" $value -}}
+{{- $value -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.redisPassword" -}}
+{{- if not (hasKey .Values "_honuaResolved") -}}
+{{- $_ := set .Values "_honuaResolved" dict -}}
+{{- end -}}
+{{- if hasKey (index .Values "_honuaResolved") "redisPassword" -}}
+{{- index (index .Values "_honuaResolved") "redisPassword" -}}
+{{- else -}}
+{{- $value := toString (default "" .Values.redis.auth.password) -}}
+{{- if not $value -}}
+{{- if not .Values.secret.generateCredentials -}}
+{{- fail "redis.auth.password is required when redis.enabled is true unless secret.generateCredentials is true or secret.env.ConnectionStrings__redis is set." -}}
+{{- end -}}
+{{- $value = include "honua.lookupSecretKey" (dict "namespace" .Release.Namespace "name" (include "honua.redisHost" .) "key" "password") -}}
+{{- if not $value -}}
+{{- $value = printf "Aa1%s" (randAlphaNum 32) -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set (index .Values "_honuaResolved") "redisPassword" $value -}}
+{{- $value -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "honua.postgisHost" -}}
+{{- printf "%s-postgis" (include "honua.fullname" . | trunc 55 | trimSuffix "-") -}}
+{{- end -}}
+
+{{- define "honua.postgisPort" -}}
+5432
+{{- end -}}
+
+{{- define "honua.postgisPassword" -}}
+{{- if not (hasKey .Values "_honuaResolved") -}}
+{{- $_ := set .Values "_honuaResolved" dict -}}
+{{- end -}}
+{{- if hasKey (index .Values "_honuaResolved") "postgisPassword" -}}
+{{- index (index .Values "_honuaResolved") "postgisPassword" -}}
+{{- else -}}
+{{- $postgis := .Values.postgis | default dict -}}
+{{- $value := toString (default "" (dig "auth" "password" "" $postgis)) -}}
+{{- if not $value -}}
+{{- if not .Values.secret.generateCredentials -}}
+{{- fail "postgis.auth.password is required when postgis.enabled is true unless secret.generateCredentials is true or secret.env.ConnectionStrings__DefaultConnection is set." -}}
+{{- end -}}
+{{- $value = include "honua.lookupSecretKey" (dict "namespace" .Release.Namespace "name" (include "honua.postgisHost" .) "key" "password") -}}
+{{- if not $value -}}
+{{- $value = printf "Aa1%s" (randAlphaNum 32) -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set (index .Values "_honuaResolved") "postgisPassword" $value -}}
+{{- $value -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* ---------------------------------------------------------------------
@@ -539,22 +705,154 @@ true
 {{- if and $on (eq (include "honua.gpJobs.namespace" .) .Release.Namespace) -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
+{{- /* Worker environment scope (honua-helm#110). "worker" (the default) gives
+       each Job only the settings a worker host needs: the server's
+       non-credential configuration plus the database, Redis job store,
+       connection-encryption master key, operation key ring, licensing and
+       file storage credentials. Server-only credentials (the admin password,
+       the audit-chain key, OIDC signing keys, SMTP and API keys) never reach
+       a worker, so the job identity need not be able to read them. "server"
+       restores the pre-#110 behaviour: the worker imports the server's whole
+       runtime Secret, ConfigMap and extraEnvFrom sources. */ -}}
+{{- define "honua.gpJobs.scoped" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- if eq (toString (default "worker" (get $gp "environmentScope"))) "server" -}}false{{- else -}}true{{- end -}}
+{{- end -}}
+
+{{- define "honua.gpJobs.workerEnvName" -}}
+{{- printf "%s-gp-worker-env" (include "honua.fullname" . | trunc 49 | trimSuffix "-") -}}
+{{- end -}}
+
+{{- /* workerSecretKeys, plus the target of every env:<NAME> reference a
+       worker credential in config.env or secret.env points at, since the
+       worker resolves that reference from its own environment. */ -}}
+{{- define "honua.gpJobs.workerSecretKeys" -}}
+{{- $gp := include "honua.gpJobs.values" . | fromJson -}}
+{{- $keys := list -}}
+{{- range (get $gp "workerSecretKeys" | default list) -}}
+{{- $keys = append $keys (toString .) -}}
+{{- end -}}
+{{- $settings := dict -}}
+{{- include "honua.nonEmptyEnv" (dict "src" (get (.Values.secret | default dict) "env") "dst" $settings) -}}
+{{- include "honua.nonEmptyEnv" (dict "src" (get (.Values.config | default dict) "env") "dst" $settings) -}}
+{{- range $key, $value := $settings -}}
+{{- if and (hasPrefix "env:" $value) (eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $key "extra" $keys)) "true") -}}
+{{- $target := trim (trimPrefix "env:" $value) -}}
+{{- if and $target (not (has $target $keys)) -}}
+{{- $keys = append $keys $target -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $keys -}}
+{{- end -}}
+
+{{- /* A credential a worker host needs: the database, the Redis job store,
+       the connection-encryption master key, the operation key ring,
+       licensing, file storage, or a name listed in workerSecretKeys.
+       Called with (dict "name" <key> "extra" <workerSecretKeys>). */ -}}
+{{- define "honua.gpJobs.isWorkerCredential" -}}
+{{- if or (has .name .extra) (regexMatch "^(ConnectionStrings__(DefaultConnection|redis)|(Security__ConnectionEncryption|Operations__SecretChannel|Licensing|FileStorage)__[A-Za-z0-9_.-]+)$" .name) -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* A setting that carries or points at a credential: a sensitive name
+       (honua.gpJobs.isSensitiveName, plus secret/signing-key/credential
+       names) or a cloud secret reference value. Called with
+       (dict "name" <key> "value" <value>). */ -}}
+{{- define "honua.gpJobs.isCredential" -}}
+{{- if or (eq (include "honua.gpJobs.isSensitiveName" .name) "true") (regexMatch "(?i)(secret|signingkey|credential)" .name) (eq (include "honua.isSecretReference" .value) "true") -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- /* Scoped worker ConfigMap data (name => value): the non-empty config.env
+       entries, minus the server listener, the control-plane settings and every
+       credential a worker does not need. */ -}}
+{{- define "honua.gpJobs.workerConfigData" -}}
+{{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
+{{- $src := dict -}}
+{{- $out := dict -}}
+{{- if .Values.config.create -}}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $src) -}}
+{{- end -}}
+{{- range $key, $value := $src -}}
+{{- $credential := eq (include "honua.gpJobs.isCredential" (dict "name" $key "value" $value)) "true" -}}
+{{- $allowed := eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $key "extra" $extra)) "true" -}}
+{{- if and (ne $key "ASPNETCORE_URLS") (not (hasPrefix "ControlPlane__" $key)) (or (not $credential) $allowed) -}}
+{{- $_ := set $out $key $value -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- /* Scoped worker Secret data (name => plain value): only the worker
+       credentials from the chart-managed runtime Secret, including the
+       chart-derived PostgreSQL and Redis connection strings. The runtime
+       Secret is the credential store, so this is a strict allowlist. */ -}}
+{{- define "honua.gpJobs.workerSecretData" -}}
+{{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
+{{- $out := dict -}}
+{{- if .Values.secret.create -}}
+{{- range $line := splitList "\n" (include "honua.secretData" .) -}}
+{{- if contains ": " $line -}}
+{{- $parts := splitn ": " 2 (trim $line) -}}
+{{- if eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $parts._0 "extra" $extra)) "true" -}}
+{{- $_ := set $out $parts._0 (b64dec $parts._1) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- /* Scoped mode with an existing runtime Secret (secret.create=false): the
+       chart cannot read or filter it, so each worker credential is taken by
+       key (secretKeyRef) instead of importing the whole Secret: the database,
+       Redis and master key, plus workerSecretKeys. A key the worker already
+       gets from the scoped ConfigMap or a workerEnv literal is skipped.
+       Result: name => "<secret>:<key>". */ -}}
+{{- define "honua.gpJobs.workerSecretKeyRefs" -}}
+{{- $refs := dict -}}
+{{- if and (not .Values.secret.create) .Values.secret.name -}}
+{{- $config := include "honua.gpJobs.workerConfigData" . | fromJson -}}
+{{- $literals := include "honua.gpJobs.workerEnv" . | fromJson -}}
+{{- if .Values.licensing.licenseSecretRef.name -}}
+{{- $_ := set $literals "Licensing__LicenseContent" "" -}}
+{{- end -}}
+{{- $keys := concat (list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey") (include "honua.gpJobs.workerSecretKeys" . | fromJsonArray) -}}
+{{- range $key := $keys -}}
+{{- if and (not (hasKey $config $key)) (not (hasKey $literals $key)) -}}
+{{- $_ := set $refs $key (printf "%s:%s" $.Values.secret.name $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $refs -}}
+{{- end -}}
+
 {{- /* "<name>" or "<name>:<prefix>" entries for one envFrom kind
-       ("secretRef" or "configMapRef"), in the server Deployment's order. */ -}}
+       ("secretRef" or "configMapRef"). With environmentScope=server they are
+       the server Deployment's sources, in its order. Scoped, they are the
+       chart's worker Secret and ConfigMap (an existing ConfigMap, config.name
+       with config.create=false, is imported whole because the chart cannot
+       filter it), then each workerExtraEnvFrom source. */ -}}
 {{- define "honua.gpJobs.envFromSources" -}}
 {{- $kind := .kind -}}
 {{- $root := .context -}}
+{{- $scoped := eq (include "honua.gpJobs.scoped" $root) "true" -}}
+{{- $gp := include "honua.gpJobs.values" $root | fromJson -}}
 {{- $names := list -}}
 {{- if eq $kind "secretRef" -}}
-{{- if or $root.Values.secret.create $root.Values.secret.name -}}
+{{- if and $scoped $root.Values.secret.create -}}
+{{- $names = append $names (include "honua.gpJobs.workerEnvName" $root) -}}
+{{- else if and (not $scoped) (or $root.Values.secret.create $root.Values.secret.name) -}}
 {{- $names = append $names (include "honua.secretName" $root) -}}
 {{- end -}}
 {{- else -}}
-{{- if or $root.Values.config.create $root.Values.config.name -}}
+{{- if and $scoped $root.Values.config.create -}}
+{{- $names = append $names (include "honua.gpJobs.workerEnvName" $root) -}}
+{{- else if or $root.Values.config.create $root.Values.config.name -}}
 {{- $names = append $names (include "honua.configmapName" $root) -}}
 {{- end -}}
 {{- end -}}
-{{- range ($root.Values.extraEnvFrom | default list) -}}
+{{- $sources := ternary (get $gp "workerExtraEnvFrom" | default list) ($root.Values.extraEnvFrom | default list) $scoped -}}
+{{- range $sources -}}
 {{- $ref := get . $kind -}}
 {{- if and $ref (get $ref "name") -}}
 {{- $entry := toString (get $ref "name") -}}
@@ -569,6 +867,8 @@ true
 {{- $gp := include "honua.gpJobs.values" . | fromJson -}}
 {{- $allowInline := eq (toString (default false (get $gp "allowInlineWorkerSecrets"))) "true" -}}
 {{- $envFromMode := eq (include "honua.gpJobs.envFromMode" .) "true" -}}
+{{- $scoped := eq (include "honua.gpJobs.scoped" .) "true" -}}
+{{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
 {{- $env := dict -}}
 {{- if eq (toString (ternary true (get $gp "inheritServerEnvironment") (not (hasKey $gp "inheritServerEnvironment")))) "true" -}}
 {{- if $envFromMode -}}
@@ -583,7 +883,9 @@ true
 {{- $_ := set $env "OTEL_EXPORTER_OTLP_PROTOCOL" (toString (default "grpc" (dig "otlpProtocol" "grpc" ($.Values.observability | default dict)))) -}}
 {{- end -}}
 {{- else -}}
-{{- if .Values.config.create -}}
+{{- if $scoped -}}
+{{- $env = include "honua.gpJobs.workerConfigData" . | fromJson -}}
+{{- else if .Values.config.create -}}
 {{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $env) -}}
 {{- end -}}
 {{- $_ := set $env "Licensing__Mode" (toString .Values.licensing.mode) -}}
@@ -603,7 +905,7 @@ true
 {{- include "honua.nonEmptyEnv" (dict "src" .Values.secret.env "dst" $secretEnv) -}}
 {{- end -}}
 {{- range $key, $value := $secretEnv -}}
-{{- if or $allowInline (eq (include "honua.isSecretReference" $value) "true") -}}
+{{- if and (or $allowInline (eq (include "honua.isSecretReference" $value) "true")) (or (not $scoped) (eq (include "honua.gpJobs.isWorkerCredential" (dict "name" $key "extra" $extra)) "true")) -}}
 {{- $_ := set $env $key $value -}}
 {{- end -}}
 {{- end -}}

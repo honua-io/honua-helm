@@ -205,9 +205,19 @@ helm pull oci://ghcr.io/honua-io/charts/honua --version <version>   # then compa
 
 The job cannot meet these itself:
 
+- **Publication environment.** `publish` deploys to `chart-publication`, except a
+  `workflow_dispatch` with `proof: true`, which deploys to `chart-publication-proof`.
+  `chart-publication` must allow only the `trunk` branch and must have no required
+  reviewers, because the scheduled nightly cannot approve itself. `chart-publication-proof`
+  must allow every branch and must hold no secret. A non-trunk run that would publish
+  `charts/honua` then fails before the job token is minted. The environment does not narrow
+  `GITHUB_TOKEN` package scope: the token is not an environment secret, and a different
+  workflow in this repository can still request `packages: write`.
 - **Public package.** The first push creates `charts/honua` with the organisation's default
   visibility. An administrator must make the package public before anonymous pulls succeed. The
   job's own checks authenticate with its token, so they do not depend on this.
-- **Package access.** The `charts/honua` package must grant honua-helm write access under
-  *Manage Actions access*. Without it, the push is refused. Other repositories need no package
-  access, because they dispatch the publication instead of running it.
+- **Package access.** Under *Package settings → Manage Actions access* for `charts/honua`,
+  grant **Write** to `honua-helm` only. Do not grant `honua-release` or any other repository;
+  they dispatch this workflow, they do not push. Under *Inherited access*, confirm that no
+  organisation or team write grant reaches the package. GHCR cannot limit that write to one
+  workflow or branch. Without the repository grant, the push is refused.

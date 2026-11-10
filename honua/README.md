@@ -69,10 +69,14 @@ For local development and Helm smoke testing, use the development overlay:
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm dependency build honua
 helm upgrade --install honua honua -f honua/values-dev.yaml
+helm test honua
 ```
 
-The development overlay pins the 2026.1 candidate server image by digest so the quick start
-does not depend on the moving `latest-aot` tag.
+The development overlay pins the 2026.1 candidate server image by digest and
+starts a chart-managed PostGIS database (pgrouting, pinned by digest) plus
+Redis. `secret.generateCredentials` fills the admin password, connection
+master key, and database passwords at install time and reuses the live Secret
+on upgrade. Do not point this overlay at production data.
 
 For direct installs with external data services, the default preflight hook
 checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment
@@ -213,9 +217,21 @@ helm upgrade --install honua honua -f honua/values-prod.yaml -f customer-prod.ya
 
 For production, point `ConnectionStrings__DefaultConnection` at a managed PostGIS database (e.g., Amazon RDS, Azure Flexible Server) rather than using the Bitnami subchart.
 
-> The Bitnami PostgreSQL subchart **does not include PostGIS**. Honua requires PostGIS for migrations and spatial queries. For anything beyond local development, use an external PostGIS-enabled database.
+> The Bitnami PostgreSQL subchart **does not include PostGIS**. Honua requires PostGIS for migrations and spatial queries. The development quick start uses `postgis.enabled` (chart-managed PostGIS). For production, use an external PostGIS-enabled database.
 
-## PostgreSQL subchart (dev only)
+## Chart-managed PostGIS (development quick start)
+
+`honua/values-dev.yaml` sets `postgis.enabled=true` and leaves `postgresql.enabled`
+false. The database pod runs the digest-pinned pgrouting image. That image
+leaves `/docker-entrypoint-initdb.d` empty, so the chart mounts a first-init
+script that creates the `postgis`, `postgis_topology`, and `pgrouting`
+extensions before PostgreSQL listens. The chart derives
+`ConnectionStrings__DefaultConnection` when you do not set one. Preflight skips the database TCP check on the first install
+because the pre-install hook runs before the PostGIS pod exists. Redis in this
+overlay uses an emptyDir (`redis.persistence.enabled=false`) so a kind cluster
+does not need a StorageClass. The database pod does the same.
+
+## PostgreSQL subchart (not migration-capable)
 
 ```bash
 helm upgrade --install honua honua \
@@ -256,7 +272,8 @@ helm upgrade --install honua honua \
 
 When `redis.enabled=true`, `redis.auth.enabled` must remain true and
 `redis.auth.password` must be nonempty, even with an explicit client connection
-string. Delimiter-containing passwords require both the server password and an
+string, unless `secret.generateCredentials` fills an empty password for a
+development install. Delimiter-containing passwords require both the server password and an
 explicit, correctly escaped client connection string. In
 chart-managed-secret mode, the chart auto-populates `ConnectionStrings__redis`
 from `redis.auth.password` unless you set `secret.env.ConnectionStrings__redis`
@@ -650,7 +667,10 @@ The server Deployment also changes in two ways:
 | `nodeSelector` | `{}` | The workload's `k8s.node_selector` parameter |
 | `workload.index` / `id` / `name` | `2` / `geoprocessing-kubernetes-job` / `Geoprocessing (Kubernetes Job)` | `ControlPlane:ExecutionWorkloads:<index>` |
 | `workload.runtimeProfile` | `managed` | Required image runtime (`managed` or `native`). |
-| `envFromServer` | `true` | `ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}`: every Job imports the server's runtime Secret and ConfigMap. Needs honua-server at or after `bebaada00` (server#5796). See below. |
+| `envFromServer` | `true` | `ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps}`: every Job imports its environment through `envFrom`. Needs honua-server at or after `bebaada00` (server#5796). See below. |
+| `environmentScope` | `worker` | `worker`: Jobs get only the settings a worker needs; server-only credentials are withheld (honua-helm#110). `server`: Jobs import the server's runtime Secret, ConfigMap and `extraEnvFrom` whole (the behaviour before #110). See below. |
+| `workerSecretKeys` | `[]` | Extra server credential names forwarded to workers in the `worker` scope. |
+| `workerExtraEnvFrom` | `[]` | `envFrom` sources (the `extraEnvFrom` shape) for workers only, in the `worker` scope. |
 | `inheritServerEnvironment` | `true` | Copies the server's environment into the worker as literal env (see below). |
 | `workerEnv` | `{}` | Extra literal worker env. Wins over `envFrom`. An empty value clears the variable. |
 | `allowInlineWorkerSecrets` | `false` | Legacy mode, disposable clusters only (see below). |
@@ -689,7 +709,66 @@ the assigned-operation entry point delivered by honua-server#6065.
 A worker composes the same services as the server, so it needs the same
 database, the Redis job store and the connection-encryption master key.
 Redis-backed non-development deployments also need the operation key-ring
-certificate.
+certificate. It does not serve HTTP, authenticate admins or verify the audit
+chain, so it does not need the admin password, the audit-chain key or the OIDC
+signing keys.
+
+#### Scope (`environmentScope`)
+
+With `environmentScope: worker` (the default, honua-helm#110) the chart gives
+workers only what a worker host needs. A worker never receives the admin
+password, the audit-chain key, OIDC signing keys or other server-only
+credentials, so the job service account's cloud identity does not need to read
+them either.
+
+The worker credentials are:
+
+- `ConnectionStrings__DefaultConnection` and `ConnectionStrings__redis`;
+- `Security__ConnectionEncryption__*` (the master key);
+- `Operations__SecretChannel__*` (the operation key ring);
+- `Licensing__*` and `FileStorage__*`;
+- every name in `workerSecretKeys`.
+
+A *credential* is a name that looks secret (`ConnectionStrings__*`, or a name
+containing password, master key, API key, token, PKCS#12, secret, signing key,
+private key, credential, license content or the audit-chain key), or a value
+that is an `aws:secretsmanager:` / `azure:keyvault:` reference. Every other
+setting is configuration, and workers get all of it.
+
+In envFrom mode the chart renders `<fullname>-gp-worker-env` and the Jobs
+import it instead of the server's sources:
+
+| Object | Contents |
+| --- | --- |
+| ConfigMap `<fullname>-gp-worker-env` (with `config.create`) | `config.env`, minus `ASPNETCORE_URLS`, `ControlPlane__*` and every credential that is not a worker credential |
+| Secret `<fullname>-gp-worker-env` (with `secret.create`) | Only the worker credentials from the runtime Secret, including the chart-derived PostgreSQL and Redis connection strings |
+
+The runtime Secret is a credential store, so its entries are allowlisted
+rather than filtered.
+
+With an existing runtime Secret (`secret.create: false`, `secret.name`), the
+chart cannot read or filter it. The worker takes
+`ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis`,
+`Security__ConnectionEncryption__MasterKey` and each `workerSecretKeys` name
+from it by key, as `k8s.env.<NAME>.secretKeyRef` workload parameters. Those keys
+must exist in the Secret, or the Job pod cannot start. A key the worker already
+gets from `config.env` or `workerEnv` is skipped. An existing ConfigMap
+(`config.name` with `config.create: false`) is imported whole, because the
+chart cannot filter it, so keep server-only secret references out of it.
+
+`extraEnvFrom` sources stay with the server. List anything workers need in
+`workerExtraEnvFrom`. The install NOTES say so when `extraEnvFrom` is set.
+
+Legacy literal mode is scoped the same way:
+
+- `config.env` is filtered as above;
+- only worker credentials are copied from the `secret.env` references.
+
+`environmentScope: server` restores the earlier behaviour: workers import the
+server's runtime Secret, ConfigMap and `extraEnvFrom` sources whole. Their
+identity must then be able to resolve every secret reference those sources
+carry. Use it only as a temporary fallback when a worker needs a setting the
+scope withholds; `workerSecretKeys` is the narrower fix.
 
 The worker receives these settings in one of two ways, depending on the server
 version and the Job namespace.
@@ -705,8 +784,10 @@ the release namespace.
 The chart sets
 `ControlPlane__Kubernetes__DefaultEnvFromSecrets__<i>` and
 `ControlPlane__Kubernetes__DefaultEnvFromConfigMaps__<i>`. The server then adds
-container `envFrom` to every Job it launches, so the worker imports the same
-sources the server Deployment mounts:
+container `envFrom` to every Job it launches. With `environmentScope: worker`
+(the default) the sources are the scoped `<fullname>-gp-worker-env` objects
+above, then each `workerExtraEnvFrom` source. With `environmentScope: server`
+the worker imports the same sources the server Deployment mounts:
 
 | Order | Source | Kind |
 | --- | --- | --- |
@@ -721,7 +802,8 @@ in the Job object, the durable job record or the server logs. This covers:
 
 - a chart-managed Secret with plain credentials;
 - the chart-derived PostgreSQL and Redis connection strings;
-- an existing Secret, such as the release harness's `honua-runtime`.
+- an existing Secret, such as the release harness's `honua-runtime`, read by
+  key in the `worker` scope or whole in the `server` scope.
 
 None of these needs a cloud secret reference any more. Neither the job
 ServiceAccount nor the server's Role needs any Secret permission, because the
@@ -766,7 +848,8 @@ as **cloud secret references**: `aws:secretsmanager:<arn>` or
 `azure:keyvault:<vault>/<secret>`. The worker resolves them at startup with
 the job service account's cloud identity.
 
-With `inheritServerEnvironment: true`, the worker gets:
+With `inheritServerEnvironment: true`, the worker gets the following, scoped
+as described above unless `environmentScope: server`:
 
 - every `config.env` entry, except `ASPNETCORE_URLS` and `ControlPlane__*`;
 - the licensing values;
@@ -1130,13 +1213,13 @@ The `PrometheusRule` has two rule groups when `metrics.prometheusRule.enabled`:
   built on the server's `honua_request_error_total` counter over the
   `honua_serving_request_duration_ms_count` request total. These deliberately
   **include the GeoServices in-band 200-with-`{error}` signal**: GeoServices returns
-  HTTP 200 with an `{error}` body for Esri-client compatibility, so those failures
+  HTTP 200 with an `{error}` body, so those failures
   are invisible to load-balancer 5xx metrics. The server increments
   `honua_request_error_total` with `in_band="true"` for them, so the budgeted ratio
   is transport 5xx plus in-band errors, and `HonuaGeoServicesInBandErrorRateHigh`
   alerts on the GeoServices-scoped slice directly. Ordinary out-of-band 4xx is
   excluded so routine client probing cannot burn the budget. Series names and scopes
-  come from honua-server's `observability/slo-metric-contract.json`.
+  come from honua-server's `eng/telemetry/slo-metric-contract.v1.json`.
   Thresholds/windows mirror the honua-devops SLO rules and are fully overridable
   under `metrics.prometheusRule.slo`.
 

@@ -1,5 +1,6 @@
 """Render regressions for managed Redis storage, rotation, naming and preflight."""
 import base64
+import hashlib
 import subprocess
 
 import yaml
@@ -85,7 +86,9 @@ assert 'emptyDir' in volumes[mounts['/tmp']]
 config_volume = volumes[mounts['/usr/local/etc/redis']]['secret']
 assert config_volume['secretName'] == service_name
 assert config_volume['items'] == [{'key': 'redis.conf', 'path': 'redis.conf'}]
-assert redis_container['args'] == ['redis-server', '/usr/local/etc/redis/redis.conf', '--appendonly', 'yes']
+assert redis_container['args'] == [
+    'redis-server', '/usr/local/etc/redis/redis.conf', '--appendonly', 'yes',
+    '--maxmemory', '200mb']
 assert [env['name'] for env in redis_container['env']] == ['REDISCLI_AUTH']
 for probe in ('readinessProbe', 'livenessProbe'):
     assert redis_container[probe]['exec']['command'] == ['sh', '-c', 'redis-cli ping | grep -q PONG']
@@ -100,7 +103,8 @@ overridden = yaml.safe_dump(next(
     if document and document.get('kind') == 'Deployment' and document['metadata']['name'] == service_name))
 assert 'runAsUser: 1999' in overridden and 'fsGroup: 1999' in overridden
 rotated = render('--set-string', 'redis.auth.password=rotated-password')
-assert field(deployment, 'checksum/redis-password') != field(resource(rotated, 'Deployment'), 'checksum/redis-password')
+assert field(deployment, 'checksum/redis-secret') != field(resource(rotated, 'Deployment'), 'checksum/redis-secret')
+assert hashlib.sha256(b'ci-redis-password').hexdigest() not in deployment
 assert field(resource(rotated, 'PersistentVolumeClaim'), 'name') == service_name
 custom = render('--set', 'redis.persistence.size=16Gi', '--set', 'redis.persistence.storageClass=fast')
 assert 'storage: "16Gi"' in custom and 'storageClassName: "fast"' in custom

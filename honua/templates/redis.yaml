@@ -4,7 +4,7 @@ kind: Secret
 metadata:
   name: {{ include "honua.redisHost" . }}
 type: Opaque
-{{- $redisPassword := required "redis.auth.password is required when redis.enabled is true." .Values.redis.auth.password | toString }}
+{{- $redisPassword := include "honua.redisPassword" . }}
 {{- /* redis.conf carries requirepass so the password never appears in the
        redis-server argv (/proc/<pid>/cmdline). Escape for a Redis
        double-quoted config string. */}}
@@ -31,20 +31,29 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/redis-password: {{ .Values.redis.auth.password | sha256sum | quote }}
+        {{- /* Salted with the release identity. Not a raw hash of the password, which a short password could be recovered from. */}}
+        checksum/redis-secret: {{ printf "%s/%s/%s" .Release.Namespace .Release.Name $redisPassword | sha256sum | quote }}
       labels:
         {{- include "honua.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
       automountServiceAccountToken: false
+      {{- with .Values.redis.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.redis.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
         - name: data
+          {{- if dig "enabled" true .Values.redis.persistence }}
           persistentVolumeClaim:
             claimName: {{ include "honua.redisHost" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         - name: config
           secret:
             secretName: {{ include "honua.redisHost" . }}
@@ -57,13 +66,25 @@ spec:
             sizeLimit: 64Mi
       containers:
         - name: redis
-          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          image: {{ include "honua.referencedImage" (dict "repository" .Values.redis.image.repository "tag" .Values.redis.image.tag "digest" (default "" .Values.redis.image.digest)) | quote }}
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
           {{- with .Values.redis.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          args: ["redis-server", "/usr/local/etc/redis/redis.conf", "--appendonly", "yes"]
+          args:
+            - redis-server
+            - /usr/local/etc/redis/redis.conf
+            - --appendonly
+            - "yes"
+            {{- with .Values.redis.maxmemory }}
+            - --maxmemory
+            - {{ . | quote }}
+            {{- end }}
+          {{- with .Values.redis.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - name: data
               mountPath: /data
@@ -89,6 +110,7 @@ spec:
             exec:
               command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
 ---
+{{- if dig "enabled" true .Values.redis.persistence }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -102,6 +124,7 @@ spec:
     requests:
       storage: {{ .Values.redis.persistence.size | quote }}
 ---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:

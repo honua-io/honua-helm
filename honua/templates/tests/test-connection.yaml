@@ -12,9 +12,28 @@ metadata:
 spec:
   restartPolicy: Never
   automountServiceAccountToken: false
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  volumes:
+    - name: tmp
+      emptyDir:
+        sizeLimit: 32Mi
   containers:
     - name: curl
-      image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
+      image: {{ include "honua.referencedImage" (dict "repository" .Values.preflight.image.repository "tag" .Values.preflight.image.tag "digest" (default "" .Values.preflight.image.digest)) | quote }}
+      imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
       command:
         - sh
         - -c
@@ -29,8 +48,8 @@ spec:
           echo "chart.version={{ .Chart.Version }}"
           echo "app.version={{ include "honua.appVersion" . }}"
           echo "readiness.contract=/healthz/ready returns success after Honua startup and migrations are complete"
-          attempts=30
-          sleep_seconds=5
+          attempts={{ dig "attempts" 30 (dig "connection" dict (.Values.tests | default dict)) }}
+          sleep_seconds={{ dig "sleepSeconds" 5 (dig "connection" dict (.Values.tests | default dict)) }}
           i=1
           while [ "$i" -le "$attempts" ]; do
             if [ -n "${host_header}" ] && curl -fsS --max-time 10 -H "Host: ${host_header}" "$url" >/dev/null; then

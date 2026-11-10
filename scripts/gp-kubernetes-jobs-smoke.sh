@@ -150,13 +150,17 @@ jq -e '.spec.backoffLimit == 0 and .spec.ttlSecondsAfterFinished == 600' "$evide
   || fail "GP Job does not carry the backend's backoff/TTL"
 jq -e '.metadata.labels["honua.io/workload-kind"] == "geoprocessing" and (.metadata.labels["honua.io/operation-id"] | length > 0)' \
   "$evidence/gp-job.json" >/dev/null || fail "GP Job lacks the operation labels"
-# The worker imports the server's runtime Secret and ConfigMap by name; no
-# credential value is written into the Job.
-jq -e --arg secret "$fullname-secret" --arg config "$fullname-config" \
-  '[.spec.template.spec.containers[0].envFrom[]? | (.secretRef.name // empty)] == [$secret]
-   and ([.spec.template.spec.containers[0].envFrom[]? | (.configMapRef.name // empty)] | index($config)) != null
+# The worker imports the scoped worker Secret and ConfigMap by name (honua-helm#110); no
+# credential value is written into the Job, and the worker Secret has no admin password.
+jq -e --arg worker "$fullname-gp-worker-env" \
+  '[.spec.template.spec.containers[0].envFrom[]? | (.secretRef.name // empty)] == [$worker]
+   and [.spec.template.spec.containers[0].envFrom[]? | (.configMapRef.name // empty)] == [$worker]
    and ([.spec.template.spec.containers[0].env[]? | select(.name | test("ConnectionStrings|MasterKey|PASSWORD"))] | length) == 0' \
-  "$evidence/gp-job.json" >/dev/null || fail "GP Job does not import the runtime Secret and ConfigMap through envFrom"
+  "$evidence/gp-job.json" >/dev/null || fail "GP Job does not import the scoped worker Secret and ConfigMap through envFrom"
+kubectl get secret "$fullname-gp-worker-env" -n "$namespace" -o json \
+  | jq -e '(.data | has("HONUA_ADMIN_PASSWORD") | not) and (.data | has("ConnectionStrings__DefaultConnection"))
+           and (.data | has("GP_SMOKE_KEYRING_PFX"))' >/dev/null \
+  || fail "the GP worker Secret is not scoped to the worker credentials"
 jq -r '[.spec.template.spec.containers[0].env[].name | select(startswith("HONUA_"))] | join(",")' "$evidence/gp-job.json" \
   | tee "$evidence/launch-variables.txt"
 # The worker launch contract (HONUA_OPERATION_ID, HONUA_EXECUTION_ATTEMPT, ...) is stamped by

@@ -11,7 +11,7 @@ keywords:
   - gis
   - geospatial
   - ogc
-  - arcgis
+  - geoservices-rest
 maintainers:
   - name: Honua
     email: hello@honua.io
