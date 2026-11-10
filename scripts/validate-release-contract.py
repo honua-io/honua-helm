@@ -20,7 +20,7 @@ NIGHTLY_REQUIRED = {
     "pull by digest and re-hash": "chart_publication.py verify",
     "keyless signature": "cosign sign --yes",
     "SBOM attestation": "cosign attest --yes --type cyclonedx",
-    "provenance predicate": "actions/attest-build-provenance/predicate@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0",
+    "provenance predicate": "actions/attest-build-provenance/predicate@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0",
     "provenance bound to the source revision": "chart_publication.py provenance-predicate",
     "provenance attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2",
     "provenance in the registry": "push-to-registry: true",
