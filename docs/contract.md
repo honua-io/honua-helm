@@ -28,7 +28,7 @@ The chart supports two migration paths. With the default
 during application startup, serialized by a PostgreSQL advisory lock, and the
 effective strategy is `Recreate`. With `migrations.job.enabled: true`, a
 `pre-install,pre-upgrade` hook Job runs the same image in migrate-only mode
-(`HONUA_MIGRATE_ONLY=true`, honua-server#6479) with the Deployment's
+(`HONUA_MIGRATE_ONLY=true`) with the Deployment's
 configuration and `migrationSafety.*` env. The Job applies the migrations under
 every `Database:MigrationSafety` gate, prints one `honua.migrate-only/v1` JSON
 summary line to stdout and exits with a typed code. It has `backoffLimit: 0`,
@@ -43,7 +43,7 @@ code.
 
 The Job is off by default for now and becomes the recommended production path.
 It requires a server image at or after the first release that ships
-`HONUA_MIGRATE_ONLY` (today: the next release after 2026.1); an older image
+`HONUA_MIGRATE_ONLY`; an older image
 ignores the switch, serves, and the hook fails at `activeDeadlineSeconds`.
 
 The chart owns `HONUA_SKIP_MIGRATIONS` while the Job is enabled and

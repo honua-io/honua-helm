@@ -690,7 +690,7 @@ jobs:
       - name: Verify out-of-band migration Job (migrate-only mode)
         run: |
           set -euo pipefail
-          # Default: inline migrations stay byte-for-byte what they were.
+          # Default: inline migrations render no Job or chart-owned migration env.
           base=/tmp/honua-rendered-base.yaml
           for key in 'honua-honua-migrate' 'HONUA_MIGRATE_ONLY' 'HONUA_SKIP_MIGRATIONS'; do
             if grep -q "${key}" "${base}"; then
@@ -702,7 +702,6 @@ jobs:
 
           for overlay in honua/ci-values/base.yaml honua/values-dev.yaml honua/values-stage.yaml; do
             helm template honua ./honua -f "${overlay}" --set migrations.job.enabled=true \
-              --set postgresql.enabled=false \
               --set-string secret.env.ConnectionStrings__DefaultConnection='Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password' \
               > /tmp/honua-rendered-migrate.yaml
           done
@@ -761,7 +760,8 @@ jobs:
             "HONUA_MIGRATE_ONLY|--set-string secret.env.HONUA_MIGRATE_ONLY=true" \
             "HONUA_MIGRATE_ONLY|--set extraEnv[0].name=HONUA_MIGRATE_ONLY --set-string extraEnv[0].value=true" \
             "HONUA_MIGRATE_ONLY|-f honua/ci-values/migrations-job.yaml --set extraEnv[0].name=HONUA_MIGRATE_ONLY --set-string extraEnv[0].value=false" \
-            "postgresql|-f honua/ci-values/migrations-job.yaml --set postgresql.enabled=true --set postgresql.auth.password=ci-password" \
+            "chart-managed|-f honua/ci-values/migrations-job.yaml --set postgresql.enabled=true --set postgresql.auth.password=ci-password --set postgresql.auth.username=honua --set postgresql.auth.database=honua --set secret.env.ConnectionStrings__DefaultConnection=" \
+            "chart-managed|-f honua/ci-values/migrations-job.yaml --set postgis.enabled=true --set secret.env.ConnectionStrings__DefaultConnection=" \
             "activeDeadlineSeconds|-f honua/ci-values/migrations-job.yaml --set migrations.job.activeDeadlineSeconds=0" \
             "rollingUpdate|-f honua/ci-values/migrations-job.yaml --set strategy.rollingUpdate.maxSurge=0 --set strategy.rollingUpdate.maxUnavailable=0" \
             "migrations|--set migrations.job.unknown=true"; do
@@ -1125,7 +1125,7 @@ jobs:
 
       - name: Install and upgrade with the migration Job (migrate-only mode)
         env:
-          # The image must contain migrate-only mode (4087d93, server#6479).
+          # The image must contain migrate-only mode (server revision 4087d93).
           # Prefer the customer-facing image: the honua-server digest of the
           # latest published honua-release release. nightly-aot is the fallback
           # only while no published release ships it. Pin the digest with its

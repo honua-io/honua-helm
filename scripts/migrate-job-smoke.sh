@@ -14,7 +14,7 @@
 # appliedScripts); the upgrade finds it current (empty appliedScripts) and rolls
 # the Deployment to a second ReplicaSet revision.
 #
-# The image must ship migrate-only mode (honua-server 4087d93, #6479).
+# The image must ship migrate-only mode (server revision 4087d93).
 # Certification certifies the customer-facing product, so the lane prefers the
 # server image of the latest published honua-io/honua-release release (its
 # finalized-manifest.yaml asset) and falls back to nightly-aot only while no

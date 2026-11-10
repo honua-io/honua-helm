@@ -92,31 +92,8 @@ spec:
             {{- end }}
           resources:
             {{- toYaml (default .Values.resources $job.resources) | nindent 12 }}
-          {{- if or .Values.tmpVolume.enabled .Values.extraVolumeMounts }}
-          volumeMounts:
-            {{- if .Values.tmpVolume.enabled }}
-            - name: tmp
-              mountPath: /tmp
-            {{- end }}
-            {{- with .Values.extraVolumeMounts }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          {{- end }}
-      {{- if or .Values.tmpVolume.enabled .Values.extraVolumes }}
-      volumes:
-        {{- if .Values.tmpVolume.enabled }}
-        - name: tmp
-          {{- if .Values.tmpVolume.sizeLimit }}
-          emptyDir:
-            sizeLimit: {{ .Values.tmpVolume.sizeLimit | quote }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
-        {{- end }}
-        {{- with .Values.extraVolumes }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-      {{- end }}
+          {{- include "honua.serverVolumeMounts" . | nindent 10 }}
+      {{- include "honua.serverVolumes" . | nindent 6 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

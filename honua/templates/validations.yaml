@@ -423,15 +423,9 @@
        on the serving pods is chart-owned too; a user value would either be
        shadowed or, from extraEnv, win by list order and re-enable inline
        migrations under RollingUpdate. */ -}}
-{{- range $source, $env := dict "config.env" ((.Values.config).env | default dict) "secret.env" ((.Values.secret).env | default dict) -}}
-{{- if hasKey $env "HONUA_MIGRATE_ONLY" -}}
-{{- fail (printf "HONUA_MIGRATE_ONLY must not be set in %s: it makes the server migrate and exit instead of serving. Use migrations.job.enabled to run migrations out of band." $source) -}}
-{{- end -}}
-{{- end -}}
-{{- range (.Values.extraEnv | default list) -}}
-{{- if eq (.name | default "") "HONUA_MIGRATE_ONLY" -}}
-{{- fail "HONUA_MIGRATE_ONLY must not be set in extraEnv: it makes the server migrate and exit instead of serving. Use migrations.job.enabled to run migrations out of band." -}}
-{{- end -}}
+{{- $migrateSources := include "honua.userEnvSources" (dict "name" "HONUA_MIGRATE_ONLY" "context" .) | fromJsonArray -}}
+{{- if $migrateSources -}}
+{{- fail (printf "HONUA_MIGRATE_ONLY must not be set in %s: it makes the server migrate and exit instead of serving. Use migrations.job.enabled to run migrations out of band." (join ", " $migrateSources)) -}}
 {{- end -}}
 {{- if hasKey (dig "kubernetesJobs" "workerEnv" dict (.Values.geoprocessing | default dict)) "HONUA_MIGRATE_ONLY" -}}
 {{- fail "HONUA_MIGRATE_ONLY must not be set in geoprocessing.kubernetesJobs.workerEnv." -}}
@@ -441,8 +435,8 @@
 {{- if $skipSources -}}
 {{- fail (printf "migrations.job.enabled sets HONUA_SKIP_MIGRATIONS=true on the serving pods; remove HONUA_SKIP_MIGRATIONS from %s." (join ", " $skipSources)) -}}
 {{- end -}}
-{{- if .Values.postgresql.enabled -}}
-{{- fail "migrations.job.enabled cannot be used with the chart-managed postgresql subchart: the migration Job runs as a pre-install hook, before the subchart's database exists. Point secret.env.ConnectionStrings__DefaultConnection at an external PostGIS database, or keep inline migrations (migrations.job.enabled=false) for the dev subchart." -}}
+{{- if eq (include "honua.usesChartManagedPostgresqlConnection" .) "true" -}}
+{{- fail "migrations.job.enabled cannot use the chart-managed postgresql or postgis database: the migration Job runs as a pre-install hook, before the chart-managed database exists. Point secret.env.ConnectionStrings__DefaultConnection at an external PostGIS database, or keep inline migrations (migrations.job.enabled=false) for the chart-managed database." -}}
 {{- end -}}
 {{- $job := .Values.migrations.job -}}
 {{- if lt (int (default 0 $job.activeDeadlineSeconds)) 1 -}}

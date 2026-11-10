@@ -997,3 +997,34 @@ default
 {{- end -}}
 {{- toJson $hits -}}
 {{- end -}}
+
+{{- define "honua.serverVolumeMounts" -}}
+{{- if or .Values.tmpVolume.enabled .Values.extraVolumeMounts }}
+volumeMounts:
+  {{- if .Values.tmpVolume.enabled }}
+  - name: tmp
+    mountPath: /tmp
+  {{- end }}
+  {{- with .Values.extraVolumeMounts }}
+  {{- toYaml . | nindent 12 }}
+  {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "honua.serverVolumes" -}}
+{{- if or .Values.tmpVolume.enabled .Values.extraVolumes }}
+volumes:
+  {{- if .Values.tmpVolume.enabled }}
+  - name: tmp
+    {{- if .Values.tmpVolume.sizeLimit }}
+    emptyDir:
+      sizeLimit: {{ .Values.tmpVolume.sizeLimit | quote }}
+    {{- else }}
+    emptyDir: {}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.extraVolumes }}
+  {{- toYaml . | nindent 8 }}
+  {{- end }}
+{{- end }}
+{{- end -}}
