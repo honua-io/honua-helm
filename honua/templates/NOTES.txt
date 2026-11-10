@@ -8,7 +8,7 @@ Image: {{ include "honua.imageReference" . }}
 Release ID: {{ default "<unset>" .Values.release.id }}
 Release manifest: {{ default "<unset>" .Values.release.manifest }}
 Release digest: {{ default "<unset>" .Values.release.digest }}
-Upgrade strategy: {{ default "Recreate" .Values.strategy.type }}
+Upgrade strategy: {{ include "honua.strategyType" . }}
 
 {{- if .Values.controlPlane.deployTarget.enabled }}
 Control-plane deploy target: {{ include "honua.deployTargetId" . }} (backend: {{ include "honua.deployTargetBackend" . }}, rollback: manual via `helm rollback`, no automatic recovery)
@@ -23,29 +23,61 @@ Evidence:
 Rollback:
   helm history {{ .Release.Name }} -n {{ .Release.Namespace }}
   helm rollback {{ .Release.Name }} <revision> -n {{ .Release.Namespace }}
+Rollback targets: roll back only to images with the schema-reader guard
+(schema >= 135 across additive migrations), never across a contract-phase
+migration without restoring the pre-upgrade backup, and pin the target by
+digest (the tag in the 2026.1 release notes has moved, honua-release#776).
+honua-2026.1 is unguarded and not a safe rollback target across any migration
+(honua-server#6484): restore the pre-upgrade backup instead.
 
+{{- if eq (include "honua.migrationsJob.enabled" .) "true" }}
+Migrations run out of band: the pre-install/pre-upgrade hook Job
+{{ include "honua.migrationsJobName" . }} ran this image with HONUA_MIGRATE_ONLY=true
+before the Deployment was applied, and the serving pods run with
+HONUA_SKIP_MIGRATIONS=true (they verify the journal and never migrate). Read
+its summary:
+  kubectl logs -n {{ .Release.Namespace }} job/{{ include "honua.migrationsJobName" . }} | grep '"format":"honua.migrate-only/v1"'
+A failed Job leaves the Deployment unchanged. Its exit code and the summary's
+code name the reason: 2 invalid configuration, 3 database unreachable,
+4 PostGIS missing or unsupported, 5 contract approval needed, 6 unannotated
+contract migration, 7 backup command failed, 8 schema newer than this image,
+9 migration lock timeout, 10 migration failed, 11 cancelled. For exit 5, review
+pendingScripts, set HONUA_APPROVE_CONTRACT_MIGRATIONS to the summary's
+contractApproval.nonce (secret.env or extraEnv) for that one upgrade, re-run
+the upgrade, then remove it.
+Image rollback: serving pods with HONUA_SKIP_MIGRATIONS=true refuse to start
+(schema_reader_incompatible) on any journal entry their image does not ship,
+so `helm rollback` across an applied migration needs a database restore or a
+roll forward. Helm cannot downgrade the schema.
+{{- else }}
 Migrations run inline during Honua startup. The readiness endpoint
 /healthz/ready is the chart's signal that startup and migrations completed.
 The default strategy is Recreate so old and new server versions do not run
 against the same database during a migrating upgrade. Before upgrading, check
-GET /api/v1/admin/deploy/preflight and take a database backup. A pre-upgrade
-migration Job is not available yet (honua-io/honua-server#6470).
+GET /api/v1/admin/deploy/preflight and take a database backup. To run them out
+of band in a pre-upgrade Job instead (the recommended production path), set
+migrations.job.enabled=true with a honua-server image that ships migrate-only
+mode.
+{{- end }}
 {{- $migrationSafetyEnv := include "honua.migrationSafetyEnv" . | fromJson }}
 Contract migrations: ContractApplyPolicy={{ default "Gate (server default)" (get $migrationSafetyEnv "Database__MigrationSafety__ContractApplyPolicy") }}
 {{- if hasKey $migrationSafetyEnv "Database__MigrationSafety__BackupCommand" }}, backup command set
 {{- end }}.
+{{- if ne (include "honua.migrationsJob.enabled" .) "true" }}
 If an upgrade is refused with a contract-migration nonce, set that nonce as
 HONUA_APPROVE_CONTRACT_MIGRATIONS (secret.env or extraEnv) for that one upgrade,
 then remove it.
+{{- end }}
 {{- $telemetryConnections := include "honua.telemetryConnections" . | fromJsonArray }}
 {{- if $telemetryConnections }}
 Deploy telemetry connections: {{ range $i, $c := $telemetryConnections }}{{ if $i }}, {{ end }}{{ $c.connectionId }}{{ end }}
 {{- with .Values.controlPlane.deployTarget.telemetry }}{{ with .connection }} (target uses {{ . }}){{ end }}{{ end }}
 {{- end }}
 
-{{- if eq (default "Recreate" .Values.strategy.type) "RollingUpdate" }}
-WARNING: RollingUpdate is enabled. Use it only when the target migration set is
-forward and backward compatible across the old and new Honua images.
+{{- if and (eq (include "honua.strategyType" .) "RollingUpdate") (ne (include "honua.migrationsJob.enabled" .) "true") }}
+WARNING: RollingUpdate is enabled with inline migrations. Use it only when the
+target migration set is forward and backward compatible across the old and new
+Honua images.
 {{- end }}
 
 {{- if or (eq (default "" .Values.image.tag) "latest") (eq (default "" .Values.image.tag) "latest-aot") }}
@@ -53,7 +85,7 @@ WARNING: A mutable image tag is in use. Production and rollback evidence should
 pin image.digest, or at minimum use an immutable release tag.
 {{- end }}
 
-{{- if and (eq (default "Recreate" .Values.strategy.type) "Recreate") (gt $desiredReplicas 1) }}
+{{- if and (eq (include "honua.strategyType" .) "Recreate") (gt $desiredReplicas 1) }}
 WARNING: Recreate with more than one desired replica scales all old pods down
 before new pods start. This is migration-safe but causes upgrade downtime.
 {{- end }}

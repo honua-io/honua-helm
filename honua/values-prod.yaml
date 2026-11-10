@@ -80,7 +80,6 @@ config:
   env:
     HONUA_OBSERVABILITY: "true"
     HONUA_OPENTELEMETRY: "true"
-    HONUA_SKIP_MIGRATIONS: "false"
     Deployment__Mode: "SingleInstance"
     Public__BaseUrl: "https://honua.example.com"
     ASPNETCORE_ENVIRONMENT: "Production"

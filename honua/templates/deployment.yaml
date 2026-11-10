@@ -12,9 +12,10 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  {{- $strategyType := include "honua.strategyType" . }}
   strategy:
-    type: {{ default "Recreate" .Values.strategy.type }}
-    {{- if eq (default "Recreate" .Values.strategy.type) "RollingUpdate" }}
+    type: {{ $strategyType }}
+    {{- if eq $strategyType "RollingUpdate" }}
     rollingUpdate:
       {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
     {{- end }}
@@ -192,6 +193,13 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- /* The pre-upgrade migration Job owns migrations, so the serving
+                   pods only verify the journal against their binary. The key is
+                   chart-owned while the Job is enabled (validations.yaml). */}}
+            {{- if eq (include "honua.migrationsJob.enabled" .) "true" }}
+            - name: HONUA_SKIP_MIGRATIONS
+              value: "true"
+            {{- end }}
             {{- /* Telemetry connection auth header values come only from an
                    existing Secret; the non-secret fields are in the
                    deploy-target ConfigMap. */}}
@@ -219,31 +227,8 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or .Values.tmpVolume.enabled .Values.extraVolumeMounts }}
-          volumeMounts:
-            {{- if .Values.tmpVolume.enabled }}
-            - name: tmp
-              mountPath: /tmp
-            {{- end }}
-            {{- with .Values.extraVolumeMounts }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          {{- end }}
-      {{- if or .Values.tmpVolume.enabled .Values.extraVolumes }}
-      volumes:
-        {{- if .Values.tmpVolume.enabled }}
-        - name: tmp
-          {{- if .Values.tmpVolume.sizeLimit }}
-          emptyDir:
-            sizeLimit: {{ .Values.tmpVolume.sizeLimit | quote }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
-        {{- end }}
-        {{- with .Values.extraVolumes }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-      {{- end }}
+          {{- include "honua.serverVolumeMounts" . | nindent 10 }}
+      {{- include "honua.serverVolumes" . | nindent 6 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

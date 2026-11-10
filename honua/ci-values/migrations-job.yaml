@@ -1,0 +1,14 @@
+# Out-of-band migration Job (migrate-only mode). Layered over base.yaml (and
+# upgrade-safety.yaml) so CI can assert the hook Job, its hook-scoped
+# ConfigMap/Secret copies, the shared MigrationSafety/extra env, and the
+# serving pods' HONUA_SKIP_MIGRATIONS=true + chart-chosen RollingUpdate.
+migrations:
+  job:
+    enabled: true
+    activeDeadlineSeconds: 900
+
+# A one-shot contract approval reaches the Job the same way it reaches the
+# server: through extraEnv (or secret.env). The value here is a fixture.
+extraEnv:
+  - name: HONUA_APPROVE_CONTRACT_MIGRATIONS
+    value: ci-nonce

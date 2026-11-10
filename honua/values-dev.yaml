@@ -23,7 +23,6 @@ config:
   env:
     HONUA_OBSERVABILITY: "false"
     HONUA_OPENTELEMETRY: "false"
-    HONUA_SKIP_MIGRATIONS: "false"
     Deployment__Mode: "SingleInstance"
     Public__BaseUrl: "http://honua.local"
     ASPNETCORE_ENVIRONMENT: "Development"

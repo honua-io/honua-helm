@@ -48,7 +48,6 @@ config:
     ASPNETCORE_ENVIRONMENT: "Production"
     ASPNETCORE_URLS: "http://+:8080"
     Deployment__Mode: "SingleInstance"
-    HONUA_SKIP_MIGRATIONS: "false"
 
 # External managed data services (no PostGIS in Bitnami PostgreSQL); the runtime
 # Secret is pre-created by the operator / harness.

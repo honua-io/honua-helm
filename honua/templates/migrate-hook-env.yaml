@@ -1,0 +1,49 @@
+{{- /* Hook-scoped copies of the chart-managed runtime ConfigMap and Secret for
+       the migration Job. Hooks run before the release's own resources are
+       applied, so on a first install the runtime ConfigMap/Secret do not exist
+       yet, and on an upgrade they still hold the previous revision's values.
+       These copies carry exactly the values the new Deployment will load. */ -}}
+{{- if eq (include "honua.migrationsJob.enabled" .) "true" }}
+{{- if .Values.config.create }}
+{{- $data := dict }}
+{{- include "honua.nonEmptyEnv" (dict "src" .Values.config.env "dst" $data) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honua.migrationsJobName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+{{- if gt (len $data) 0 }}
+data:
+  {{- range $key, $value := $data }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.secret.create }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "honua.migrationsJobName" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    {{- include "honua.releaseLabels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+    {{- include "honua.releaseAnnotations" . | nindent 4 }}
+type: Opaque
+data:
+  {{- include "honua.secretData" . | nindent 2 }}
+{{- end }}
+{{- end }}
