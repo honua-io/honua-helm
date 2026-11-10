@@ -745,6 +745,21 @@ jobs:
             echo "The Deployment must never carry HONUA_MIGRATE_ONLY."
             exit 1
           fi
+          # Custom volumes retain valid indentation and match in both pod specs.
+          for tmp_enabled in true false; do
+            helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/migrations-job.yaml \
+              --set tmpVolume.enabled="${tmp_enabled}" \
+              --set-json 'extraVolumes=[{"name":"data","emptyDir":{}}]' \
+              --set extraVolumeMounts[0].name=data --set extraVolumeMounts[0].mountPath=/data \
+              > /tmp/honua-rendered-custom-volumes.yaml
+            custom=/tmp/honua-rendered-custom-volumes.yaml
+            for field in volumes 'containers[0].volumeMounts'; do
+              serving="$(yq "select(.kind == \"Deployment\") | .spec.template.spec.${field}" "${custom}")"
+              migrating="$(yq "select(.kind == \"Job\" and .metadata.name == \"honua-honua-migrate\") | .spec.template.spec.${field}" "${custom}")"
+              test "${serving}" = "${migrating}"
+              grep -q 'name: data' <<<"${serving}"
+            done
+          done
           # An explicit strategy still wins.
           helm template honua ./honua -f honua/ci-values/base.yaml -f honua/ci-values/migrations-job.yaml --set strategy.type=Recreate \
             | yq 'select(.kind == "Deployment") | .spec.strategy.type' | grep -qx 'Recreate'
