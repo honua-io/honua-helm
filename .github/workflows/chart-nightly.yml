@@ -377,7 +377,7 @@ jobs:
           scripts/retry-transient.sh cosign sign --yes "${REFERENCE}"
           scripts/retry-transient.sh cosign attest --yes --type cyclonedx --predicate receipt/sbom.cdx.json "${REFERENCE}"
 
-      # actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0 is these two
+      # actions/attest-build-provenance is these two
       # steps (its predicate generator and actions/attest). Between them the predicate gains the
       # honua-helm revision the chart was built from: GITHUB_SHA is the scheduled trunk tip or a
       # caller's commit, not the candidate's pinned revision. Provenance is minted only for bytes this
