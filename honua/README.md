@@ -2,7 +2,7 @@
 
 Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
 
-> **Preview:** the Helm/Kubernetes deployment path is not qualified for production in 2026.1.
+> **Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS, ElastiCache, and Console in S3/CloudFront.
 
 - Publish target: `oci://ghcr.io/honua-io/charts/honua`
 - GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
@@ -912,8 +912,9 @@ In legacy mode, the worker needs a reference in
 
 ### EKS: mapping the honua-iac `aws-eks` outputs
 
-The honua-iac `aws-eks` module is the EKS GA certification cell: GP on
-Kubernetes Job runners, Redis on or off, and a PostGIS datastore. It creates:
+The honua-iac `aws-eks` module provides a Preview deployment path for GP on
+Kubernetes Job runners with a PostGIS datastore. This is not a required
+2026.1 rc.2 certification cell. It creates:
 
 - RDS PostGIS, ElastiCache and the Secrets Manager entries;
 - two workload IAM roles, `server` and `gp-job`.

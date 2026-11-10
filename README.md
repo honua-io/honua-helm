@@ -14,7 +14,7 @@ wiring, and optional Bitnami PostgreSQL and Redis subcharts for development.
 
 ## Status
 
-**Preview:** the Helm/Kubernetes deployment path is not qualified for production in 2026.1.
+**Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS, ElastiCache, and Console in S3/CloudFront.
 
 Pre-1.0. Chart releases are cut from `chart-vX.Y.Z` tags and published to
 `oci://ghcr.io/honua-io/charts/honua` by [`release.yml`](.github/workflows/release.yml) — no
