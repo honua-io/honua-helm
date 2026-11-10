@@ -1,13 +1,8 @@
 # Honua Helm Chart
 
-> **2026.1 rc.2 deployment scope:** Lambda and Kubernetes/Helm are not certified
-> in this release candidate. The supported production deployment is AWS ECS
-> Fargate with RDS PostGIS, ElastiCache, and Console in S3/CloudFront.
-> Docker Compose remains the local evaluation path, not a certified production target.
-
 Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
 
-> **Preview:** the Helm/Kubernetes deployment path is not qualified for production in 2026.1.
+> **Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS, ElastiCache, and Console in S3/CloudFront.
 
 - Publish target: `oci://ghcr.io/honua-io/charts/honua`
 - GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
