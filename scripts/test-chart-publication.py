@@ -493,7 +493,11 @@ assert candidate_job['permissions'] == {}
 assert publish['needs'] == 'candidate'
 assert publish['if'] == "${{ needs.candidate.outputs.publish == 'true' }}"
 probe = candidate_job['steps'][0]['run']
-assert 'INPUT_SERVER_IMAGE_DIGEST' in probe and "refs/nightly-candidates/*" in probe
+assert candidate_job['steps'][0]['env']['OWN_NIGHTLY_REF'] == \
+    'honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk'
+assert '"${GITHUB_WORKFLOW_REF}" != "${OWN_NIGHTLY_REF}"' in probe
+assert '${INPUT_SERVER_IMAGE_DIGEST}${INPUT_PLATFORM_VERSION}${INPUT_CHART_REVISION}' in probe
+assert "refs/nightly-candidates/*" in probe
 assert probe.index('publish=true') < probe.index('publish=false')
 assert 'exit 1' in probe  # an unreadable remote stays red; only an empty listing is neutral
 print('chart publication: OK')

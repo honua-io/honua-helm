@@ -102,9 +102,15 @@ jobs:
         shell: bash
         env:
           INPUT_SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
+          INPUT_PLATFORM_VERSION: ${{ inputs.platform_version }}
+          INPUT_CHART_REVISION: ${{ inputs.chart_revision }}
+          OWN_NIGHTLY_REF: honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
         run: |
           set -euo pipefail
-          if [[ -n "${INPUT_SERVER_IMAGE_DIGEST}" ]]; then
+          # Only this workflow's own input-free trunk run may end neutral. Any input, or a caller's
+          # run (GITHUB_WORKFLOW_REF names the caller), goes to publish, which refuses a bad request.
+          if [[ -n "${INPUT_SERVER_IMAGE_DIGEST}${INPUT_PLATFORM_VERSION}${INPUT_CHART_REVISION}" \
+            || "${GITHUB_WORKFLOW_REF}" != "${OWN_NIGHTLY_REF}" ]]; then
             echo "publish=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
