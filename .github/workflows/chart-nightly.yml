@@ -86,8 +86,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # honua-release#482: the schedule runs every night, but honua-release stamps a candidate only when
+  # its nightly mints one. With none stamped there is nothing to publish, so the publish job is
+  # skipped (neutral) instead of failing. Inputs always publish; a stamped candidate always publishes.
+  candidate:
+    name: Find a stamped nightly candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    outputs:
+      publish: ${{ steps.stamped.outputs.publish }}
+    steps:
+      - name: Look for refs/nightly-candidates/* in honua-release
+        id: stamped
+        shell: bash
+        env:
+          INPUT_SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
+          INPUT_PLATFORM_VERSION: ${{ inputs.platform_version }}
+          INPUT_CHART_REVISION: ${{ inputs.chart_revision }}
+          OWN_NIGHTLY_REF: honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk
+        run: |
+          set -euo pipefail
+          # Only this workflow's own input-free trunk run may end neutral. Any input, or a caller's
+          # run (GITHUB_WORKFLOW_REF names the caller), goes to publish, which refuses a bad request.
+          if [[ -n "${INPUT_SERVER_IMAGE_DIGEST}${INPUT_PLATFORM_VERSION}${INPUT_CHART_REVISION}" \
+            || "${GITHUB_WORKFLOW_REF}" != "${OWN_NIGHTLY_REF}" ]]; then
+            echo "publish=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          for delay in 0 10 30 60; do
+            sleep "${delay}"
+            if refs="$(git ls-remote https://github.com/honua-io/honua-release 'refs/nightly-candidates/*')"; then
+              if [[ -n "${refs}" ]]; then
+                echo "publish=true" >> "${GITHUB_OUTPUT}"
+              else
+                echo "::notice::no honua-release nightly candidate is stamped (refs/nightly-candidates/*); nothing to publish"
+                echo "publish=false" >> "${GITHUB_OUTPUT}"
+              fi
+              exit 0
+            fi
+          done
+          echo "::error::could not list honua-release refs/nightly-candidates/*" >&2
+          exit 1
+
   publish:
     name: Publish chart by digest
+    needs: candidate
+    if: ${{ needs.candidate.outputs.publish == 'true' }}
     # chart-publication allows only trunk, so a non-trunk run of this job does not
     # start. A proof dispatch uses chart-publication-proof (any branch, no secrets)
     # and publishes charts/honua-ci-proof only. The environment does not narrow

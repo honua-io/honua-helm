@@ -486,4 +486,18 @@ assert 'environment' not in delete_proof
 writers = [name for name, job in workflow['jobs'].items()
            if (job.get('permissions') or {}).get('packages') == 'write']
 assert writers == ['publish', 'delete-proof'], writers
+# honua-release#482: with no stamped candidate the nightly skips publish (neutral) instead of
+# failing; explicit inputs and a stamped candidate still publish.
+candidate_job = workflow['jobs']['candidate']
+assert candidate_job['permissions'] == {}
+assert publish['needs'] == 'candidate'
+assert publish['if'] == "${{ needs.candidate.outputs.publish == 'true' }}"
+probe = candidate_job['steps'][0]['run']
+assert candidate_job['steps'][0]['env']['OWN_NIGHTLY_REF'] == \
+    'honua-io/honua-helm/.github/workflows/chart-nightly.yml@refs/heads/trunk'
+assert '"${GITHUB_WORKFLOW_REF}" != "${OWN_NIGHTLY_REF}"' in probe
+assert '${INPUT_SERVER_IMAGE_DIGEST}${INPUT_PLATFORM_VERSION}${INPUT_CHART_REVISION}' in probe
+assert "refs/nightly-candidates/*" in probe
+assert probe.index('publish=true') < probe.index('publish=false')
+assert 'exit 1' in probe  # an unreadable remote stays red; only an empty listing is neutral
 print('chart publication: OK')
