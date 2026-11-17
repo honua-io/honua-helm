@@ -163,11 +163,11 @@ refused(lambda: cp.chart_layer({'config': {'mediaType': cp.CHART_CONFIG}, 'layer
 
 assert cp.rendered_images('''
           image: "ghcr.io/honua-io/honua-server@sha256:%s"
-        - image: redis:7.4-alpine
+        - image: busybox:1.37
           imagePullPolicy: IfNotPresent
-''' % ('1' * 64)) == [f'ghcr.io/honua-io/honua-server@{SERVER}', 'redis:7.4-alpine']
-redis = cp._image_component('redis:7.4-alpine')
-assert redis['name'] == 'docker.io/library/redis' and redis['version'] == '7.4-alpine' and 'hashes' not in redis
+''' % ('1' * 64)) == ['busybox:1.37', f'ghcr.io/honua-io/honua-server@{SERVER}']
+library = cp._image_component('busybox:1.37')
+assert library['name'] == 'docker.io/library/busybox' and library['version'] == '1.37' and 'hashes' not in library
 server = cp._image_component(f'ghcr.io/honua-io/honua-server@{SERVER}')
 assert server['purl'].startswith('pkg:oci/honua-server@sha256%3A') and server['hashes'][0]['content'] == '1' * 64
 assert cp._image_component('curlimages/curl:8.5.0')['name'] == 'docker.io/curlimages/curl'

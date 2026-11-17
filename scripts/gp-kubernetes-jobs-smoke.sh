@@ -3,7 +3,9 @@
 #
 # Installs the chart with geoprocessing.kubernetesJobs enabled against an
 # existing cluster (kind in CI) with PostGIS and Redis already running in the
-# namespace, then proves:
+# namespace (the pinned server predates the PostgreSQL job store, so its
+# workers still report through Redis and receive ConnectionStrings__redis as
+# an extra worker secret key), then proves:
 #   1. the post-install RBAC check passes as the server's service account;
 #   2. the server's service account can do exactly what the backend needs in
 #      the namespace, and nothing it does not (Secrets, other namespaces);
@@ -67,6 +69,7 @@ helm install "$release" ./honua -n "$namespace" --wait --timeout 10m \
   --set image.repository="$repository" --set image.tag= --set image.digest="$digest" \
   --set image.pullPolicy=IfNotPresent \
   --set geoprocessing.kubernetesJobs.enabled=true \
+  --set 'geoprocessing.kubernetesJobs.workerSecretKeys={ConnectionStrings__redis}' \
   --set-string config.env.Public__BaseUrl="http://$fullname" \
   --set geoprocessing.kubernetesJobs.workload.runtimeProfile="$runtime_profile" \
   --set geoprocessing.kubernetesJobs.image.repository="$worker_repository" \

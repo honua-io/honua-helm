@@ -1,8 +1,8 @@
 # Honua Helm Chart
 
-Deploys Honua Server on Kubernetes with optional Bitnami PostgreSQL and Redis subcharts.
+Deploys Honua Server on Kubernetes with an optional chart-managed PostGIS database or Bitnami PostgreSQL subchart.
 
-> **Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS, ElastiCache, and Console in S3/CloudFront.
+> **Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS and Console in S3/CloudFront.
 
 - Publish target: `oci://ghcr.io/honua-io/charts/honua`
 - GitHub Releases: <https://github.com/honua-io/honua-helm/releases>
@@ -31,8 +31,7 @@ The chart enforces its values contract at render time, so the install above sets
 all required secrets: `HONUA_ADMIN_PASSWORD` must be at least 16 characters with
 upper/lower/digit/special, and `Security__ConnectionEncryption__MasterKey` must
 be at least 32 characters. `ASPNETCORE_ENVIRONMENT=Development` keeps this a
-minimal evaluation install; non-development deployments additionally require
-`ConnectionStrings__redis`. For production, install from `values-prod.yaml` with
+minimal evaluation install. For production, install from `values-prod.yaml` with
 a pinned image (see [Production example](#production-example)).
 
 Published chart cuts pin `image.tag` to a concrete `vX.Y.Z-aot` server release;
@@ -48,7 +47,7 @@ helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua --version X.Y.Z
 ```
 
 Value keys under `image`, `service`, `ingress`, `config.env`, `secret.env`,
-`postgresql`, and `redis` are stable within a chart major version. Operators
+and `postgresql` are stable within a chart major version. Operators
 upgrading from in-monorepo deployments do not need value migrations within
 chart 0.x — see [`docs/MIGRATION.md`](https://github.com/honua-io/honua-helm/blob/trunk/docs/MIGRATION.md). The
 operator-ready values contract that formalizes this guarantee is tracked in
@@ -73,13 +72,13 @@ helm test honua
 ```
 
 The development overlay pins the 2026.1 candidate server image by digest and
-starts a chart-managed PostGIS database (pgrouting, pinned by digest) plus
-Redis. `secret.generateCredentials` fills the admin password, connection
+starts a chart-managed PostGIS database (pgrouting, pinned by digest).
+`secret.generateCredentials` fills the admin password, connection
 master key, and database passwords at install time and reuses the live Secret
 on upgrade. Do not point this overlay at production data.
 
 For direct installs with external data services, the default preflight hook
-checks the configured PostgreSQL/PostGIS and Redis hosts before the Deployment
+checks the configured PostgreSQL/PostGIS host before the Deployment
 is applied.
 
 `helm dependency build` uses the committed `Chart.lock`, matching CI and release packaging.
@@ -99,7 +98,7 @@ Environment overlays are provided for common release lanes:
 
 | Overlay | Purpose |
 |---------|---------|
-| `values-dev.yaml` | Local and ephemeral development installs with bundled PostgreSQL and Redis dependencies. |
+| `values-dev.yaml` | Local and ephemeral development installs with a chart-managed PostGIS database. |
 | `values-stage.yaml` | Staging validation with existing-secret mode, ingress, observability, and OpenTelemetry. Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled); opt into MultiNode for autoscaled HA. |
 | `values-prod.yaml` | Customer-operated production posture with existing-secret mode, ingress, observability, and OpenTelemetry. Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled); opt into MultiNode for autoscaled HA. |
 
@@ -143,8 +142,8 @@ resources:
 # HPA disabled) and are consistent out of the box. To run autoscaled HA, opt into
 # MultiNode here. The chart fails at render time if autoscaling is enabled while
 # Deployment__Mode is SingleInstance, so these settings must change together.
-# MultiNode additionally requires ConnectionStrings__redis (runtime Secret) and a
-# shared cloud FileStorage:Provider of AwsS3 or AzureBlob (Local is rejected).
+# MultiNode additionally requires a shared cloud FileStorage:Provider of AwsS3
+# or AzureBlob (Local is rejected).
 config:
   env:
     Deployment__Mode: "MultiNode"
@@ -205,7 +204,6 @@ The `honua-prod-runtime` Secret must contain:
 - `HONUA_ADMIN_PASSWORD` with at least 16 characters, including uppercase,
   lowercase, digit, and special characters
 - `Security__ConnectionEncryption__MasterKey` with at least 32 characters
-- `ConnectionStrings__redis` for non-development deployments
 
 ```bash
 helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -227,9 +225,8 @@ leaves `/docker-entrypoint-initdb.d` empty, so the chart mounts a first-init
 script that creates the `postgis`, `postgis_topology`, and `pgrouting`
 extensions before PostgreSQL listens. The chart derives
 `ConnectionStrings__DefaultConnection` when you do not set one. Preflight skips the database TCP check on the first install
-because the pre-install hook runs before the PostGIS pod exists. Redis in this
-overlay uses an emptyDir (`redis.persistence.enabled=false`) so a kind cluster
-does not need a StorageClass. The database pod does the same.
+because the pre-install hook runs before the PostGIS pod exists. The database
+pod uses an emptyDir so a kind cluster does not need a StorageClass.
 
 ## PostgreSQL subchart (not migration-capable)
 
@@ -244,10 +241,7 @@ helm upgrade --install honua honua \
   --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
 ```
 
-The dev-only PostgreSQL subchart example runs in `Development`. Production
-SingleInstance deployments are also legitimately Redis-free. MultiNode
-deployments must enable chart-managed Redis (below) or supply
-`secret.env.ConnectionStrings__redis`.
+The dev-only PostgreSQL subchart example runs in `Development`.
 
 When `postgresql.enabled=true`, `postgresql.auth.username`,
 `postgresql.auth.password`, and `postgresql.auth.database` are required. In
@@ -257,37 +251,6 @@ During the initial install with that auto-generated connection string, preflight
 skips PostgreSQL TCP reachability because Helm pre-install hooks run before
 subchart Services and Pods are created. Pre-upgrade hooks check the existing
 PostgreSQL endpoint.
-
-## Optional chart-managed Redis
-
-```bash
-helm upgrade --install honua honua \
-  --set redis.enabled=true \
-  --set redis.auth.enabled=true \
-  --set redis.auth.password="change-me-redis" \
-  --set secret.env.ConnectionStrings__DefaultConnection="Host=postgis.internal;Database=honua;Username=honua;Password=<secret>;SSL Mode=Require" \
-  --set secret.env.HONUA_ADMIN_PASSWORD="ExampleAdminPassword1!" \
-  --set secret.env.Security__ConnectionEncryption__MasterKey="example-connection-encryption-master-key"
-```
-
-When `redis.enabled=true`, `redis.auth.enabled` must remain true and
-`redis.auth.password` must be nonempty, even with an explicit client connection
-string, unless `secret.generateCredentials` fills an empty password for a
-development install. Delimiter-containing passwords require both the server password and an
-explicit, correctly escaped client connection string. In
-chart-managed-secret mode, the chart auto-populates `ConnectionStrings__redis`
-from `redis.auth.password` unless you set `secret.env.ConnectionStrings__redis`
-yourself. Non-development deployments require Redis-backed durable
-feature-change event storage, so existing-secret mode must provide the runtime
-environment key through the named Secret or `extraEnvFrom`; the chart does not
-create it.
-
-Redis stores its append-only data on an 8Gi ReadWriteOnce PVC mounted at `/data`.
-Set `redis.persistence.size` and `redis.persistence.storageClass` before installing
-(empty storage class uses the cluster default). Pod replacement and image upgrades
-reuse the claim; password changes roll the Redis pod. This single-node deployment
-has downtime during restarts. Migrating from the former Bitnami subchart creates a
-new claim: back up and restore the old Redis data separately before serving traffic.
 
 ## AOT vs JIT images
 
@@ -443,7 +406,7 @@ is the source of truth. This is how it maps onto the chart.
    `GET /api/v1/admin/deploy/preflight?includeDiagnostics=true` (admin
    `X-API-Key`). Proceed only when `readyForCoordinatedDeploy` is `true` and
    no unexpected migrations are pending. The chart's preflight hook is
-   separate: it checks secrets, PostgreSQL/Redis reachability and the
+   separate: it checks secrets, PostgreSQL reachability and the
    registry. It does not inspect migrations.
 2. **Back up the database.** The chart does not own backups. Take one before
    every upgrade. A restore is the only way back from a contract migration.
@@ -622,8 +585,8 @@ Job batch compute backend (`KubernetesJobBatchComputeBackend`, backend id
 Managed Jobs run the server image in its worker-only profile. Native Jobs run
 the heavy worker image with `workload.runtimeProfile: native`. The server stamps
 `HONUA_OPERATION_ID`, `HONUA_EXECUTION_ATTEMPT` and the other launch variables
-on the Job. The worker records the result in the shared Redis job store and
-exits.
+on the Job. The worker records the result in the server's PostgreSQL job store
+and exits.
 
 ```yaml
 geoprocessing:
@@ -643,11 +606,8 @@ geoprocessing:
 | Role + RoleBinding `<fullname>-gp-kubernetes-jobs` | In the Job namespace, for the server's service account: `batch/jobs` create/get/list/watch/delete, `pods` get/list/watch, `pods/log` get. Nothing cluster-wide, no Secrets. |
 | Hook Job `<fullname>-gp-rbac-check` | Runs on `post-install`, `post-upgrade` and `helm test`, as the server's service account. It checks each permission above with a SelfSubjectAccessReview. A missing permission fails the release with `HONUA_GP_K8S_RBAC_MISSING`. |
 
-The server Deployment also changes in two ways:
-
-- It mounts its service account token. The backend discovers the API server,
-  token and CA in-cluster.
-- It treats Redis as required, so the preflight hook checks Redis.
+The server Deployment also mounts its service account token. The backend
+discovers the API server, token and CA in-cluster.
 
 ### Values
 
@@ -693,7 +653,8 @@ compatible non-local workload, which can be AWS Batch.
 ### Local harness
 
 `scripts/gp-kubernetes-jobs-smoke.sh` runs against a disposable kind cluster with
-PostGIS and Redis in its namespace (the CI workflow provisions these). It
+PostGIS in its namespace (the CI workflow provisions it, plus the Redis the
+pinned, older server image still reports through). It
 requires a completed Job, successful OGC status, a numerical output oracle,
 Secret-backed configuration, and a failing RBAC check after permission removal.
 It generates and cleans up an ephemeral Production key-ring certificate.
@@ -707,9 +668,8 @@ the assigned-operation entry point delivered by honua-server#6065.
 ### Worker environment and secrets
 
 A worker composes the same services as the server, so it needs the same
-database, the Redis job store and the connection-encryption master key.
-Redis-backed non-development deployments also need the operation key-ring
-certificate. It does not serve HTTP, authenticate admins or verify the audit
+database and the connection-encryption master key. Outside Development and
+Test it also needs the operation key-ring certificate. It does not serve HTTP, authenticate admins or verify the audit
 chain, so it does not need the admin password, the audit-chain key or the OIDC
 signing keys.
 
@@ -723,7 +683,7 @@ them either.
 
 The worker credentials are:
 
-- `ConnectionStrings__DefaultConnection` and `ConnectionStrings__redis`;
+- `ConnectionStrings__DefaultConnection`;
 - `Security__ConnectionEncryption__*` (the master key);
 - `Operations__SecretChannel__*` (the operation key ring);
 - `Licensing__*` and `FileStorage__*`;
@@ -741,14 +701,14 @@ import it instead of the server's sources:
 | Object | Contents |
 | --- | --- |
 | ConfigMap `<fullname>-gp-worker-env` (with `config.create`) | `config.env`, minus `ASPNETCORE_URLS`, `ControlPlane__*` and every credential that is not a worker credential |
-| Secret `<fullname>-gp-worker-env` (with `secret.create`) | Only the worker credentials from the runtime Secret, including the chart-derived PostgreSQL and Redis connection strings |
+| Secret `<fullname>-gp-worker-env` (with `secret.create`) | Only the worker credentials from the runtime Secret, including the chart-derived PostgreSQL connection string |
 
 The runtime Secret is a credential store, so its entries are allowlisted
 rather than filtered.
 
 With an existing runtime Secret (`secret.create: false`, `secret.name`), the
 chart cannot read or filter it. The worker takes
-`ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis`,
+`ConnectionStrings__DefaultConnection`,
 `Security__ConnectionEncryption__MasterKey` and each `workerSecretKeys` name
 from it by key, as `k8s.env.<NAME>.secretKeyRef` workload parameters. Those keys
 must exist in the Secret, or the Job pod cannot start. A key the worker already
@@ -801,7 +761,7 @@ The kubelet resolves the values when the pod starts. The values never appear
 in the Job object, the durable job record or the server logs. This covers:
 
 - a chart-managed Secret with plain credentials;
-- the chart-derived PostgreSQL and Redis connection strings;
+- the chart-derived PostgreSQL connection string;
 - an existing Secret, such as the release harness's `honua-runtime`, read by
   key in the `worker` scope or whole in the `server` scope.
 
@@ -830,8 +790,8 @@ An empty `workerEnv` value renders an empty literal, which clears that
 variable in the worker.
 
 **With an older server image:** an image older than `bebaada00` ignores
-`DefaultEnvFrom*`, and its workers start with no database, Redis or
-master-key settings. The chart cannot tell the server version from an image
+`DefaultEnvFrom*`, and its workers start with no database or master-key
+settings. The chart cannot tell the server version from an image
 digest, so it does not detect this case. The install NOTES state the
 requirement. For an older server, set `envFromServer: false`.
 
@@ -881,7 +841,7 @@ The chart refuses to render when:
   mode the chart checks `config.env` and the chart-managed `secret.env`. It
   cannot see inside an existing Secret.
 - In legacy mode only: the chart manages the Secret and the worker lacks
-  `ConnectionStrings__DefaultConnection`, `ConnectionStrings__redis` or
+  `ConnectionStrings__DefaultConnection` or
   `Security__ConnectionEncryption__MasterKey`. With an existing Secret, the
   install NOTES print a warning instead.
 
@@ -891,24 +851,6 @@ reject them in `workerEnv`. Keep them out of imported Secrets too.
 The preflight hook accepts cloud secret references. It checks that they are
 present but skips the TCP and complexity checks, because it cannot resolve
 them.
-
-### Redis
-
-GP on Kubernetes Jobs requires Redis. Redis is the durable job store, and the
-worker refuses to start without it. When the backend is enabled, the chart
-requires `ConnectionStrings__redis` for the server, as it does for MultiNode.
-In envFrom mode, the worker reads the same `ConnectionStrings__redis` as the
-server. The source can be any of these:
-
-- **External Redis** (ElastiCache, MemoryDB, Azure Cache): put the connection
-  string in the runtime Secret. TLS and auth go in the string, for example
-  `<primary endpoint>:6379,password=<token>,ssl=true`.
-- **A cloud secret reference** to that connection string.
-- **Chart-managed Redis** (`redis.enabled`): the chart derives the connection
-  string into its Secret.
-
-In legacy mode, the worker needs a reference in
-`workerEnv.ConnectionStrings__redis` unless `secret.env` already holds one.
 
 ### EKS: mapping the honua-iac `aws-eks` outputs
 
@@ -945,7 +887,6 @@ secret:
     ConnectionStrings__DefaultConnection: "aws:secretsmanager:<db_connection arn>"
     HONUA_ADMIN_PASSWORD: "aws:secretsmanager:<admin_password arn>"
     Security__ConnectionEncryption__MasterKey: "aws:secretsmanager:<master_key arn>"
-    ConnectionStrings__redis: "aws:secretsmanager:<redis_connection arn>"
     Operations__SecretChannel__KeyRingCertificatePkcs12: "aws:secretsmanager:<key ring arn>"
 geoprocessing:
   kubernetesJobs:
@@ -957,9 +898,6 @@ geoprocessing:
 ```
 
 `honua/ci-values/gp-kubernetes-jobs.yaml` is a rendered example of this shape.
-
-A Redis-off cell cannot run GP on Kubernetes Jobs, because the worker has no
-job store. Leave `geoprocessing.kubernetesJobs.enabled=false` there.
 
 ### Verifying
 
@@ -973,9 +911,9 @@ labels.
 
 ## Preflight hook
 
-`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, Redis TCP reachability for non-development deployments, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
+`preflight.enabled=true` renders Helm `pre-install,pre-upgrade` hooks that validate required secret keys, PostgreSQL TCP reachability, and target image registry reachability before the Deployment is applied. The default timeout is 5 seconds per reachability check. The kubelet remains authoritative for full image pull success, especially for private registries.
 
-For the dev-only PostgreSQL subchart or chart-managed Redis, the initial install preflight validates required secret keys and registry reachability but defers TCP reachability only when the chart auto-generates the subchart connection string. Redis pre-upgrade hooks defer the derived-endpoint probe if the new Service does not yet exist, including migration from the former Bitnami dependency. Once the Service exists, upgrades check it. Supplied connection strings are always checked.
+For the dev-only PostgreSQL subchart or chart-managed PostGIS, the initial install preflight validates required secret keys and registry reachability but defers TCP reachability only when the chart auto-generates the connection string. Supplied connection strings are always checked.
 
 Disable only when an external controller or restricted network policy prevents the hook from reaching the database or registry:
 
@@ -1054,8 +992,7 @@ secret:
 
 You may also set `secret.create=false` and provide only `extraEnvFrom` sources.
 In that mode the referenced sources must expose `ConnectionStrings__DefaultConnection`,
-`HONUA_ADMIN_PASSWORD`, `Security__ConnectionEncryption__MasterKey`, and
-`ConnectionStrings__redis` for non-development deployments.
+`HONUA_ADMIN_PASSWORD` and `Security__ConnectionEncryption__MasterKey`.
 
 For example, another controller can own the Secret while the chart consumes it
 through `extraEnvFrom`:
@@ -1073,8 +1010,7 @@ and `extraEnvFrom` sources and fails if `ConnectionStrings__DefaultConnection`
 or `HONUA_ADMIN_PASSWORD` are missing, if `HONUA_ADMIN_PASSWORD` does not meet
 production strength rules, or if
 `Security__ConnectionEncryption__MasterKey` is missing or shorter than 32
-characters. For non-development deployments, it also fails if
-`ConnectionStrings__redis` is missing or the Redis endpoint is unreachable.
+characters.
 
 ## Key values
 
@@ -1101,16 +1037,16 @@ characters. For non-development deployments, it also fails if
 | `strategy.rollingUpdate` | `maxSurge: 0`, `maxUnavailable: 1` | RollingUpdate settings used whenever the effective strategy is `RollingUpdate`; both values cannot be zero. |
 | `preflight.enabled` | true | Enable pre-install/pre-upgrade validation hook. |
 | `preflight.timeoutSeconds` | 5 | Timeout for database and registry reachability checks. |
-| `preflight.retries` | 3 | Attempts per reachability probe (database/Redis/registry) before the hook fails. The hook runs with `backoffLimit: 0`, so in-script retries absorb transient DNS/egress/registry blips. Set to 1 to disable. |
+| `preflight.retries` | 3 | Attempts per reachability probe (database/registry) before the hook fails. The hook runs with `backoffLimit: 0`, so in-script retries absorb transient DNS/egress/registry blips. Set to 1 to disable. |
 | `preflight.retryDelaySeconds` | 3 | Delay between preflight reachability probe attempts. |
 | `preflight.registryCheck.enabled` | true | Check the target image registry `/v2/` endpoint before apply. |
 | `terminationGracePeriodSeconds` | 60 | Pod shutdown grace period for lock release and clean termination. |
-| `lifecycle` | `{}` | Container lifecycle hooks passed through verbatim. For zero-downtime `RollingUpdate` / HPA scale-down, set a `preStop` sleep (e.g. `preStop.exec.command: ["/bin/sh","-c","sleep 5"]`) so Service endpoint removal propagates to kube-proxy/ingress before SIGTERM; keep it shorter than `terminationGracePeriodSeconds`. Left empty under the default `Recreate` strategy, where a preStop delay only slows termination. |
+| `lifecycle` | `{}` | Container lifecycle hooks passed through verbatim. For zero-downtime `RollingUpdate` / HPA scale-down, set a `preStop` sleep (e.g. `preStop.sleep.seconds: 5`, Kubernetes 1.30 or later; the server image has no shell for an `exec` hook) so Service endpoint removal propagates to kube-proxy/ingress before SIGTERM; keep it shorter than `terminationGracePeriodSeconds`. Left empty under the default `Recreate` strategy, where a preStop delay only slows termination. |
 | `tmpVolume.enabled` | true | Mount a writable `/tmp` emptyDir. Required because `readOnlyRootFilesystem` is true and the server writes temp files; disable only if the image never writes to disk. |
 | `tmpVolume.sizeLimit` | `""` | Optional `emptyDir` size cap for `/tmp` (e.g. `1Gi`). |
 | `affinity` | `{}` | Pod affinity rules. When empty, the chart applies a soft pod anti-affinity spreading replicas across nodes for multi-replica workloads (`autoscaling.enabled` or `replicaCount > 1`). |
 | `resources` | requests `250m`/`512Mi`, limits `2`/`2Gi` | CPU/memory requests and limits. Tune for production workloads. |
-| `autoscaling.enabled` | false | Enable HPA. Requires `config.env.Deployment__Mode=MultiNode` (plus Redis and a shared cloud `FileStorage:Provider`); render fails if enabled while mode is `SingleInstance`. |
+| `autoscaling.enabled` | false | Enable HPA. Requires `config.env.Deployment__Mode=MultiNode` (plus a shared cloud `FileStorage:Provider`); render fails if enabled while mode is `SingleInstance`. |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU utilization threshold for scale decisions. |
 | `autoscaling.targetMemoryUtilizationPercentage` | `0` | Memory utilization threshold. `0` disables memory-based scaling (the default), because the .NET server-GC heap rarely releases committed memory and a memory target tends to peg replicas at `maxReplicas`. Opt in (`> 0`) only after confirming memory tracks load. |
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |
@@ -1128,9 +1064,6 @@ characters. For non-development deployments, it also fails if
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
- | `redis.enabled` | false | Enable chart-managed Redis (Docker Official `redis` image). Requires `redis.auth.enabled=true`; chart-managed secrets can derive the Redis connection string from `redis.auth.password`. Non-development installs need either this or an external `ConnectionStrings__redis`. |
- | `redis.podSecurityContext` | `fsGroup: 1000`, `fsGroupChangePolicy: OnRootMismatch`, RuntimeDefault seccomp | Pod securityContext for the chart-managed Redis pod. `fsGroup` makes the `/data` PVC writable by the redis user. |
- | `redis.securityContext` | non-root uid 999 / gid 1000, no privilege escalation, read-only root filesystem, RuntimeDefault seccomp, drop `ALL` | Container securityContext for Redis. Defaults match the `redis:*-alpine` image's redis user; Debian-based tags use gid 999. The password is loaded from a Secret-mounted `redis.conf` and probes authenticate with `REDISCLI_AUTH`, so it never appears in a process command line. |
  | `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
  | `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
  | `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |

@@ -114,7 +114,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- /* PDB spec.selector is immutable. New releases select only server pods so
-       preflight Jobs and chart-managed Redis/PostGIS are not disruption-budgeted.
+       preflight Jobs and chart-managed PostGIS are not disruption-budgeted.
        An existing PDB keeps the selector it already has. */ -}}
 {{- define "honua.pdbSelectsServerComponent" -}}
 {{- $live := lookup "policy/v1" "PodDisruptionBudget" .Release.Namespace (include "honua.fullname" .) -}}
@@ -168,15 +168,6 @@ false
 {{- default "Production" (get $configEnv "ASPNETCORE_ENVIRONMENT") -}}
 {{- end -}}
 
-{{- define "honua.requiresRedisConnection" -}}
-{{- $mode := lower (trim (default "SingleInstance" (get (.Values.config.env | default dict) "Deployment__Mode"))) -}}
-{{- if or .Values.redis.enabled (eq $mode "multinode") (eq (include "honua.gpJobs.enabled" .) "true") -}}
-true
-{{- else -}}
-false
-{{- end -}}
-{{- end -}}
-
 {{- define "honua.usesChartManagedPostgresqlConnection" -}}
 {{- $secretValues := .Values.secret | default dict -}}
 {{- $secretEnv := get $secretValues "env" | default dict -}}
@@ -184,17 +175,6 @@ false
 {{- $postgis := .Values.postgis | default dict -}}
 {{- $managed := or .Values.postgresql.enabled (dig "enabled" false $postgis) -}}
 {{- if and $managed .Values.secret.create (not $conn) -}}
-true
-{{- else -}}
-false
-{{- end -}}
-{{- end -}}
-
-{{- define "honua.usesChartManagedRedisConnection" -}}
-{{- $secretValues := .Values.secret | default dict -}}
-{{- $secretEnv := get $secretValues "env" | default dict -}}
-{{- $conn := trim (default "" (get $secretEnv "ConnectionStrings__redis")) -}}
-{{- if and .Values.redis.enabled .Values.secret.create (not $conn) -}}
 true
 {{- else -}}
 false
@@ -220,19 +200,6 @@ false
        that first replaces Bitnami. helm template has no cluster, so that
        upgrade render skips; a live upgrade with the Service present checks. */ -}}
 {{- if and $managed (or .Release.IsInstall (and $postgisOn (not (lookup "v1" "Service" .Release.Namespace $host)))) -}}
-false
-{{- else -}}
-true
-{{- end -}}
-{{- end -}}
-
-{{- define "honua.preflightRedisRequired" -}}
-{{- include "honua.requiresRedisConnection" . -}}
-{{- end -}}
-
-{{- define "honua.preflightRedisCheck" -}}
-{{- $managed := eq (include "honua.usesChartManagedRedisConnection" .) "true" -}}
-{{- if and $managed (or .Release.IsInstall (not (lookup "v1" "Service" .Release.Namespace (include "honua.redisHost" .)))) -}}
 false
 {{- else -}}
 true
@@ -405,17 +372,6 @@ true
 {{- else if not (hasKey $data "ConnectionStrings__DefaultConnection") }}
 {{- required "secret.env.ConnectionStrings__DefaultConnection is required when postgresql.enabled and postgis.enabled are false. Set it to your PostgreSQL connection string." .Values.secret.env.ConnectionStrings__DefaultConnection }}
 {{- end }}
-{{- if and (not (hasKey $data "ConnectionStrings__redis")) .Values.redis.enabled }}
-{{- $redisHost := include "honua.redisHost" . }}
-{{- $redisPort := include "honua.redisPort" . }}
-{{- if not .Values.redis.auth.enabled }}
-{{- fail "redis.auth.enabled must be true when redis.enabled is true unless secret.env.ConnectionStrings__redis is explicitly provided." }}
-{{- end }}
-{{- $redisPassword := include "honua.redisPassword" . }}
-{{- $_ := set $data "ConnectionStrings__redis" (printf "%s:%s,password=%s" $redisHost $redisPort $redisPassword) }}
-{{- else if and (not (hasKey $data "ConnectionStrings__redis")) (eq (include "honua.requiresRedisConnection" .) "true") }}
-{{- required "secret.env.ConnectionStrings__redis is required for non-development Honua deployments unless redis.enabled derives the connection string." .Values.secret.env.ConnectionStrings__redis }}
-{{- end }}
 {{- if not (hasKey $data "HONUA_ADMIN_PASSWORD") }}
 {{- $_ := set $data "HONUA_ADMIN_PASSWORD" (include "honua.adminPassword" .) }}
 {{- end }}
@@ -465,14 +421,6 @@ true
 {{- $primaryPortsValues := get $primaryServiceValues "ports" | default dict -}}
 {{- default 5432 (get $primaryPortsValues "postgresql") -}}
 {{- end -}}
-{{- end -}}
-
-{{- define "honua.redisHost" -}}
-{{- printf "%s-redis" (include "honua.fullname" . | trunc 57 | trimSuffix "-") -}}
-{{- end -}}
-
-{{- define "honua.redisPort" -}}
-6379
 {{- end -}}
 
 {{- /* Stable for one render. Reused from the live Secret on upgrade so a
@@ -528,27 +476,6 @@ true
 {{- end -}}
 {{- end -}}
 
-{{- define "honua.redisPassword" -}}
-{{- if not (hasKey .Values "_honuaResolved") -}}
-{{- $_ := set .Values "_honuaResolved" dict -}}
-{{- end -}}
-{{- if hasKey (index .Values "_honuaResolved") "redisPassword" -}}
-{{- index (index .Values "_honuaResolved") "redisPassword" -}}
-{{- else -}}
-{{- $value := toString (default "" .Values.redis.auth.password) -}}
-{{- if not $value -}}
-{{- if not .Values.secret.generateCredentials -}}
-{{- fail "redis.auth.password is required when redis.enabled is true unless secret.generateCredentials is true or secret.env.ConnectionStrings__redis is set." -}}
-{{- end -}}
-{{- $value = include "honua.lookupSecretKey" (dict "namespace" .Release.Namespace "name" (include "honua.redisHost" .) "key" "password") -}}
-{{- if not $value -}}
-{{- $value = printf "Aa1%s" (randAlphaNum 32) -}}
-{{- end -}}
-{{- end -}}
-{{- $_ := set (index .Values "_honuaResolved") "redisPassword" $value -}}
-{{- $value -}}
-{{- end -}}
-{{- end -}}
 
 {{- define "honua.postgisHost" -}}
 {{- printf "%s-postgis" (include "honua.fullname" . | trunc 55 | trimSuffix "-") -}}
@@ -692,7 +619,7 @@ true
 {{- /* Effective worker environment (name => value) as JSON. Order of
        precedence, lowest first: config.env, licensing values, reference-valued
        (or, with allowInlineWorkerSecrets, all) secret.env entries and the
-       chart-derived Redis/PostgreSQL connection strings, then workerEnv. */ -}}
+       chart-derived PostgreSQL connection string, then workerEnv. */ -}}
 {{- /* envFrom mode (honua-server >= bebaada00, server#5796): the server
        renders ControlPlane:Kubernetes:DefaultEnvFrom{Secrets,ConfigMaps} as
        container envFrom on every Job, so workers read the same Secret and
@@ -707,7 +634,7 @@ true
 
 {{- /* Worker environment scope (honua-helm#110). "worker" (the default) gives
        each Job only the settings a worker host needs: the server's
-       non-credential configuration plus the database, Redis job store,
+       non-credential configuration plus the database,
        connection-encryption master key, operation key ring, licensing and
        file storage credentials. Server-only credentials (the admin password,
        the audit-chain key, OIDC signing keys, SMTP and API keys) never reach
@@ -746,12 +673,12 @@ true
 {{- toJson $keys -}}
 {{- end -}}
 
-{{- /* A credential a worker host needs: the database, the Redis job store,
+{{- /* A credential a worker host needs: the database,
        the connection-encryption master key, the operation key ring,
        licensing, file storage, or a name listed in workerSecretKeys.
        Called with (dict "name" <key> "extra" <workerSecretKeys>). */ -}}
 {{- define "honua.gpJobs.isWorkerCredential" -}}
-{{- if or (has .name .extra) (regexMatch "^(ConnectionStrings__(DefaultConnection|redis)|(Security__ConnectionEncryption|Operations__SecretChannel|Licensing|FileStorage)__[A-Za-z0-9_.-]+)$" .name) -}}true{{- else -}}false{{- end -}}
+{{- if or (has .name .extra) (regexMatch "^(ConnectionStrings__DefaultConnection|(Security__ConnectionEncryption|Operations__SecretChannel|Licensing|FileStorage)__[A-Za-z0-9_.-]+)$" .name) -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
 {{- /* A setting that carries or points at a credential: a sensitive name
@@ -784,7 +711,7 @@ true
 
 {{- /* Scoped worker Secret data (name => plain value): only the worker
        credentials from the chart-managed runtime Secret, including the
-       chart-derived PostgreSQL and Redis connection strings. The runtime
+       chart-derived PostgreSQL connection string. The runtime
        Secret is the credential store, so this is a strict allowlist. */ -}}
 {{- define "honua.gpJobs.workerSecretData" -}}
 {{- $extra := include "honua.gpJobs.workerSecretKeys" . | fromJsonArray -}}
@@ -804,8 +731,8 @@ true
 
 {{- /* Scoped mode with an existing runtime Secret (secret.create=false): the
        chart cannot read or filter it, so each worker credential is taken by
-       key (secretKeyRef) instead of importing the whole Secret: the database,
-       Redis and master key, plus workerSecretKeys. A key the worker already
+       key (secretKeyRef) instead of importing the whole Secret: the database
+       and master key, plus workerSecretKeys. A key the worker already
        gets from the scoped ConfigMap or a workerEnv literal is skipped.
        Result: name => "<secret>:<key>". */ -}}
 {{- define "honua.gpJobs.workerSecretKeyRefs" -}}
@@ -816,7 +743,7 @@ true
 {{- if .Values.licensing.licenseSecretRef.name -}}
 {{- $_ := set $literals "Licensing__LicenseContent" "" -}}
 {{- end -}}
-{{- $keys := concat (list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey") (include "honua.gpJobs.workerSecretKeys" . | fromJsonArray) -}}
+{{- $keys := concat (list "ConnectionStrings__DefaultConnection" "Security__ConnectionEncryption__MasterKey") (include "honua.gpJobs.workerSecretKeys" . | fromJsonArray) -}}
 {{- range $key := $keys -}}
 {{- if and (not (hasKey $config $key)) (not (hasKey $literals $key)) -}}
 {{- $_ := set $refs $key (printf "%s:%s" $.Values.secret.name $key) -}}

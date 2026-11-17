@@ -5,8 +5,8 @@
 # depends on, while keeping the migration-safe Recreate strategy. This overlay
 # models the SingleInstance marketplace baseline, so it stays at one replica:
 # SingleInstance with more than one replica is rejected by the chart's HA guard
-# (multi-replica HA requires Deployment__Mode=MultiNode with shared Redis and a
-# cloud FileStorage provider). Pair with scripts/aks-smoke.sh, which overrides
+# (multi-replica HA requires Deployment__Mode=MultiNode with a shared cloud
+# FileStorage provider). Pair with scripts/aks-smoke.sh, which overrides
 # the image tag/digest and data-service endpoints for the live run.
 replicaCount: 1
 
@@ -49,7 +49,4 @@ secret:
   name: honua-aks-runtime
 
 postgresql:
-  enabled: false
-
-redis:
   enabled: false

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "description": "Values contract for the Honua Server Helm chart.",
-  "$comment": "This schema owns structural validation: types, enums, patterns, min/max, and the conditional rules in allOf (image tag XOR digest, digest pattern, pullPolicy-with-digest, RollingUpdate non-zero budget, autoscaling target presence, secret/redis/postgresql requirements). Cross-field render-time guards and operator-friendly failure messages live in templates/validations.yaml. Where a rule appears in both places it is enforced structurally here and explained there; keep the two aligned.",
+  "$comment": "This schema owns structural validation: types, enums, patterns, min/max, and the conditional rules in allOf (image tag XOR digest, digest pattern, pullPolicy-with-digest, RollingUpdate non-zero budget, autoscaling target presence, secret/postgresql requirements). Cross-field render-time guards and operator-friendly failure messages live in templates/validations.yaml. Where a rule appears in both places it is enforced structurally here and explained there; keep the two aligned.",
   "definitions": {
     "honuaBurnRateTier": {
       "type": "object",
@@ -807,7 +807,7 @@
         },
         "generateCredentials": {
           "type": "boolean",
-          "description": "Development only. Generate empty admin, master-key, PostGIS, and Redis credentials at install and reuse them from the live Secret on upgrade. Refused when ASPNETCORE_ENVIRONMENT is Production."
+          "description": "Development only. Generate empty admin, master-key, and PostGIS credentials at install and reuse them from the live Secret on upgrade. Refused when ASPNETCORE_ENVIRONMENT is Production."
         },
         "env": {
           "type": "object",
@@ -819,9 +819,6 @@
               "type": "string"
             },
             "Security__ConnectionEncryption__MasterKey": {
-              "type": "string"
-            },
-            "ConnectionStrings__redis": {
               "type": "string"
             }
           }
@@ -839,56 +836,6 @@
     },
     "extraVolumeMounts": {
       "type": "array"
-    },
-    "redis": {
-      "type": "object",
-      "description": "Optional chart-managed Redis settings using the Docker Official Image.",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "persistence": {
-          "type": "object",
-          "properties": {
-            "enabled": { "type": "boolean" },
-            "size": { "type": "string", "minLength": 1 },
-            "storageClass": { "type": "string" }
-          },
-          "required": ["size", "storageClass"]
-        },
-        "image": {
-          "type": "object",
-          "properties": {
-            "repository": { "type": "string", "minLength": 1 },
-            "tag": { "type": "string", "minLength": 1 },
-            "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
-            "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
-          },
-          "required": ["repository", "tag", "pullPolicy"]
-        },
-        "imagePullSecrets": { "type": "array" },
-        "maxmemory": { "type": "string" },
-        "resources": { "type": "object" },
-        "auth": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "password": {
-              "type": "string"
-            }
-          }
-        },
-        "podSecurityContext": {
-          "type": "object",
-          "description": "Pod securityContext for the chart-managed Redis pod."
-        },
-        "securityContext": {
-          "type": "object",
-          "description": "Container securityContext for the chart-managed Redis container."
-        }
-      }
     },
     "postgis": {
       "type": "object",
@@ -1135,159 +1082,6 @@
             "properties": {
               "extraEnvFrom": {
                 "minItems": 1
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "redis": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "const": true
-              }
-            },
-            "required": ["enabled"]
-          }
-        }
-      },
-      "then": {
-        "allOf": [
-          {
-            "properties": {
-              "redis": {
-                "type": "object",
-                "properties": {
-                  "auth": {
-                    "type": "object",
-                    "properties": {
-                      "enabled": { "const": true }
-                    },
-                    "required": ["enabled"]
-                  }
-                },
-                "required": ["auth"]
-              }
-            }
-          }
-        ],
-        "anyOf": [
-          {
-            "properties": {
-              "redis": {
-                "type": "object",
-                "properties": {
-                  "auth": {
-                    "type": "object",
-                    "properties": {
-                      "password": { "type": "string", "minLength": 1 }
-                    },
-                    "required": ["password"]
-                  }
-                }
-              }
-            }
-          },
-          {
-            "properties": {
-              "secret": {
-                "type": "object",
-                "properties": {
-                  "generateCredentials": { "const": true }
-                },
-                "required": ["generateCredentials"]
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "if": {
-        "allOf": [
-          {
-            "properties": {
-              "secret": {
-                "type": "object",
-                "properties": {
-                  "create": {
-                    "const": true
-                  }
-                },
-                "required": ["create"]
-              }
-            }
-          },
-          {
-            "properties": {
-              "redis": {
-                "type": "object",
-                "properties": {
-                  "enabled": {
-                    "const": true
-                  }
-                },
-                "required": ["enabled"]
-              }
-            }
-          }
-        ]
-      },
-      "then": {
-        "anyOf": [
-          {
-            "properties": {
-              "secret": {
-                "type": "object",
-                "properties": {
-                  "env": {
-                    "type": "object",
-                    "properties": {
-                      "ConnectionStrings__redis": {
-                        "minLength": 1
-                      }
-                    },
-                    "required": ["ConnectionStrings__redis"]
-                  }
-                },
-                "required": ["env"]
-              }
-            }
-          },
-          {
-            "properties": {
-              "redis": {
-                "type": "object",
-                "properties": {
-                  "auth": {
-                    "type": "object",
-                    "properties": {
-                      "enabled": {
-                        "const": true
-                      },
-                      "password": {
-                        "minLength": 1
-                      }
-                    },
-                    "required": ["enabled", "password"]
-                  }
-                },
-                "required": ["auth"]
-              }
-            }
-          },
-          {
-            "properties": {
-              "secret": {
-                "type": "object",
-                "properties": {
-                  "generateCredentials": { "const": true }
-                },
-                "required": ["generateCredentials"]
               }
             }
           }

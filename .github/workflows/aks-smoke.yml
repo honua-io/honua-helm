@@ -160,7 +160,6 @@ jobs:
       - name: Run live AKS smoke (install + upgrade + rollback)
         env:
           HONUA_DB_CONNECTION: ${{ secrets.HONUA_DB_CONNECTION }}
-          HONUA_REDIS_CONNECTION: ${{ secrets.HONUA_REDIS_CONNECTION }}
           HONUA_ADMIN_PASSWORD: ${{ secrets.HONUA_ADMIN_PASSWORD }}
           HONUA_MASTER_KEY: ${{ secrets.HONUA_MASTER_KEY }}
           # Pass operator inputs through env so the Actions template engine does

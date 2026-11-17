@@ -152,8 +152,8 @@ data:
 {{- if .Values.secret.create }}
 {{- $workerSecret := include "honua.gpJobs.workerSecretData" . | fromJson }}
 ---
-# The GP worker's credentials (honua-helm#110): only the database, Redis job
-# store, connection-encryption master key, operation key ring, licensing and
+# The GP worker's credentials (honua-helm#110): only the database,
+# connection-encryption master key, operation key ring, licensing and
 # file storage entries of the runtime Secret, plus workerSecretKeys.
 apiVersion: v1
 kind: Secret

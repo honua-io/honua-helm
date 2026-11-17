@@ -5,7 +5,7 @@
     * values.schema.json owns structural validation -- types, enums, patterns,
       min/max, and the JSON-Schema conditional rules (image tag XOR digest,
       digest pattern, pullPolicy-with-digest, RollingUpdate non-zero budget,
-      autoscaling target presence, secret/redis/postgresql requirements). It is
+      autoscaling target presence, secret/postgresql requirements). It is
       the first gate and produces schema-level errors.
     * This file owns cross-field render-time checks that JSON Schema cannot
       express well, plus operator-friendly failure messages. Where a rule is
@@ -72,7 +72,7 @@
 {{- $deploymentMode := trim (default "SingleInstance" (dig "env" "Deployment__Mode" "SingleInstance" .Values.config)) -}}
 {{- $multiReplica := or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) -}}
 {{- if and $multiReplica (eq $deploymentMode "SingleInstance") -}}
-{{- fail (printf "Running more than one replica (autoscaling.enabled=%v, replicaCount=%v) is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either keep SingleInstance with autoscaling.enabled=false and replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode and supplying ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." .Values.autoscaling.enabled .Values.replicaCount) -}}
+{{- fail (printf "Running more than one replica (autoscaling.enabled=%v, replicaCount=%v) is incompatible with config.env.Deployment__Mode=SingleInstance: a single-instance server does not coordinate multiple replicas. Either keep SingleInstance with autoscaling.enabled=false and replicaCount: 1, or switch to horizontally scaled HA by setting config.env.Deployment__Mode=MultiNode with a shared cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in MultiNode)." .Values.autoscaling.enabled .Values.replicaCount) -}}
 {{- end -}}
 
 {{- /* The container port and all three health probes follow service.targetPort
@@ -90,7 +90,12 @@
 {{- end -}}
 {{- end -}}
 
-{{- /* When the chart derives the PostgreSQL/Redis connection string from a
+{{- $redis := .Values.redis -}}
+{{- if or (and (kindIs "map" $redis) (eq (toString (get $redis "enabled")) "true")) (eq (toString $redis) "true") -}}
+{{- fail "redis.enabled is no longer supported: Honua Server does not use Redis, so the chart no longer deploys one. Remove the redis block from your values (or pass --set redis.enabled=false with --reuse-values); the upgrade then deletes the chart's Redis Deployment, Service, Secret and claim." -}}
+{{- end -}}
+
+{{- /* When the chart derives the PostgreSQL connection string from a
        subchart password, the password is interpolated into a delimiter-sensitive
        connection string. Reject the delimiter/keyword characters that would
        corrupt it; operators with such passwords must set the connection string
@@ -116,19 +121,13 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- range $image := list .Values.preflight.image .Values.preflight.licenseStatusImage .Values.redis.image (dig "image" dict $postgis) -}}
+{{- range $image := list .Values.preflight.image .Values.preflight.licenseStatusImage (dig "image" dict $postgis) -}}
 {{- if $image -}}
 {{- $digest := trim (default "" (get $image "digest")) -}}
 {{- $policy := default "" (get $image "pullPolicy") -}}
 {{- if and $digest (not (or (eq $policy "IfNotPresent") (eq $policy "Never"))) -}}
 {{- fail "pullPolicy must be IfNotPresent or Never when an image digest is set." -}}
 {{- end -}}
-{{- end -}}
-{{- end -}}
-{{- if eq (include "honua.usesChartManagedRedisConnection" .) "true" -}}
-{{- $redisPassword := toString (default "" .Values.redis.auth.password) -}}
-{{- if regexMatch "[,=]" $redisPassword -}}
-{{- fail "redis.auth.password must not contain ',' or '=' when the chart derives ConnectionStrings__redis: those characters split/terminate the StackExchange.Redis configuration string and corrupt the credential. Set secret.env.ConnectionStrings__redis explicitly for such passwords." -}}
 {{- end -}}
 {{- end -}}
 
@@ -280,9 +279,9 @@
 {{- end -}}
 {{- /* Only refuse when the chart can see the server's credentials. With an
        existing Secret (secret.create=false) the gap is reported in NOTES. */ -}}
-{{- range $required := list "ConnectionStrings__DefaultConnection" "ConnectionStrings__redis" "Security__ConnectionEncryption__MasterKey" -}}
+{{- range $required := list "ConnectionStrings__DefaultConnection" "Security__ConnectionEncryption__MasterKey" -}}
 {{- if and (not $envFromMode) $.Values.secret.create (not (hasKey $workerEnv $required)) -}}
-{{- fail (printf "geoprocessing.kubernetesJobs: GP Job workers need %s (the same database, Redis job store and master key as the server), and the chart cannot project it from a Kubernetes Secret because the server's Job spec carries literal env only. Put an aws:secretsmanager:/azure:keyvault: reference in secret.env.%s (inherited when inheritServerEnvironment is true) or in geoprocessing.kubernetesJobs.workerEnv.%s." $required $required $required) -}}
+{{- fail (printf "geoprocessing.kubernetesJobs: GP Job workers need %s (the same database and master key as the server), and the chart cannot project it from a Kubernetes Secret because the server's Job spec carries literal env only. Put an aws:secretsmanager:/azure:keyvault: reference in secret.env.%s (inherited when inheritServerEnvironment is true) or in geoprocessing.kubernetesJobs.workerEnv.%s." $required $required $required) -}}
 {{- end -}}
 {{- end -}}
 {{- $sa := get $gp "serviceAccount" | default dict -}}

@@ -14,9 +14,3 @@ postgresql:
     service:
       ports:
         postgresql: 55433
-
-redis:
-  enabled: true
-  auth:
-    enabled: true
-    password: "ci-redis-password"

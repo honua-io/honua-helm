@@ -156,7 +156,7 @@ auto-generated digest line.
 Release packaging runs `helm dependency build honua`, which consumes the
 committed `honua/Chart.lock` rather than re-resolving the version ranges in
 `honua/Chart.yaml`. The published `.tgz` therefore embeds exactly the Bitnami
-`postgresql` and `redis` subchart versions recorded in the lock. Bumping a
+`postgresql` subchart version recorded in the lock. Bumping a
 subchart is a deliberate PR that runs `helm dependency update` and updates
 `Chart.lock`; CI then validates the new lock via `helm dependency build` on
 the next render.

@@ -50,7 +50,6 @@ The stable keys are:
 - `extraEnv`
 - `extraEnvFrom`
 - `postgresql.*` (Bitnami subchart, dev only)
-- `redis.*` (Bitnami subchart)
 
 The chart values contract is documented in `docs/values-contract.md` and
 enforced where Helm can validate it through `honua/values.schema.json` and
@@ -62,8 +61,6 @@ Required runtime environment keys:
 - `HONUA_ADMIN_PASSWORD` with at least 16 characters, including uppercase,
   lowercase, digit, and special characters
 - `Security__ConnectionEncryption__MasterKey` with at least 32 characters
-- `ConnectionStrings__redis` for non-development deployments when the chart is
-  not creating that key from `redis.enabled=true`
 
 For chart-managed secrets, Helm validates required runtime keys through
 template guards during rendering. For existing-secret mode, Helm validates that
@@ -94,6 +91,30 @@ immutable server image. No `v*` server release tag has been cut either, so
 `nightly-YYYYMMDD-aot` tag. Published chart packages stamp `image.tag` at package
 time; see [`../RELEASING.md`](../RELEASING.md).
 
+## Redis removed
+
+Honua Server no longer uses Redis: jobs, coordination and caches run on
+PostgreSQL. The chart therefore no longer requires `ConnectionStrings__redis`
+(for `MultiNode`, geoprocessing on Kubernetes Jobs, or anything else), no
+longer checks Redis in the preflight hook, and no longer deploys a Redis.
+This needs a Honua Server image from the 2026.1 rc.2 candidate (`532565b`) or
+later. An older image still uses Redis: keep supplying `ConnectionStrings__redis`
+yourself, run your own Redis, and for geoprocessing on Kubernetes Jobs add
+`geoprocessing.kubernetesJobs.workerSecretKeys: [ConnectionStrings__redis]`.
+
+Before upgrading:
+
+- Remove the `redis` block from your values. `redis.enabled: true` fails
+  render with a message that says so.
+- Drop `ConnectionStrings__redis` from your runtime Secret and
+  `geoprocessing.kubernetesJobs.workerEnv` when convenient. A current server
+  ignores it, and the scoped worker Secret no longer includes it.
+
+With the chart-managed Redis enabled before, the upgrade deletes its
+Deployment, Service, Secret and PersistentVolumeClaim. Nothing in Honua reads
+that data. An external Redis you ran only for Honua can be retired after the
+upgrade.
+
 ## Chart 0.2.0 Upgrade Notes
 
 Chart `0.2.0` adds the operator-ready contract for inline migrations, release
@@ -107,7 +128,7 @@ Operators upgrading from `0.1.x` should review these default behavior changes:
   greater than one.
 - `preflight.enabled` defaults to `true`. The hook validates required
   credentials, PostgreSQL TCP reachability, Redis TCP reachability for
-  non-development deployments, and registry `/v2/` reachability before apply.
+  non-development deployments (removed later; see Redis removed), and registry `/v2/` reachability before apply.
   Initial install skips the PostgreSQL or Redis reachability check only when
   the chart auto-generates that connection string for its own subchart.
 - Image identity must set exactly one of `image.tag` or `image.digest`. Digest
@@ -136,7 +157,7 @@ revision. `podLabels` cannot set `app.kubernetes.io/component`.
 
 The PodDisruptionBudget selector is immutable. New releases select only
 `app.kubernetes.io/component: server`, so preflight Jobs and chart-managed
-Redis or PostGIS pods are outside the budget. An existing budget whose selector
+PostGIS pods are outside the budget. An existing budget whose selector
 does not already require that label must be deleted once before the narrowed
 selector can be adopted. The chart keeps the live selector on upgrade until
 that happens.
@@ -193,7 +214,8 @@ documented contract with empty required secret placeholders; use
 ## Install/Upgrade/Rollback Smoke
 
 CI runs a cluster-backed smoke path in `.github/workflows/ci.yml`. It creates a
-kind cluster, starts PostGIS and Redis services, installs
+kind cluster, starts PostGIS and Redis services (the pinned smoke images
+predate the PostgreSQL job store), installs
 `honua/ci-values/upgrade-base.yaml`, runs `helm test`, upgrades with
 `honua/ci-values/upgrade-target.yaml`, runs `helm test` again, rolls back to
 revision 1, and captures Helm history, NOTES, release-info ConfigMap output,
@@ -211,8 +233,7 @@ kubectl create namespace "$namespace"
 kubectl -n "$namespace" create secret generic honua-stage-runtime \
   --from-literal=ConnectionStrings__DefaultConnection='Host=postgis.internal;Database=honua;Username=honua;Password=smoke' \
   --from-literal=HONUA_ADMIN_PASSWORD='SmokeAdminPassword1!' \
-  --from-literal=Security__ConnectionEncryption__MasterKey='smoke-connection-encryption-master-key-0001' \
-  --from-literal=ConnectionStrings__redis='redis.internal:6379'
+  --from-literal=Security__ConnectionEncryption__MasterKey='smoke-connection-encryption-master-key-0001'
 
 helm upgrade --install honua-stage ./honua -n "$namespace" -f honua/values-stage.yaml --wait=false --timeout 2m
 helm upgrade --install honua-stage ./honua -n "$namespace" -f honua/values-stage.yaml --set podLabels.smokeRun=upgrade --wait=false --timeout 2m

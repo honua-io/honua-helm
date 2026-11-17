@@ -139,35 +139,35 @@ jobs:
       - name: Render templates (autoscaling cpu)
         run: helm template honua ./honua -f honua/ci-values/autoscaling-cpu.yaml > /tmp/honua-rendered-autoscaling-cpu.yaml
 
-      - name: Render templates (redis auth)
-        run: helm template honua ./honua -f honua/ci-values/redis-auth.yaml > /tmp/honua-rendered-redis-auth.yaml
-
-      - name: Verify managed Redis review regressions
-        run: |
-          python3 scripts/test-redis-review.py
-          python3 scripts/test-dev-quickstart-contract.py
+      - name: Verify development quick start contract
+        run: python3 scripts/test-dev-quickstart-contract.py
 
       - name: Verify geoprocessing on Kubernetes Jobs rendering
         run: |
           helm lint honua -f honua/ci-values/gp-kubernetes-jobs.yaml
           python3 scripts/test-gp-kubernetes-jobs.py
 
-      - name: Prove Redis-free Production and maintained bundled Redis
+      - name: Prove the chart neither requires nor deploys Redis
         run: |
           set -euo pipefail
           helm template honua ./honua -f honua/values-prod.yaml \
-            --set-string image.tag=v1.0.0-aot > /tmp/honua-rendered-prod-redis-free.yaml
-          grep -A1 'name: HONUA_PREFLIGHT_REDIS_REQUIRED' /tmp/honua-rendered-prod-redis-free.yaml | grep -q 'value: "false"'
-          if grep -q 'kind: StatefulSet' /tmp/honua-rendered-prod-redis-free.yaml; then
-            echo "Redis-free Production unexpectedly rendered a bundled Redis workload."
+            --set-string image.tag=v1.0.0-aot > /tmp/honua-rendered-prod.yaml
+          for rendered in /tmp/honua-rendered-prod.yaml /tmp/honua-rendered-base.yaml /tmp/honua-rendered-rolling-update.yaml; do
+            if grep -qi 'redis' "$rendered"; then
+              echo "$rendered still mentions Redis."
+              exit 1
+            fi
+          done
+          set +e
+          helm template honua ./honua -f honua/ci-values/base.yaml --set redis.enabled=true \
+            > /tmp/honua-rendered-redis-enabled.yaml 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]]; then
+            echo "Expected redis.enabled=true to fail now that the chart deploys no Redis."
             exit 1
           fi
-          grep -q 'image: "redis@sha256:' /tmp/honua-rendered-redis-auth.yaml
-          grep -A1 'name: HONUA_PREFLIGHT_REDIS_CHECK' /tmp/honua-rendered-redis-auth.yaml | grep -q 'value: "false"'
-          if grep -q 'bitnami/redis' /tmp/honua-rendered-redis-auth.yaml; then
-            echo "Withdrawn Bitnami Redis repository remains in the rendered chart."
-            exit 1
-          fi
+          grep -q "redis.enabled is no longer supported" /tmp/honua-rendered-redis-enabled.yaml
 
       - name: Render templates (observability)
         run: helm template honua ./honua -f honua/ci-values/observability.yaml > /tmp/honua-rendered-observability.yaml
@@ -310,14 +310,10 @@ jobs:
           set -euo pipefail
 
           pg_name_override="$(printf '%s' 'Host=honua-pgsvc;Port=55432;Database=honua;Username=honua;Password=ci-password' | base64 | tr -d '\n')"
-          redis_name_override="$(printf '%s' 'honua-honua-redis:6379,password=ci-redis-password' | base64 | tr -d '\n')"
           pg_fullname_override="$(printf '%s' 'Host=custom-postgresql;Port=55433;Database=honua;Username=honua;Password=ci-password' | base64 | tr -d '\n')"
-          redis_fullname_override="$(printf '%s' 'honua-honua-redis:6379,password=ci-redis-password' | base64 | tr -d '\n')"
 
           grep -q "ConnectionStrings__DefaultConnection: ${pg_name_override}" /tmp/honua-rendered-dependency-name-overrides.yaml
-          grep -q "ConnectionStrings__redis: ${redis_name_override}" /tmp/honua-rendered-dependency-name-overrides.yaml
           grep -q "ConnectionStrings__DefaultConnection: ${pg_fullname_override}" /tmp/honua-rendered-dependency-fullname-overrides.yaml
-          grep -q "ConnectionStrings__redis: ${redis_fullname_override}" /tmp/honua-rendered-dependency-fullname-overrides.yaml
 
           if ! grep -A80 'name: "honua-honua-test-connection"' /tmp/honua-rendered-base.yaml | grep -q 'automountServiceAccountToken: false'; then
             echo "Helm test hook pod must set automountServiceAccountToken: false."
@@ -395,7 +391,7 @@ jobs:
           grep -q 'name: honua-honua-release-info' /tmp/honua-rendered-aks-install.yaml
           grep -q 'type: Recreate' /tmp/honua-rendered-aks-install.yaml
           grep -q 'honua.io/release-id: "honua-aks-smoke-install"' /tmp/honua-rendered-aks-install.yaml
-          # External managed data services: no chart-managed PostgreSQL/Redis subcharts.
+          # External managed data services: no chart-managed PostgreSQL subchart.
           if grep -q 'name: honua-postgresql' /tmp/honua-rendered-aks-install.yaml; then
             echo "AKS install overlay must not render the chart-managed PostgreSQL subchart."
             exit 1
@@ -830,22 +826,6 @@ jobs:
           fi
           grep -q "postgresql.auth.password must not contain" /tmp/honua-rendered-pg-password-invalid.yaml
 
-      - name: Validate derived Redis password charset guard fails invalid config
-        run: |
-          set +e
-          helm template honua ./honua \
-            -f honua/values-dev.yaml \
-            --set-string 'redis.auth.password=bad\,pass' \
-            > /tmp/honua-rendered-redis-password-invalid.yaml 2>&1
-          status=$?
-          set -e
-          if [[ "${status}" -eq 0 ]]; then
-            echo "Expected redis.auth.password with ',' to fail when the chart derives the connection string."
-            cat /tmp/honua-rendered-redis-password-invalid.yaml
-            exit 1
-          fi
-          grep -q "redis.auth.password must not contain" /tmp/honua-rendered-redis-password-invalid.yaml
-
       - name: Validate release appVersion label guard fails invalid config
         run: |
           set +e
@@ -916,22 +896,6 @@ jobs:
             "HONUA_ADMIN_PASSWORD must contain at least one digit"
           assert_admin_pw_fails 'CiAdminPassword12' \
             "HONUA_ADMIN_PASSWORD must contain at least one special character"
-
-      - name: Validate Redis connection guard fails invalid config
-        run: |
-          set +e
-          helm template honua ./honua \
-            -f honua/ci-values/base.yaml \
-            --set redis.enabled=true \
-            --set secret.env.ConnectionStrings__redis= \
-            > /tmp/honua-rendered-redis-missing.yaml 2>&1
-          status=$?
-          set -e
-          if [[ "${status}" -eq 0 ]]; then
-            echo "Expected missing ConnectionStrings__redis render to fail."
-            cat /tmp/honua-rendered-redis-missing.yaml
-            exit 1
-          fi
 
       - name: Validate observability-without-receiver guard fails invalid config
         run: |
@@ -1050,6 +1014,8 @@ jobs:
           echo "PostGIS did not become ready."
           exit 1
 
+      # The pinned smoke server images predate the PostgreSQL job store and
+      # still use Redis, which the chart itself no longer requires or deploys.
       - name: Start Redis
         run: |
           set -euo pipefail
@@ -1208,7 +1174,6 @@ jobs:
             -f honua/values-dev.yaml \
             --wait --timeout 15m
           kubectl rollout status deployment/honua-honua-postgis -n honua-dev --timeout=180s
-          kubectl rollout status deployment/honua-honua-redis -n honua-dev --timeout=180s
           helm test honua --namespace honua-dev --logs --timeout 15m
 
       - name: Capture quick start evidence
@@ -1219,7 +1184,7 @@ jobs:
           helm status honua -n honua-dev > /tmp/honua-dev-quickstart/status.txt
           kubectl get pods -n honua-dev -o wide > /tmp/honua-dev-quickstart/pods.txt
           kubectl get events -n honua-dev --sort-by=.lastTimestamp > /tmp/honua-dev-quickstart/events.txt
-          # deployment/honua-honua's selector also matches the redis and postgis pods,
+          # deployment/honua-honua's selector also matches the postgis pods,
           # so select the server pods by component.
           kubectl describe pods -n honua-dev > /tmp/honua-dev-quickstart/describe-pods.txt
           kubectl logs -n honua-dev -l app.kubernetes.io/component=server --all-containers --prefix --tail=-1 > /tmp/honua-dev-quickstart/server.log
@@ -1308,6 +1273,8 @@ jobs:
           echo "PostGIS did not become ready."
           exit 1
 
+      # The pinned smoke server images predate the PostgreSQL job store and
+      # still use Redis, which the chart itself no longer requires or deploys.
       - name: Start Redis
         run: |
           set -euo pipefail

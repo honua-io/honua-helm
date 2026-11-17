@@ -1,13 +1,13 @@
 # AKS customer-operated smoke: install baseline (honua-helm#10).
 #
-# Models the Azure Marketplace customer-operated path: external PostGIS and
-# external Redis (Bitnami subcharts disabled, as in values-prod.yaml), a
+# Models the Azure Marketplace customer-operated path: external PostGIS
+# (Bitnami subchart disabled, as in values-prod.yaml), a
 # pre-created runtime Secret, and an immutable release tag for evidence.
 #
 # This file is the chart-side contract input for the AKS install smoke. The
 # operator supplies the live cluster, the runtime Secret, and a concrete image
 # tag or digest via scripts/aks-smoke.sh. Placeholder endpoints below are
-# overridden by the harness (--db-host / --redis-host / --image-* flags); they
+# overridden by the harness (--db-host / --image-* flags); they
 # exist so the file renders and validates offline in CI.
 replicaCount: 1
 
@@ -56,7 +56,4 @@ secret:
   name: honua-aks-runtime
 
 postgresql:
-  enabled: false
-
-redis:
   enabled: false

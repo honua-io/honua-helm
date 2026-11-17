@@ -330,7 +330,7 @@ jobs:
             echo "  --set secret.env.Security__ConnectionEncryption__MasterKey=\"example-connection-encryption-master-key\""
             echo "\`\`\`"
             echo ""
-            echo "The chart enforces its values contract: \`HONUA_ADMIN_PASSWORD\` must be 16+ chars (upper/lower/digit/special) and \`Security__ConnectionEncryption__MasterKey\` 32+ chars. The snippet above uses \`ASPNETCORE_ENVIRONMENT=Development\` for a minimal evaluation install; production deployments should use \`values-prod.yaml\` with a pinned image and supply \`ConnectionStrings__redis\`."
+            echo "The chart enforces its values contract: \`HONUA_ADMIN_PASSWORD\` must be 16+ chars (upper/lower/digit/special) and \`Security__ConnectionEncryption__MasterKey\` 32+ chars. The snippet above uses \`ASPNETCORE_ENVIRONMENT=Development\` for a minimal evaluation install; production deployments should use \`values-prod.yaml\` with a pinned image."
             echo ""
             echo "### Changes (${range_label})"
             echo ""
