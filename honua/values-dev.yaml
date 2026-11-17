@@ -1,5 +1,5 @@
 # Development overlay for local clusters and ephemeral preview namespaces.
-# Self-contained: digest-pinned server, chart-managed PostGIS and Redis.
+# Self-contained: digest-pinned server and chart-managed PostGIS.
 # Credentials are generated at install (secret.generateCredentials) and are not
 # stored in this file. Not for production data.
 
@@ -37,14 +37,6 @@ postgis:
 
 postgresql:
   enabled: false
-
-redis:
-  enabled: true
-  persistence:
-    enabled: false
-  auth:
-    enabled: true
-    password: ""
 
 tests:
   connection:

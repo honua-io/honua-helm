@@ -223,12 +223,14 @@ terminationGracePeriodSeconds: 60
 # A preStop sleep holds the container running (the pod stays Terminating) so the
 # endpoint deletion has time to propagate before the process receives SIGTERM.
 # Keep the sleep shorter than terminationGracePeriodSeconds. Recommended for any
-# RollingUpdate / autoscaled (MultiNode) deployment:
+# RollingUpdate / autoscaled (MultiNode) deployment. The server image has no
+# shell, so use the kubelet's sleep action (Kubernetes 1.30 or later) rather
+# than an exec hook:
 #
 # lifecycle:
 #   preStop:
-#     exec:
-#       command: ["/bin/sh", "-c", "sleep 5"]
+#     sleep:
+#       seconds: 5
 #
 # Left empty by default because the chart's default strategy is Recreate
 # (old pods stop before new pods start), where a preStop delay only slows
@@ -277,7 +279,7 @@ preflight:
   # The preflight hook runs with backoffLimit: 0 (a single Pod attempt), so a
   # transient DNS/egress/registry blip during the probe would abort the whole
   # install/upgrade. To absorb such blips, each reachability probe (database,
-  # Redis, registry) is retried in-script up to `retries` times with
+  # registry) is retried in-script up to `retries` times with
   # `retryDelaySeconds` between attempts before the hook fails. Set retries to 1
   # to disable retrying.
   retries: 3
@@ -299,9 +301,9 @@ preflight:
 # Horizontal scale-out is only coherent in MultiNode mode. The chart fails at
 # render time if autoscaling.enabled is true while
 # config.env.Deployment__Mode is "SingleInstance" (the default). To run
-# autoscaled HA, set Deployment__Mode: "MultiNode" and also supply
-# ConnectionStrings__redis plus a shared cloud FileStorage:Provider (AwsS3 or
-# AzureBlob; Local is rejected in MultiNode).
+# autoscaled HA, set Deployment__Mode: "MultiNode" and also supply a shared
+# cloud FileStorage:Provider (AwsS3 or AzureBlob; Local is rejected in
+# MultiNode).
 autoscaling:
   enabled: false
   minReplicas: 2
@@ -380,8 +382,8 @@ config:
     HONUA_OBSERVABILITY: "false"
     HONUA_OPENTELEMETRY: "false"
     # SingleInstance runs one coordinated server. Set MultiNode for horizontally
-    # scaled HA; MultiNode additionally requires ConnectionStrings__redis and a
-    # shared cloud FileStorage:Provider (AwsS3 or AzureBlob). Enabling autoscaling
+    # scaled HA; MultiNode additionally requires a shared cloud
+    # FileStorage:Provider (AwsS3 or AzureBlob). Enabling autoscaling
     # while this is SingleInstance fails render (see autoscaling above).
     Deployment__Mode: "SingleInstance"
     Public__BaseUrl: ""
@@ -390,16 +392,15 @@ config:
 
 # Chart-managed Secret. When secret.create=true, HONUA_ADMIN_PASSWORD and
 # Security__ConnectionEncryption__MasterKey are required. Non-development
-# deployments also require ConnectionStrings__DefaultConnection and
-# ConnectionStrings__redis unless the PostgreSQL or Redis subcharts derive those
-# connection strings. Empty strings are omitted before validation.
+# deployments also require ConnectionStrings__DefaultConnection unless the
+# PostgreSQL subchart or chart-managed PostGIS derives it. Empty strings are omitted before validation.
 # When secret.create=false, provide secret.name or at least one extraEnvFrom
 # source that supplies the required runtime variables.
 secret:
   create: true
   name: ""
   # Development only. When true, empty admin password, master key, and
-  # chart-managed PostGIS/Redis passwords are generated at install and reused
+  # chart-managed PostGIS password are generated at install and reused
   # from the live Secret on upgrade. Refused when ASPNETCORE_ENVIRONMENT is
   # Production. Never commit the generated values.
   generateCredentials: false
@@ -407,7 +408,6 @@ secret:
     ConnectionStrings__DefaultConnection: ""
     HONUA_ADMIN_PASSWORD: ""
     Security__ConnectionEncryption__MasterKey: ""
-    ConnectionStrings__redis: ""
 
 # Additional container environment and source references for platform-managed
 # values such as CSI Secret Store, External Secrets Operator, or Downward API.
@@ -655,14 +655,13 @@ controlPlane:
 # the geoprocessing execution workload, so asynchronous GP jobs run as batch/v1
 # Jobs in `namespace` instead of in-process. Each Job runs the server image in
 # its worker-only profile (HONUA_OPERATION_ID / HONUA_EXECUTION_ATTEMPT are
-# stamped by the server) and reports through the shared Redis job store.
+# stamped by the server) and reports through the server's PostgreSQL job store.
 #
 # Requirements (enforced at render time where the chart can see them):
-#   * Redis: the durable job store. ConnectionStrings__redis is required.
 #   * Worker environment: with envFromServer (the default) every Job
 #     imports its environment through envFrom. By default it is scoped to what
 #     a worker needs (environmentScope: worker, honua-helm#110): the same
-#     database, Redis, master key, key ring, licensing and file storage as the
+#     database, master key, key ring, licensing and file storage as the
 #     server, but not the admin password, audit-chain key or other server-only
 #     credentials. This needs a honua-server image at or after bebaada00
 #     (server#5796). Older
@@ -768,11 +767,11 @@ geoprocessing:
     #       azure:keyvault: reference);
     #     - the Secret holds only the worker credentials from the chart-managed
     #       runtime Secret: ConnectionStrings__DefaultConnection,
-    #       ConnectionStrings__redis, Security__ConnectionEncryption__*,
+    #       Security__ConnectionEncryption__*,
     #       Operations__SecretChannel__*, Licensing__*, FileStorage__* and
     #       workerSecretKeys.
     #     With an existing Secret (secret.create=false) the worker takes the
-    #     database, Redis and master key (plus workerSecretKeys) from it by key
+    #     database and master key (plus workerSecretKeys) from it by key
     #     (secretKeyRef), so those keys must exist in it. extraEnvFrom sources
     #     are not imported; list worker sources in workerExtraEnvFrom.
     #     The admin password, audit-chain key, OIDC signing keys and other
@@ -863,56 +862,3 @@ postgresql:
     username: ""
     password: ""
     database: ""
-
-# Optional chart-managed Redis using the Docker Official Image. SingleInstance
-# deployments do not require Redis; MultiNode deployments do. With chart-managed
-# Redis always requires redis.auth.password, including with an explicit client
-# connection string. Chart-managed secrets derive the connection string by default.
-redis:
-  enabled: false
-  persistence:
-    # The development quick start sets this false (emptyDir). Every other
-    # install keeps the append-only file on a claim.
-    enabled: true
-    size: 8Gi
-    # Empty uses the cluster default StorageClass.
-    storageClass: ""
-  image:
-    repository: redis
-    tag: "7.4-alpine"
-    digest: "sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f"
-    pullPolicy: IfNotPresent
-  imagePullSecrets: []
-  # Kept below the memory limit. allkeys-lru is not set; Redis evicts only keys
-  # with a TTL once this cap is reached, matching the default policy.
-  maxmemory: "200mb"
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-  auth:
-    enabled: true
-    password: ""
-  # Redis pod/container security. The defaults match the Docker Official
-  # redis:*-alpine image's redis user (uid 999, gid 1000); Debian-based tags
-  # use gid 999. The root filesystem is read-only: /data (the PVC) and /tmp
-  # (an emptyDir) are the only writable paths, and fsGroup makes /data writable.
-  podSecurityContext:
-    fsGroup: 1000
-    fsGroupChangePolicy: OnRootMismatch
-    seccompProfile:
-      type: RuntimeDefault
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 999
-    runAsGroup: 1000
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    seccompProfile:
-      type: RuntimeDefault
-    capabilities:
-      drop:
-        - ALL

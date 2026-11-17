@@ -19,7 +19,7 @@ evidence.
 ## What is automated here
 
 - `honua/ci-values/aks-smoke-install.yaml` — install baseline for the
-  customer-operated AKS path (external PostGIS + Redis, pre-created runtime
+  customer-operated AKS path (external PostGIS, pre-created runtime
   Secret, migration-safe `Recreate` strategy, preflight + registry check on).
 - `honua/ci-values/aks-smoke-upgrade.yaml` — upgrade target overlay applied as
   the `helm upgrade` step (scales replicas, rotates release evidence metadata).
@@ -51,7 +51,7 @@ Live (operator) — first configure the `aks-smoke` GitHub Environment:
 
 - Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (an
   OIDC app federated to this repo, see below), plus `HONUA_DB_CONNECTION`,
-  `HONUA_REDIS_CONNECTION`, `HONUA_ADMIN_PASSWORD`, `HONUA_MASTER_KEY`.
+  `HONUA_ADMIN_PASSWORD`, `HONUA_MASTER_KEY`.
 - Variables: `AKS_RESOURCE_GROUP`, `AKS_CLUSTER_NAME`.
 
 The OIDC app needs a federated credential whose subject is
@@ -67,8 +67,8 @@ listing-submission evidence.
    record the temporary AKS setup in the evidence directory.
 2. `az aks get-credentials ...` so `kubectl config current-context` points at
    the AKS cluster.
-3. An external PostGIS database and Redis reachable from the cluster (Bitnami
-   PostgreSQL has no PostGIS; the overlays disable both subcharts).
+3. An external PostGIS database reachable from the cluster (Bitnami PostgreSQL
+   has no PostGIS; the overlays disable that subchart).
 4. The runtime Secret in the target namespace, either pre-created or created by
    the harness with `--create-runtime-secret` and the `HONUA_*` env inputs.
 
@@ -84,7 +84,6 @@ Live AKS install + upgrade + rollback smoke:
 
 ```bash
 export HONUA_DB_CONNECTION='Host=pg.example.com;Port=5432;Database=honua;Username=honua;Password=...'
-export HONUA_REDIS_CONNECTION='redis.example.com:6379,password=...'
 export HONUA_ADMIN_PASSWORD='...'        # >=16 chars, mixed case + digit + special
 export HONUA_MASTER_KEY='...'            # >=32 chars
 

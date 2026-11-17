@@ -140,7 +140,7 @@ kubectl exec -n "$namespace" deployment/honua-postgis -- psql -U honua -d honua 
 
 connection="Host=honua-postgis;Port=5432;Database=${database};Username=honua;Password=ci-password"
 
-# With Redis on, current servers turn on the durable operation secret channel and
+# With Redis on, the pinned server turns on the durable operation secret channel and
 # refuse to start without a key-ring certificate. Generate a disposable one
 # outside the evidence directory and pass it through the runtime Secret, as the
 # GP Kubernetes Jobs smoke does (never as a command-line literal). The key is

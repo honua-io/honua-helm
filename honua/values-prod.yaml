@@ -2,7 +2,7 @@
 # Pair this file with a site-specific override for DNS, TLS, image.tag, secret
 # name, and provider-specific ingress annotations. The runtime secret must
 # contain ConnectionStrings__DefaultConnection, HONUA_ADMIN_PASSWORD, and
-# Security__ConnectionEncryption__MasterKey. Redis is required only for MultiNode.
+# Security__ConnectionEncryption__MasterKey.
 #
 # This overlay ships a single-instance deployment (replicaCount: 1,
 # Deployment__Mode=SingleInstance) so it is internally consistent and works out
@@ -11,9 +11,8 @@
 #
 # To opt into horizontally scaled HA, supply a site-specific override that:
 #   1. sets config.env.Deployment__Mode: "MultiNode";
-#   2. enables autoscaling (autoscaling.enabled: true) or raises replicaCount;
-#   3. provides ConnectionStrings__redis (shared cache / coordination); and
-#   4. configures a shared cloud FileStorage provider — FileStorage:Provider must
+#   2. enables autoscaling (autoscaling.enabled: true) or raises replicaCount; and
+#   3. configures a shared cloud FileStorage provider — FileStorage:Provider must
 #      be AwsS3 or AzureBlob (Local storage is rejected in MultiNode), with the
 #      provider's bucket/region or connection-string/container settings.
 # The chart fails at render time if autoscaling is enabled while
@@ -53,8 +52,8 @@ resources:
     memory: 8Gi
 
 # Disabled because this overlay runs in SingleInstance mode. Enable only as part
-# of a MultiNode HA override (see the header comment) that also supplies Redis
-# and a shared cloud FileStorage provider.
+# of a MultiNode HA override (see the header comment) that also supplies a
+# shared cloud FileStorage provider.
 autoscaling:
   enabled: false
   minReplicas: 3
@@ -97,7 +96,4 @@ secret:
   name: honua-prod-runtime
 
 postgresql:
-  enabled: false
-
-redis:
   enabled: false

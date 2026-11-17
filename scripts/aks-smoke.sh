@@ -256,13 +256,11 @@ if [ "${CREATE_RUNTIME_SECRET}" = "true" ]; then
   : "${HONUA_DB_CONNECTION:?--create-runtime-secret requires HONUA_DB_CONNECTION env}"
   : "${HONUA_ADMIN_PASSWORD:?--create-runtime-secret requires HONUA_ADMIN_PASSWORD env}"
   : "${HONUA_MASTER_KEY:?--create-runtime-secret requires HONUA_MASTER_KEY env}"
-  : "${HONUA_REDIS_CONNECTION:?--create-runtime-secret requires HONUA_REDIS_CONNECTION env}"
   echo "+ creating runtime Secret ${SECRET_NAME} (values not logged)" | tee -a "${LOG}"
   kubectl create secret generic "${SECRET_NAME}" -n "${NAMESPACE}" \
     --from-literal=ConnectionStrings__DefaultConnection="${HONUA_DB_CONNECTION}" \
     --from-literal=HONUA_ADMIN_PASSWORD="${HONUA_ADMIN_PASSWORD}" \
     --from-literal=Security__ConnectionEncryption__MasterKey="${HONUA_MASTER_KEY}" \
-    --from-literal=ConnectionStrings__redis="${HONUA_REDIS_CONNECTION}" \
     --dry-run=client -o yaml | kubectl apply -f - >>"${LOG}" 2>&1
 fi
 

@@ -7,7 +7,6 @@ import yaml
 FORBIDDEN = (
     'DevAdminPassword1!',
     'honua-dev-password',
-    'honua-dev-redis',
     'dev-connection-encryption-master-key-00000001',
     'bitnami/postgresql',
 )
@@ -50,6 +49,21 @@ def postgis_image_ref():
     return postgis['spec']['template']['spec']['containers'][0]['image']
 
 
+def assert_service_selects_only_server(docs):
+    deployments = [document for document in docs if document.get('kind') == 'Deployment']
+    server = next(deployment for deployment in deployments
+                  if deployment['spec']['template']['spec']['containers'][0]['name'] == 'honua')
+    services = [document for document in docs if document.get('kind') == 'Service'
+                and document['metadata']['name'] == server['metadata']['name']]
+    assert services
+    for service in services:
+        selector = service['spec']['selector']
+        assert selector['app.kubernetes.io/component'] == 'server'
+        matching = [deployment['metadata']['name'] for deployment in deployments
+                    if selector.items() <= deployment['spec']['template']['metadata']['labels'].items()]
+        assert matching == [server['metadata']['name']], matching
+
+
 def render_once():
     text = render()
     for forbidden in FORBIDDEN:
@@ -62,7 +76,6 @@ def render_once():
     admin = decode(app_secret, 'HONUA_ADMIN_PASSWORD')
     master = decode(app_secret, 'Security__ConnectionEncryption__MasterKey')
     database = decode(app_secret, 'ConnectionStrings__DefaultConnection')
-    redis_connection = decode(app_secret, 'ConnectionStrings__redis')
     assert admin.startswith('Aa1!') and len(admin) >= 16
     assert any(not character.isalnum() for character in admin)
     assert len(master) >= 32 and master.isalnum()
@@ -73,13 +86,8 @@ def render_once():
     postgis_password = postgis_secret['stringData']['password']
     assert password_from_connection(database) == postgis_password
     assert postgis_password.startswith('Aa1') and ';' not in postgis_password
-    redis_secret = next(
-        document for document in docs
-        if document.get('kind') == 'Secret'
-        and document['metadata']['name'].endswith('-redis'))
-    redis_password = redis_secret['stringData']['password']
-    assert redis_connection.endswith(',password=' + redis_password)
-    assert redis_password.startswith('Aa1') and ',' not in redis_password
+    assert 'ConnectionStrings__redis' not in app_secret['data']
+    assert 'redis' not in text.lower()
     postgis = next(
         document for document in docs
         if document.get('kind') == 'Deployment'
@@ -103,19 +111,6 @@ def render_once():
         volume for volume in postgis['spec']['template']['spec']['volumes']
         if volume.get('name') == 'init')
     assert init_volume['configMap']['name'] == init['metadata']['name']
-    redis = next(
-        document for document in docs
-        if document.get('kind') == 'Deployment'
-        and document['metadata']['name'].endswith('-redis'))
-    redis_image = redis['spec']['template']['spec']['containers'][0]['image']
-    assert redis_image.startswith('redis@sha256:')
-    redis_volumes = {volume['name']: volume for volume in redis['spec']['template']['spec']['volumes']}
-    assert 'emptyDir' in redis_volumes['data']
-    assert not any(document.get('kind') == 'PersistentVolumeClaim'
-                   and document['metadata']['name'].endswith('-redis') for document in docs)
-    assert 'checksum/redis-password' not in yaml.safe_dump(redis)
-    salted = redis['spec']['template']['metadata']['annotations']['checksum/redis-secret']
-    assert salted != __import__('hashlib').sha256(redis_password.encode()).hexdigest()
     for document in docs:
         if document.get('kind') != 'Job':
             continue
@@ -136,7 +131,7 @@ def render_once():
             continue
         rendered = yaml.safe_dump(document)
         assert admin not in rendered and master not in rendered
-        assert postgis_password not in rendered and redis_password not in rendered
+        assert postgis_password not in rendered
     return admin
 
 
@@ -146,6 +141,7 @@ def main():
     assert first != second
 
     upgrade_docs = documents(render('--is-upgrade'))
+    assert_service_selects_only_server(upgrade_docs)
     preflight = next(
         document for document in upgrade_docs
         if document.get('kind') == 'Job' and document['metadata']['name'].endswith('-preflight'))
@@ -154,7 +150,6 @@ def main():
         for item in preflight['spec']['template']['spec']['containers'][0]['env']
     }
     assert preflight_env['HONUA_PREFLIGHT_DATABASE_CHECK'] == 'false'
-    assert preflight_env['HONUA_PREFLIGHT_REDIS_CHECK'] == 'false'
 
     pdb_text = render('--set', 'podDisruptionBudget.enabled=true')
     pdb = next(document for document in documents(pdb_text)
@@ -165,7 +160,7 @@ def main():
             continue
         labels = document['spec']['template']['metadata'].get('labels', {})
         name = document['metadata']['name']
-        if name.endswith('-postgis') or name.endswith('-redis') or document.get('kind') == 'Job':
+        if name.endswith('-postgis') or document.get('kind') == 'Job':
             assert labels.get('app.kubernetes.io/component') != 'server', name
 
     production = helm(

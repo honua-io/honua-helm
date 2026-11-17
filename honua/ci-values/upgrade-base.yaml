@@ -11,6 +11,7 @@ secret:
     ConnectionStrings__DefaultConnection: "Host=honua-postgis;Port=5432;Database=honua;Username=honua;Password=ci-password"
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
+    # The pinned server predates the PostgreSQL job store and still uses Redis.
     ConnectionStrings__redis: "honua-redis:6379,password=ci-redis-password"
 
 # Exercise authenticated API calls through the Service with host validation on.

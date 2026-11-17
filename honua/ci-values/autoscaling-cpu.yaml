@@ -3,9 +3,8 @@ secret:
     ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password"
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
-    ConnectionStrings__redis: "redis:6379,password=ci-redis-password"
 # Autoscaling (horizontal scale-out) is only coherent under MultiNode mode, which
-# also requires Redis (above) and a shared cloud FileStorage provider at runtime.
+# also requires a shared cloud FileStorage provider at runtime.
 # This overlay intentionally leaves targetMemoryUtilizationPercentage unset to
 # exercise the chart default (memory scaling OFF), so the HPA renders a CPU
 # metric only.

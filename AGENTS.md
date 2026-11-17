@@ -4,8 +4,8 @@
 
 This repository is the Helm chart for **Honua Server**, a geospatial/GIS
 application that runs on Kubernetes. The single chart (`honua/`) deploys the
-Honua Server Deployment with optional Bitnami PostgreSQL and Redis subcharts,
-plus supporting resources (Service, Ingress, HPA, ConfigMaps, Secrets, a
+Honua Server Deployment with an optional chart-managed PostGIS database or
+Bitnami PostgreSQL subchart, plus supporting resources (Service, Ingress, HPA, ConfigMaps, Secrets, a
 pre-install/pre-upgrade preflight validation Job, and a Helm test hook).
 
 The chart was extracted from the `honua-server` monorepo and is published to
@@ -31,10 +31,10 @@ Deployment gets `HONUA_SKIP_MIGRATIONS=true`, and the strategy resolves to
     does NOT include PostGIS, so it cannot apply Honua migrations).
   - `Chart.lock` pins `postgresql 15.5.38`.
 - The development quick start (`honua/values-dev.yaml`) uses chart-managed
-  PostGIS (`postgis.enabled`) and chart-managed Redis. It generates credentials
+  PostGIS (`postgis.enabled`). It generates credentials
   (`secret.generateCredentials`) instead of storing them in the overlay.
-- Optional chart-managed Redis uses the Docker Official `redis` image directly;
-  it is not a subchart dependency.
+- Honua Server does not use Redis; the chart neither requires nor deploys one,
+  and `redis.enabled: true` fails render.
 - Values validation via `honua/values.schema.json` (JSON Schema) plus
   `fail`-based template guards in `honua/templates/validations.yaml`.
 - CI uses Helm (`azure/setup-helm`), `kind` (`helm/kind-action`), `kubectl`, and
@@ -106,7 +106,7 @@ There is no separate unit-test framework. "Tests" are the `helm lint` /
   + migrations complete), startup `/healthz/live` with 60 retries.
 - **Preflight Job** (`templates/preflight-job.yaml` + `preflight-secret.yaml`) —
   Helm `pre-install,pre-upgrade` hook that validates required secret keys,
-  PostgreSQL/Redis TCP reachability, and image registry `/v2/` reachability
+  PostgreSQL TCP reachability, and image registry `/v2/` reachability
   before the Deployment is applied. Gated by `preflight.enabled` (default true).
 - **Secrets / Config** — chart-managed runtime Secret (`secret.yaml`, from
   `secret.env`) and ConfigMap (`configmap.yaml`, from `config.env`); or
@@ -117,7 +117,7 @@ There is no separate unit-test framework. "Tests" are the `helm lint` /
 - **Validations** (`templates/validations.yaml`) — `fail`-based guards that
   reject invalid configs (e.g. RollingUpdate with zero rollout budget, digest +
   `pullPolicy: Always`, empty image identity, weak `HONUA_ADMIN_PASSWORD`,
-  short `Security__ConnectionEncryption__MasterKey`, missing Redis connection).
+  short `Security__ConnectionEncryption__MasterKey`, a leftover `redis.enabled`).
 - **Other**: `service.yaml`, `ingress.yaml`, `hpa.yaml`, `serviceaccount.yaml`,
   `NOTES.txt`.
 
@@ -146,8 +146,7 @@ RELEASING.md               Release runbook (chart cuts, versioning, OCI publish)
   overlay or ci-values file.
 - Required secret env keys: `ConnectionStrings__DefaultConnection`,
   `HONUA_ADMIN_PASSWORD` (>=16 chars, mixed case + digit + special),
-  `Security__ConnectionEncryption__MasterKey` (>=32 chars), and
-  `ConnectionStrings__redis` for non-development deployments.
+  and `Security__ConnectionEncryption__MasterKey` (>=32 chars).
 - `image.tag` defaults to `latest-aot` (dev-only). Release CI stamps the verified
   server image digest, clears `image.tag`, and sets `image.pullPolicy` to
   `IfNotPresent`. `image.pullPolicy` must be `IfNotPresent` or `Never` when

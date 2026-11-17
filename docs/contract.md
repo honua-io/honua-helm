@@ -240,18 +240,11 @@ The preflight Job validates:
   uppercase, lowercase, digit, and special characters.
 - `Security__ConnectionEncryption__MasterKey` is present and at least 32
   characters long.
-- `ConnectionStrings__redis` is present for non-development deployments,
-  because Honua Server requires durable feature-change event storage outside
-  Development/Test environments.
 - The PostgreSQL host and port parsed from the connection string accept TCP
   connections. During the initial install only, this reachability check is
   skipped when the chart auto-generates the connection string for its own
   PostgreSQL subchart because Helm pre-install hooks run before subchart
   Services and Pods are created; pre-upgrade hooks check the existing database.
-- The Redis host and port parsed from `ConnectionStrings__redis` accept TCP
-  connections. During the initial install only, this reachability check is
-  skipped when the chart auto-generates the connection string for its own Redis
-  subchart for the same Helm hook ordering reason.
 - The target image registry `/v2/` endpoint is reachable when
   `preflight.registryCheck.enabled=true`.
 

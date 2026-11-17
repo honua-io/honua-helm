@@ -10,17 +10,17 @@ adapters (GeoServices REST, OGC API, classic OGC WMS/WFS/WMTS/WCS, STAC, OData v
 tiles, MCP, gRPC), backed by PostGIS. This repository contains the **`honua` Helm chart**:
 the server Deployment plus Service, Ingress, HPA, PodDisruptionBudget, pre-install/pre-upgrade
 preflight validation hooks, release-evidence resources, Prometheus/OpenTelemetry observability
-wiring, and optional Bitnami PostgreSQL and Redis subcharts for development.
+wiring, and an optional chart-managed PostGIS database for development.
 
 ## Status
 
-**Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS, ElastiCache, and Console in S3/CloudFront.
+**Preview:** Helm/Kubernetes is not certified for 2026.1 rc.2 or qualified for production; the supported target is AWS ECS Fargate with RDS PostGIS and Console in S3/CloudFront.
 
 Pre-1.0. Chart releases are cut from `chart-vX.Y.Z` tags and published to
 `oci://ghcr.io/honua-io/charts/honua` by [`release.yml`](.github/workflows/release.yml) — no
 release has been cut yet, so install from a checkout (below) until the first published version
 lands. Value keys under `image`, `service`, `ingress`, `config.env`, `secret.env`,
-`postgresql`, and `redis` are stable within a chart major version; the guarantee is formalized
+and `postgresql` are stable within a chart major version; the guarantee is formalized
 in [docs/values-contract.md](docs/values-contract.md) and [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## Prerequisites
@@ -30,7 +30,6 @@ in [docs/values-contract.md](docs/values-contract.md) and [docs/MIGRATION.md](do
 | Kubernetes cluster + `kubectl` | CI smoke-tests against [kind](https://kind.sigs.k8s.io/). |
 | Helm 3.8+ | 3.8 for OCI registry support once published cuts exist. |
 | PostGIS database | Required beyond local dev — the bundled Bitnami PostgreSQL subchart does **not** include PostGIS. Use managed PostGIS (RDS, Azure Flexible Server, ...) in production. |
-| Redis | Required for all non-`Development` deployments (durable feature-change events); the Bitnami subchart or an external endpoint both work. |
 | Network access | `charts.bitnami.com` for subchart dependencies, `ghcr.io` for the server image. |
 
 ## Quick start (development install)
@@ -45,8 +44,8 @@ helm test honua
 ```
 
 The dev overlay is self-contained: the digest-pinned 2026.1 candidate server image, chart-managed
-PostGIS (the customer-install pgrouting pin) and Redis, and
-`ASPNETCORE_ENVIRONMENT=Development`. Admin, master-key, database, and Redis
+PostGIS (the customer-install pgrouting pin), and
+`ASPNETCORE_ENVIRONMENT=Development`. Admin, master-key, and database
 passwords are generated at install into Secrets and are not in the values file.
 Read them back with `kubectl get secret` if you need them. Do not use this
 overlay for real data. Readiness at `/healthz/ready` signals that startup and
@@ -63,13 +62,12 @@ Every install must provide (via chart-managed `secret.env.*` or an existing Secr
 - `ConnectionStrings__DefaultConnection` — PostGIS connection string
 - `HONUA_ADMIN_PASSWORD` — at least 16 chars with upper/lower/digit/special
 - `Security__ConnectionEncryption__MasterKey` — at least 32 chars
-- `ConnectionStrings__redis` — required for non-`Development` deployments
 
 Common tunables: `ingress.*` (host, TLS, class), `image.tag`/`image.digest` (pin a
 `vX.Y.Z-aot` tag or digest in production; the `latest-aot` default is dev-only),
-`postgresql.enabled`/`redis.enabled` (Bitnami subcharts), `secret.create=false` +
+`postgis.enabled` (development PostGIS), `secret.create=false` +
 `secret.name` for existing-secret mode, and `preflight.enabled` (default on: validates
-secrets, database/Redis reachability, and registry reachability before apply). The full
+secrets, database reachability, and registry reachability before apply). The full
 values reference, production example, observability/alerting setup, and HPA tuning guidance
 live in the chart README: **[honua/README.md](honua/README.md)**.
 

@@ -10,7 +10,6 @@ secret:
     ConnectionStrings__DefaultConnection: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/db-connection"
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/master-key"
-    ConnectionStrings__redis: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/redis-connection"
     Operations__SecretChannel__KeyRingCertificatePkcs12: "aws:secretsmanager:arn:aws:secretsmanager:us-west-2:123456789012:secret:honua-ci/key-ring"
 geoprocessing:
   kubernetesJobs:

@@ -1,9 +1,8 @@
 replicaCount: 2
 # Multi-replica rollout is only coherent in MultiNode mode; SingleInstance with
 # more than one replica is rejected by the chart's HA guard. This overlay renders
-# the RollingUpdate strategy across two MultiNode replicas (it already supplies
-# ConnectionStrings__redis); FileStorage is not chart-rendered so it is omitted
-# in this render-only fixture.
+# the RollingUpdate strategy across two MultiNode replicas; FileStorage is not
+# chart-rendered so it is omitted in this render-only fixture.
 config:
   env:
     Deployment__Mode: "MultiNode"
@@ -17,8 +16,8 @@ strategy:
 # Kept shorter than terminationGracePeriodSeconds (60).
 lifecycle:
   preStop:
-    exec:
-      command: ["/bin/sh", "-c", "sleep 5"]
+    sleep:
+      seconds: 5
 release:
   id: honua-ci-rolling
   manifest: "ci://honua-helm/rolling-update"
@@ -27,4 +26,3 @@ secret:
     ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password"
     HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
     Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"
-    ConnectionStrings__redis: "redis:6379,password=ci-redis-password"
