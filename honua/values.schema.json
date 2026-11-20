@@ -284,7 +284,16 @@
               "description": "Worker environment overrides. Credentials must be aws:secretsmanager: or azure:keyvault: references; an empty value drops an inherited entry.",
               "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
             },
-            "allowInlineWorkerSecrets": { "type": "boolean" }
+            "allowInlineWorkerSecrets": { "type": "boolean" },
+            "admissionPolicy": {
+              "type": "object",
+              "description": "ValidatingAdmissionPolicy that pins the image and service account of Jobs the server creates.",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "extraImages": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              }
+            }
           }
         }
       }
@@ -323,6 +332,52 @@
     "lifecycle": {
       "type": "object",
       "description": "Container lifecycle hooks for the honua container (e.g. a preStop sleep to drain Service endpoints during RollingUpdate / HPA scale-down)."
+    },
+    "networkPolicy": {
+      "type": "object",
+      "description": "Optional NetworkPolicy for the server pods (honua-helm#138).",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "controller": { "type": "array", "items": { "type": "object" } },
+            "allowSameRelease": { "type": "boolean" },
+            "extraFrom": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "dns": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "to": { "type": "array", "items": { "type": "object" } }
+              }
+            },
+            "ports": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["port"],
+                "additionalProperties": false,
+                "properties": {
+                  "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                  "protocol": { "type": "string", "enum": ["TCP", "UDP", "SCTP"] }
+                }
+              }
+            },
+            "to": { "type": "array", "items": { "type": "object" } },
+            "otlp": { "type": "boolean" },
+            "extraTo": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      }
     },
     "security": {
       "type": "object",
@@ -593,6 +648,11 @@
         },
         "tls": {
           "type": "array"
+        },
+        "denyPaths": {
+          "type": "array",
+          "description": "Path prefixes the ingress controller refuses for every client (ingress-nginx only).",
+          "items": { "type": "string", "pattern": "^/" }
         }
       }
     },

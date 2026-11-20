@@ -32,4 +32,39 @@ spec:
                   number: {{ $.Values.service.port }}
           {{- end }}
     {{- end }}
+{{- with .Values.ingress.denyPaths }}
+{{- if ne $.Values.ingress.className "nginx" }}
+{{- fail "ingress.denyPaths is implemented with the ingress-nginx denylist-source-range annotation and needs ingress.className nginx. For another controller, clear ingress.denyPaths and block these paths with its own rule (the server still requires an Admin credential on /metrics)." }}
+{{- end }}
+---
+# Refuses ingress.denyPaths (by default the Prometheus /metrics endpoint in the
+# stage and prod overlays) at the ingress controller for every client, so the
+# endpoint is reachable only in-cluster through the Service (honua-helm#138).
+# ingress-nginx serves the longer prefix from this Ingress before the "/" rule.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "honua.fullname" $ | trunc 58 | trimSuffix "-" }}-deny
+  labels:
+    {{- include "honua.labels" $ | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/denylist-source-range: "0.0.0.0/0,::/0"
+spec:
+  ingressClassName: nginx
+  rules:
+    {{- range $.Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range $.Values.ingress.denyPaths }}
+          - path: {{ . | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "honua.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
 {{- end }}

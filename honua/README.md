@@ -650,6 +650,27 @@ AWS Batch placeholder). The AWS Batch entry stays inactive until its ARNs are
 set. Keep it that way. If both are active, the server routes GP to the first
 compatible non-local workload, which can be AWS Batch.
 
+### Namespace isolation and admission policy
+
+The server service account can create pods in the GP namespace, and a job's
+parameters can name another image or service account. Run the Jobs in a
+dedicated namespace labelled for Pod Security admission (enforce `baseline`,
+warn/audit `restricted`; the server does not yet write a restricted-compliant
+`securityContext` on Job pods), and on Kubernetes 1.30 or later enable
+`geoprocessing.kubernetesJobs.admissionPolicy` to pin the image, service
+account and entrypoint (it does not constrain env or secret references, which
+the dedicated namespace contains). See
+[the values contract](../docs/values-contract.md#geoprocessing-job-namespace).
+
+```yaml
+geoprocessing:
+  kubernetesJobs:
+    enabled: true
+    namespace: honua-gp
+    admissionPolicy:
+      enabled: true
+```
+
 ### Local harness
 
 `scripts/gp-kubernetes-jobs-smoke.sh` runs against a disposable kind cluster with
@@ -1134,6 +1155,61 @@ Service.
 The `ServiceMonitor`/`PrometheusRule` resources require the Prometheus Operator
 CRDs and a server build that exposes a Prometheus endpoint at the configured
 port/path.
+
+The server serves `/metrics` on the application port and requires an Admin
+credential for it. The stage and prod overlays also keep it off the public
+ingress with `ingress.denyPaths: [/metrics]`: a second Ingress for the same
+hosts carries the ingress-nginx `denylist-source-range: 0.0.0.0/0,::/0`
+annotation, so the controller answers 403 there for every client while
+Prometheus scrapes the Service in-cluster. nginx matches paths
+case-sensitively and the server's routing does not, so `/METRICS` still
+reaches the server; the Admin credential remains the control there, and the
+ingress rule is defence in depth. `ingress.denyPaths` needs
+`ingress.className: nginx`; with another controller, clear it and block the
+path in that controller.
+
+## NetworkPolicy
+
+`networkPolicy.enabled=true` renders a NetworkPolicy for the server pods only
+(the preflight, migration and GP Jobs and the chart-managed database keep the
+namespace default). It needs a CNI that enforces NetworkPolicy.
+
+- Ingress to `service.targetPort` from `networkPolicy.ingress.controller`
+  (default: the `ingress-nginx` namespace), from pods of this release when
+  `allowSameRelease` (the Helm test hook), and from `extraFrom` (add your
+  Prometheus namespace when scraping). A load balancer that targets pod IPs
+  directly needs an `ipBlock` for its subnets in `extraFrom`.
+- Egress to cluster DNS, to TCP 5432 and 443 (`egress.ports`; `egress.to`
+  narrows both, so keep public HTTPS for OIDC discovery and the licence
+  service in it), to the port of `observability.otlpEndpoint` in its own rule
+  (`egress.otlp`), and to `egress.extraTo` rules.
+- Add to `extraTo` what your cluster needs beyond that: the Kubernetes API
+  server endpoint with GP Jobs enabled on a CNI that evaluates policy after
+  service DNAT; the cloud credential endpoints for workload identity (EKS Pod
+  Identity `169.254.170.23/32` port 80, IMDS and the GKE metadata server
+  `169.254.169.254/32` port 80, plus 988 on GKE Dataplane V2); NodeLocal
+  DNSCache `169.254.20.10/32` port 53. NOTES.txt warns when GP Jobs or
+  Prometheus scraping are on and the matching `extraTo` / `extraFrom` is empty.
+
+Render fails when the ingress rule would have no peers, because an empty peer
+list admits every source.
+
+```yaml
+networkPolicy:
+  enabled: true
+  ingress:
+    extraFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+  egress:
+    to:
+      - ipBlock:
+          cidr: 10.0.32.0/20   # database subnet and private endpoints
+      - ipBlock:
+          cidr: 0.0.0.0/0      # public HTTPS (OIDC discovery, licence service)
+          except: [10.0.0.0/8]
+```
 
 ### Alerting (SLO rules + receivers)
 

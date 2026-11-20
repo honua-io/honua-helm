@@ -18,9 +18,15 @@
 
 replicaCount: 1
 
+# Stage validates one immutable build (honua-helm#138): the moving "latest-aot"
+# tag with pullPolicy Always could run a different image on every restart, so
+# a staged result would not describe what production then installs. This pins
+# the same candidate digest as the development quick start; override
+# image.digest with the release candidate under test (leave image.tag empty).
 image:
-  tag: "latest-aot"
-  pullPolicy: Always
+  tag: ""
+  digest: "sha256:3ef3bd41a2f84d1f3a6194c11db496f741cc4d869b54bf57e9d7067dd9cf3d39"
+  pullPolicy: IfNotPresent
 
 resources:
   requests:
@@ -53,6 +59,11 @@ ingress:
     - secretName: honua-stage-tls
       hosts:
         - honua-stage.example.com
+  # The server's Prometheus endpoint requires an Admin credential, and it is
+  # also kept off the public ingress: Prometheus scrapes it in-cluster through
+  # the Service (metrics.serviceMonitor / metrics.serviceAnnotations).
+  denyPaths:
+    - /metrics
 
 config:
   env:

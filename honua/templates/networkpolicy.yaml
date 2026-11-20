@@ -1,0 +1,73 @@
+{{- /* Optional NetworkPolicy for the server pods (honua-helm#138). It selects only
+       the server Deployment's pods; Jobs and the chart-managed database keep the
+       namespace default. Ingress: the server port from the ingress controller,
+       same-release pods (Helm test hook) and networkPolicy.ingress.extraFrom.
+       Egress: DNS, the configured ports (database, HTTPS) to egress.to, the OTLP
+       collector port when observability.otlpEndpoint is set, and
+       networkPolicy.egress.extraTo. */ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $policy := .Values.networkPolicy -}}
+{{- $egressPorts := list -}}
+{{- range $policy.egress.ports }}
+{{- $egressPorts = append $egressPorts (dict "port" (int .port) "protocol" (default "TCP" .protocol)) -}}
+{{- end }}
+{{- $otlpPort := include "honua.networkPolicyOtlpPort" . -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "honua.fullname" . }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "honua.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: {{ .Values.service.targetPort }}
+          protocol: TCP
+      from:
+        {{- with $policy.ingress.controller }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $policy.ingress.allowSameRelease }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- end }}
+        {{- with $policy.ingress.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  egress:
+    {{- if $policy.egress.dns.enabled }}
+    - to:
+        {{- toYaml $policy.egress.dns.to | nindent 8 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- end }}
+    {{- if $egressPorts }}
+    - ports:
+        {{- toYaml $egressPorts | nindent 8 }}
+      {{- with $policy.egress.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- if $otlpPort }}
+    # The OTLP collector port, to any destination: egress.to narrows only the
+    # ports above.
+    - ports:
+        - port: {{ int $otlpPort }}
+          protocol: TCP
+    {{- end }}
+    {{- with $policy.egress.extraTo }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

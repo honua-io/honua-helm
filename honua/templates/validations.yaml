@@ -455,3 +455,11 @@
 {{- fail "strategy.rollingUpdate needs a non-zero maxSurge or maxUnavailable: with both zero a RollingUpdate can never replace a pod." -}}
 {{- end -}}
 {{- end -}}
+
+{{- /* An ingress rule with no peers allows every source, so an enabled
+       NetworkPolicy must name at least one. */ -}}
+{{- with .Values.networkPolicy -}}
+{{- if and .enabled (not (or .ingress.controller .ingress.allowSameRelease .ingress.extraFrom)) -}}
+{{- fail "networkPolicy.enabled needs at least one ingress peer (networkPolicy.ingress.controller, allowSameRelease or extraFrom): a rule with no peers would admit every source." -}}
+{{- end -}}
+{{- end -}}

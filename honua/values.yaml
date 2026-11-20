@@ -88,6 +88,13 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
+  # Path prefixes the ingress controller refuses for every client
+  # (honua-helm#138). The stage and prod overlays list the Prometheus endpoint
+  # (/metrics, Observability:Prometheus:Path), which Prometheus scrapes
+  # in-cluster through the Service. Rendered as a second Ingress with the
+  # ingress-nginx denylist-source-range annotation, so it needs className
+  # nginx; with another controller clear it and block the paths there.
+  denyPaths: []
 
 # Default requests and limits are sized for a small preview install. Increase
 # them for production geospatial workloads after measuring workload behavior.
@@ -372,6 +379,68 @@ security:
     # matched as a case-sensitive prefix of the reference, so a secret stored by
     # full ARN needs an ARN-form entry and one stored by name a name-form entry.
     allowedSecretReferencePrefixes: []
+
+# Optional NetworkPolicy for the server pods (honua-helm#138). Off by default
+# because peer namespaces and labels are cluster-specific; enable it on clusters
+# whose CNI enforces NetworkPolicy (Calico, Cilium, the AWS VPC CNI with network
+# policy, Azure NPM). It selects only the server Deployment's pods; the
+# preflight, migration and GP Jobs and the chart-managed database keep the
+# namespace default.
+networkPolicy:
+  enabled: false
+  ingress:
+    # Peers allowed to reach the server port (service.targetPort): the ingress
+    # controller. The default matches the ingress-nginx namespace the stage and
+    # prod overlays route through; replace it for another controller. A
+    # cloud load balancer that targets pod IPs directly (AWS Load Balancer
+    # Controller IP mode, Azure Application Gateway) needs an ipBlock for its
+    # subnets in extraFrom instead.
+    controller:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+    # Allow pods of this release (the Helm test hook) to reach the server.
+    allowSameRelease: true
+    # More NetworkPolicyPeer entries, e.g. the Prometheus namespace when
+    # metrics.serviceMonitor or metrics.serviceAnnotations is enabled.
+    extraFrom: []
+  egress:
+    dns:
+      enabled: true
+      # Cluster DNS peers. The default matches CoreDNS / kube-dns on EKS, AKS,
+      # GKE and kind.
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    # TCP ports the server may open: PostgreSQL and HTTPS (OIDC discovery,
+    # object storage, cloud secret stores, licence service).
+    ports:
+      - port: 5432
+        protocol: TCP
+      - port: 443
+        protocol: TCP
+    # Destinations for those ports (all of them, 443 included). Empty allows
+    # any destination on them; set ipBlock / namespaceSelector peers to narrow
+    # it, and keep public HTTPS reachable for OIDC discovery and the licence
+    # service (0.0.0.0/0 minus the cluster ranges, for example).
+    to: []
+    # Allow the port of observability.otlpEndpoint (4317 in the overlays) to
+    # any destination, in its own rule, when the endpoint is set.
+    otlp: true
+    # More NetworkPolicyEgressRule entries. Common needs:
+    #   - geoprocessing.kubernetesJobs: the server calls the Kubernetes API;
+    #     CNIs that evaluate policy after service DNAT (Calico, Cilium) need
+    #     the API server endpoint, e.g. port 6443 or 443 to the control plane.
+    #   - cloud workload identity: EKS Pod Identity 169.254.170.23/32 port 80,
+    #     IMDS and the GKE metadata server 169.254.169.254/32 port 80 (and 988
+    #     on GKE Dataplane V2).
+    #   - NodeLocal DNSCache: 169.254.20.10/32 port 53 (UDP and TCP), which
+    #     egress.dns.to does not match.
+    extraTo: []
 
 # Chart-managed ConfigMap. Set config.create=false and config.name to reference
 # an externally managed ConfigMap instead.
@@ -806,6 +875,29 @@ geoprocessing:
     # values reach the worker as literals. They are written into every Job spec and the durable job record,
     # readable by anyone who can read Jobs in the namespace or the job store.
     allowInlineWorkerSecrets: false
+    # Namespace isolation (honua-helm#138). With the Jobs enabled the server
+    # service account can create Jobs, and so pods, in `namespace`. Run them in
+    # a dedicated namespace (not the release namespace) labelled for Pod
+    # Security admission: enforce "baseline" and warn/audit "restricted"
+    # (docs/values-contract.md#geoprocessing-job-namespace). The server does not
+    # yet stamp a restricted-compliant securityContext on the Job pods, so
+    # enforcing "restricted" rejects them today. NOTES.txt warns after install
+    # when the namespace is the release namespace or has no enforce label.
+    #
+    # A job's parameters or artifact can name another image or service account
+    # than the defaults above. admissionPolicy renders a cluster-scoped
+    # ValidatingAdmissionPolicy (Kubernetes 1.30 or later, needs rights to
+    # create one) that admits a Job created by the server service account in
+    # `namespace` only with the worker image (or extraImages), the job service
+    # account and the image entrypoint, and without init/ephemeral containers,
+    # host namespaces, hostPath volumes or privileged containers. It does not
+    # constrain env, envFrom or secret volumes, so it complements the dedicated
+    # namespace rather than replacing it.
+    admissionPolicy:
+      enabled: false
+      # More exact image references the Jobs may run, e.g. a native GP worker
+      # a job artifact names.
+      extraImages: []
 
 # Chart-managed PostGIS for the development quick start. The image is the same
 # pgrouting pin as the customer install manifest. Production installs leave this

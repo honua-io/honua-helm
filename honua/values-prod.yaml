@@ -74,6 +74,11 @@ ingress:
     - secretName: honua-prod-tls
       hosts:
         - honua.example.com
+  # The server's Prometheus endpoint requires an Admin credential, and it is
+  # also kept off the public ingress: Prometheus scrapes it in-cluster through
+  # the Service (metrics.serviceMonitor / metrics.serviceAnnotations).
+  denyPaths:
+    - /metrics
 
 config:
   env:

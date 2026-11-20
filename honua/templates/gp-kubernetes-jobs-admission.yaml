@@ -1,0 +1,70 @@
+{{- /* Optional ValidatingAdmissionPolicy for geoprocessing Jobs (honua-helm#138).
+       A job's parameters or artifact can name another image or service account
+       than the chart's defaults, so the server identity, which may create Jobs
+       in the GP namespace, could start any image there. This policy admits a
+       Job created by the server service account only when it runs the worker
+       image (or admissionPolicy.extraImages) as the job service account and its
+       entrypoint, with no init or ephemeral containers, host namespaces,
+       hostPath volumes or privileged containers. It does not constrain env,
+       envFrom or secret volumes: a dedicated namespace and Pod Security
+       admission cover those. Cluster-scoped: installing it needs rights to
+       create ValidatingAdmissionPolicies (Kubernetes 1.30 or later). */ -}}
+{{- if eq (include "honua.gpJobs.enabled" .) "true" }}
+{{- $gp := include "honua.gpJobs.values" . | fromJson }}
+{{- $admission := get $gp "admissionPolicy" | default dict }}
+{{- if get $admission "enabled" }}
+{{- $images := prepend (get $admission "extraImages" | default list) (include "honua.gpJobs.image" .) | uniq }}
+{{- $name := printf "%s-%s-gp-jobs" .Release.Namespace (include "honua.fullname" .) | trunc 253 | trimSuffix "-" }}
+{{- $creator := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "honua.serviceAccountName" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        resources: ["jobs"]
+        operations: ["CREATE"]
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ include "honua.gpJobs.namespace" . | quote }}
+  matchConditions:
+    - name: created-by-honua-server
+      expression: {{ printf "request.userInfo.username == %s" ($creator | quote) | quote }}
+  variables:
+    - name: pod
+      expression: "object.spec.template.spec"
+  validations:
+    - expression: {{ printf "variables.pod.containers.all(c, c.image in %s)" ($images | toJson) | quote }}
+      message: {{ printf "Honua GP Jobs may only run %s." (join ", " $images) | quote }}
+    - expression: {{ printf "has(variables.pod.serviceAccountName) && variables.pod.serviceAccountName == %s" (include "honua.gpJobs.serviceAccountName" . | quote) | quote }}
+      message: {{ printf "Honua GP Jobs must run as service account %s." (include "honua.gpJobs.serviceAccountName" .) | quote }}
+    - expression: "variables.pod.containers.all(c, !has(c.command) && !has(c.args))"
+      message: "Honua GP Jobs run the image entrypoint; command and args overrides are refused."
+    - expression: "(!has(variables.pod.initContainers) || size(variables.pod.initContainers) == 0) && (!has(variables.pod.ephemeralContainers) || size(variables.pod.ephemeralContainers) == 0)"
+      message: "Honua GP Jobs may not add init or ephemeral containers."
+    - expression: "!(has(variables.pod.hostNetwork) && variables.pod.hostNetwork) && !(has(variables.pod.hostPID) && variables.pod.hostPID) && !(has(variables.pod.hostIPC) && variables.pod.hostIPC)"
+      message: "Honua GP Jobs may not use host namespaces."
+    - expression: "!has(variables.pod.volumes) || variables.pod.volumes.all(v, !has(v.hostPath))"
+      message: "Honua GP Jobs may not mount hostPath volumes."
+    - expression: "variables.pod.containers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)"
+      message: "Honua GP Jobs may not run privileged containers."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "honua.labels" . | nindent 4 }}
+    app.kubernetes.io/component: geoprocessing
+spec:
+  policyName: {{ $name }}
+  validationActions: ["Deny"]
+{{- end }}
+{{- end }}
