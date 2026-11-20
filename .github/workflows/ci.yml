@@ -147,6 +147,11 @@ jobs:
           helm lint honua -f honua/ci-values/gp-kubernetes-jobs.yaml
           python3 scripts/test-gp-kubernetes-jobs.py
 
+      # NetworkPolicy, GP Job admission policy, stage digest pin and the
+      # ingress refusal of /metrics (honua-helm#138).
+      - name: Verify chart hardening rendering
+        run: python3 scripts/test-chart-hardening.py
+
       - name: Prove the chart neither requires nor deploys Redis
         run: |
           set -euo pipefail

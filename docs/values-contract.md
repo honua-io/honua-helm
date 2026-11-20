@@ -186,6 +186,8 @@ setting. See the
 | Naming | `nameOverride`, `fullnameOverride` | Use only for DNS length constraints or platform naming standards. |
 | ServiceAccount | `serviceAccount.*` | Token automount stays disabled by default. |
 | Routing | `service.*`, `ingress.*` | Ingress class, DNS, TLS, and annotations are platform-specific. |
+| Public paths | `ingress.denyPaths` | Path prefixes the ingress controller refuses for every client, rendered as a second ingress-nginx Ingress with `denylist-source-range`. The stage and prod overlays list `/metrics`; render fails for another `ingress.className` while it is set. |
+| Network policy | `networkPolicy.*` | Opt-in NetworkPolicy for the server pods: the server port from the ingress controller and same-release pods, egress to DNS, the listed TCP ports (5432, 443), the OTLP collector port and `extraTo`. Render fails when it would admit every source. |
 | Secret reference allowlist | `security.requestSecretReferences.*` | Deny-by-default allowlist for request-supplied secret references; see [Request-supplied secret references](#request-supplied-secret-references). |
 | Runtime config | `config.create`, `config.name`, `config.env.*` | Non-secret application settings are stored in a ConfigMap unless an external ConfigMap is named. |
 | Scheduling | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | Platform placement and metadata hooks. `podLabels` must not set `app.kubernetes.io/component` (chart-owned, value `server`). |
@@ -197,13 +199,50 @@ setting. See the
 | Deploy telemetry | `controlPlane.telemetryConnections[]`, `controlPlane.deployTarget.telemetry.connection`, `controlPlane.deployTarget.telemetry.parameters` | Opt-in Prometheus connections for the server's deploy telemetry gate, rendered into the deploy-target ConfigMap. Auth header values come only from `authHeaderSecretRef` (secretKeyRef). `baseUrl` must be https unless `allowPrivateNetworks: true`. The target's `connection` must name a declared `connectionId`. |
 | Geoprocessing | `geoprocessing.kubernetesJobs.*` | Preview. Runs asynchronous GP as Kubernetes Jobs through the server's `honua-kubernetes-job` backend. Renders a namespaced Role and RoleBinding, a job ServiceAccount, the `ControlPlane__Kubernetes__*` and `ControlPlane__ExecutionWorkloads__<index>__*` server env, and a post-install RBAC check. Mounts the server's service account token. Workers import the server's runtime Secret and ConfigMap through `envFrom` (honua-server at or after `bebaada00`); otherwise credentials travel as cloud secret references. See `honua/README.md` "Geoprocessing on Kubernetes Jobs". |
 
+## Geoprocessing job namespace
+
+With `geoprocessing.kubernetesJobs.enabled` the server service account can
+create Jobs, and so pods, in `geoprocessing.kubernetesJobs.namespace`. A job's
+parameters or artifact can name another image or service account than the
+chart defaults. Treat that namespace as a separate trust zone:
+
+1. Use a dedicated namespace, not the release namespace. Jobs there cannot
+   mount the server's Secrets, and the namespaced Role the chart renders grants
+   nothing in the release namespace. NOTES.txt warns when the Jobs share the
+   release namespace.
+2. Label it for Pod Security admission: enforce `baseline` and warn/audit
+   `restricted`. NOTES.txt warns after install when the namespace has no
+   enforce label.
+
+   ```bash
+   kubectl label namespace honua-gp \
+     pod-security.kubernetes.io/enforce=baseline \
+     pod-security.kubernetes.io/warn=restricted \
+     pod-security.kubernetes.io/audit=restricted
+   ```
+
+   The server does not yet write a `securityContext` on Job pods, so
+   `enforce=restricted` rejects every GP Job today; keep `restricted` at
+   warn/audit until it does.
+3. Enable `geoprocessing.kubernetesJobs.admissionPolicy` on Kubernetes 1.30 or
+   later. It renders a cluster-scoped ValidatingAdmissionPolicy and binding
+   that admit a Job created by the server service account in that namespace
+   only with the worker image (or `admissionPolicy.extraImages`), the job
+   service account and the image entrypoint (no `command`/`args`), and refuse
+   init or ephemeral containers, host namespaces, hostPath volumes and
+   privileged containers. It does not constrain `env`, `envFrom` or secret
+   volumes, so a Job can still reference any Secret in its namespace: that is
+   what step 1 contains. Installing it needs rights to create
+   ValidatingAdmissionPolicies. The kind smoke proves the server's own
+   Jobs pass and a swapped image or service account is denied.
+
 ## Environment Overlays
 
 | Overlay | Purpose | Runtime secret posture | Notes |
 | --- | --- | --- | --- |
 | `honua/values-dev.yaml` | Local clusters and ephemeral preview namespaces | Chart-managed Secret with development-only strong password and connection-encryption key; Chart-managed PostGIS enabled | Self-contained for Helm rendering and development smoke. Not for production data. |
-| `honua/values-stage.yaml` | Release-candidate validation | Existing Secret named `honua-stage-runtime` | Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled) so it is internally consistent out of the box. Enables ingress, observability, and OpenTelemetry with staging-sized resources. Override DNS, TLS, image identity, and secret name per environment. For autoscaled HA, opt into MultiNode (see the overlay header). |
-| `honua/values-prod.yaml` | Customer-operated production posture | Existing Secret named `honua-prod-runtime` | Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled) so it is internally consistent out of the box. Enables ingress, observability, and OpenTelemetry with production-sized resources. Override DNS, TLS, image identity, provider annotations, and secret name per customer. For autoscaled HA, opt into MultiNode (set `Deployment__Mode=MultiNode`, enable autoscaling, and supply a shared cloud `FileStorage:Provider`; see the overlay header). |
+| `honua/values-stage.yaml` | Release-candidate validation | Existing Secret named `honua-stage-runtime` | Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled) so it is internally consistent out of the box. Enables ingress, observability, and OpenTelemetry with staging-sized resources. Pins the server image by digest (`image.tag=""`, `pullPolicy: IfNotPresent`) and refuses `/metrics` at the ingress. Override DNS, TLS, the candidate digest, and secret name per environment. For autoscaled HA, opt into MultiNode (see the overlay header). |
+| `honua/values-prod.yaml` | Customer-operated production posture | Existing Secret named `honua-prod-runtime` | Single-instance (`replicaCount: 1`, `Deployment__Mode=SingleInstance`, HPA disabled) so it is internally consistent out of the box. Enables ingress, observability, and OpenTelemetry with production-sized resources, and refuses `/metrics` at the ingress. Override DNS, TLS, image identity, provider annotations, and secret name per customer. For autoscaled HA, opt into MultiNode (set `Deployment__Mode=MultiNode`, enable autoscaling, and supply a shared cloud `FileStorage:Provider`; see the overlay header). |
 
 ## Breaking Changes Policy
 

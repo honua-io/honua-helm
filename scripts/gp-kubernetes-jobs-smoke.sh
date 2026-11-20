@@ -13,6 +13,8 @@
 #   4. an asynchronous managed buffer or native conversion through OGC API Processes is
 #      dispatched by the live server as a batch/v1 Job in the namespace, with
 #      the Job service account, the selected image and the worker env;
+#   4b. the GP admission policy denies a server-created Job with another image,
+#      service account or entrypoint (honua-helm#138);
 #   5. removing the RoleBinding makes the RBAC check fail with
 #      HONUA_GP_K8S_RBAC_MISSING.
 # Completion, result semantics, and secret-backed worker configuration are required.
@@ -77,6 +79,7 @@ helm install "$release" ./honua -n "$namespace" --wait --timeout 10m \
   --set geoprocessing.kubernetesJobs.image.digest="$worker_digest" \
   --set-string config.env.Operations__SecretChannel__KeyRingCertificatePkcs12=env:GP_SMOKE_KEYRING_PFX \
   --set-file secret.env.GP_SMOKE_KEYRING_PFX="$keyring_dir/keyring.b64" \
+  --set geoprocessing.kubernetesJobs.admissionPolicy.enabled=true \
   --set geoprocessing.kubernetesJobs.ttlSecondsAfterFinished=600 | tee "$evidence/helm-install.txt"
 
 # 1. The post-install RBAC check ran as the server and passed.
@@ -204,6 +207,43 @@ else
   python3 scripts/validate-gp-buffer.py "$evidence/gp-results.json" | tee "$evidence/geometry-oracle.json"
 fi
 kubectl delete "$job" -n "$namespace" --wait=false >/dev/null 2>&1 || true
+
+# 4b. The admission policy (honua-helm#138) admitted the server's Job above and
+# denies a server-created Job that swaps the image, the service account or the
+# entrypoint.
+job_sa="$fullname-gp-job"
+probe_job() {
+  jq -n --arg image "$1" --arg sa "$2" --arg command "${3:-}" '{apiVersion: "batch/v1", kind: "Job",
+    metadata: {generateName: "gp-admission-probe-"},
+    spec: {template: {spec: {restartPolicy: "Never", serviceAccountName: $sa,
+      containers: [{name: "worker", image: $image}
+        + (if $command == "" then {} else {command: [$command]} end)]}}}}' \
+    | kubectl create -n "$namespace" --as "$server_sa" --dry-run=server -f - 2>&1
+}
+denied_image=""
+for _ in $(seq 1 30); do
+  if ! probe_job "registry.example/other:1" "$job_sa" > "$evidence/admission-denied-image.txt"; then
+    denied_image=yes
+    break
+  fi
+  sleep 2
+done
+[ -n "$denied_image" ] || fail "admission policy admitted a Job with another image"
+grep -q 'Honua GP Jobs may only run' "$evidence/admission-denied-image.txt" \
+  || fail "image denial did not come from the admission policy: $(cat "$evidence/admission-denied-image.txt")"
+# Probed once the policy is enforced, so the allow is the policy's, not its absence.
+probe_job "$worker_image" "$job_sa" > "$evidence/admission-allowed.txt" \
+  || fail "admission policy rejects the worker image and job service account: $(cat "$evidence/admission-allowed.txt")"
+if probe_job "$worker_image" default > "$evidence/admission-denied-sa.txt"; then
+  fail "admission policy admitted a Job with another service account"
+fi
+grep -q "Honua GP Jobs must run as service account $job_sa" "$evidence/admission-denied-sa.txt" \
+  || fail "service account denial did not come from the admission policy: $(cat "$evidence/admission-denied-sa.txt")"
+if probe_job "$worker_image" "$job_sa" /bin/sh > "$evidence/admission-denied-command.txt"; then
+  fail "admission policy admitted a Job that overrides the entrypoint"
+fi
+grep -q 'command and args overrides are refused' "$evidence/admission-denied-command.txt" \
+  || fail "command denial did not come from the admission policy: $(cat "$evidence/admission-denied-command.txt")"
 
 # 5. Missing RBAC fails the check by name, not silently.
 kubectl delete rolebinding "$fullname-gp-kubernetes-jobs" -n "$namespace"

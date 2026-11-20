@@ -955,3 +955,19 @@ volumes:
   {{- end }}
 {{- end }}
 {{- end -}}
+
+{{- /* TCP port of observability.otlpEndpoint for the NetworkPolicy egress rule:
+       the explicit URL port, else 443 for https and 80 for http. Empty when no
+       endpoint is set or networkPolicy.egress.otlp is false. */ -}}
+{{- define "honua.networkPolicyOtlpPort" -}}
+{{- $endpoint := trim (toString (default "" (dig "otlpEndpoint" "" (.Values.observability | default dict)))) -}}
+{{- if and $endpoint .Values.networkPolicy.egress.otlp -}}
+{{- $url := urlParse $endpoint -}}
+{{- $explicitPort := trimPrefix ":" (regexFind ":[0-9]+$" (get $url "host")) -}}
+{{- if $explicitPort -}}
+{{- $explicitPort -}}
+{{- else -}}
+{{- ternary "443" "80" (eq (get $url "scheme") "https") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
