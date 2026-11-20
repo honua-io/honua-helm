@@ -2,8 +2,8 @@
 """Render regressions for the chart hardening options (honua-helm#138).
 
 Covers the optional server NetworkPolicy, the GP Job admission policy, the
-digest-pinned stage overlay and the ingress refusal of /metrics in the stage
-and prod overlays. The kind smoke (scripts/gp-kubernetes-jobs-smoke.sh) proves
+digest-pinned stage overlay, the ingress refusal of /metrics in the stage
+and prod overlays, and the ServiceMonitor scrape credential (honua-helm#139). The kind smoke (scripts/gp-kubernetes-jobs-smoke.sh) proves
 the admission policy against a live API server.
 """
 from pathlib import Path
@@ -169,9 +169,21 @@ def check_gp_admission_policy():
         assert any(needle in expression for expression in expressions), needle
 
 
+def check_service_monitor_credentials():
+    observability = 'honua/ci-values/observability.yaml'
+    [monitor] = of_kind(render(observability), 'ServiceMonitor')
+    [endpoint] = monitor['spec']['endpoints']
+    assert endpoint['authorization'] == {
+        'type': 'ApiKey', 'credentials': {'name': 'honua-metrics-scrape', 'key': 'api-key'}}
+    error = refused(observability, '--set', 'metrics.serviceMonitor.credentials.secretName=')
+    assert 'metrics.serviceMonitor.credentials.secretName' in error, error
+    assert not of_kind(render(BASE), 'ServiceMonitor'), 'ServiceMonitor must stay opt-in'
+
+
 check_network_policy()
 check_network_policy_options()
 check_stage_digest_pin()
 check_metrics_refused_at_ingress()
 check_gp_admission_policy()
+check_service_monitor_credentials()
 print('chart hardening render regressions passed')

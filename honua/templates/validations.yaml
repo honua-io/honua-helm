@@ -150,6 +150,14 @@
 {{- end -}}
 {{- end -}}
 
+{{- $scrape := (.Values.metrics | default dict).serviceMonitor | default dict -}}
+{{- if eq (toString (default false $scrape.enabled)) "true" -}}
+{{- $scrapeCredentials := $scrape.credentials | default dict -}}
+{{- if eq (trim (toString (default "" $scrapeCredentials.secretName))) "" -}}
+{{- fail "metrics.serviceMonitor.enabled needs metrics.serviceMonitor.credentials.secretName: the server serves /metrics only to an Admin credential. Store an admin:read API key in a Secret and name it there (see the chart README, Prometheus (scrape))." -}}
+{{- end -}}
+{{- end -}}
+
 {{- /* An AlertmanagerConfig with no receivers is a no-op that silently drops
        alerts. When the receiver surface is enabled, require at least one
        receiver so the chart cannot ship "routing on, nowhere to deliver". */ -}}
