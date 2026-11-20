@@ -519,6 +519,12 @@ metrics:
     scrapeTimeout: 10s
     # Extra labels so a Prometheus Operator release selector can adopt this.
     labels: {}
+    # The server serves /metrics only to an Admin credential. Name a Secret that
+    # holds an API key (an admin:read key is enough); Prometheus sends it as
+    # "Authorization: ApiKey <key>". Required when serviceMonitor.enabled is true.
+    credentials:
+      secretName: ""
+      secretKey: api-key
   # Prometheus scrape annotations on the Service (for non-Operator Prometheus
   # that discovers targets via prometheus.io/* annotations).
   serviceAnnotations:

@@ -1141,16 +1141,40 @@ metrics:
     interval: 30s
     labels:
       release: kube-prometheus-stack   # match your Prometheus ruleSelector/serviceMonitorSelector
+    credentials:
+      secretName: honua-metrics-scrape # Secret in the release namespace
+      secretKey: api-key
   prometheusRule:
     enabled: true
     labels:
       release: kube-prometheus-stack
 ```
 
+`/metrics` needs an Admin credential, so the `ServiceMonitor` sends an API key
+from `metrics.serviceMonitor.credentials` as `Authorization: ApiKey <key>`. The
+chart refuses to render a `ServiceMonitor` without it. A read-only `admin:read`
+key is enough; do not use the bootstrap admin password. Once the server is up,
+mint the key and store it:
+
+```bash
+KEY=$(curl -sf -X POST "$HONUA_URL/api/v1/admin/api-keys" \
+  -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"prometheus-scrape","permissions":["admin:read"]}' | jq -r .data.key)
+kubectl -n honua create secret generic honua-metrics-scrape --from-literal=api-key="$KEY"
+```
+
+Until the Secret exists, the target shows as down. The server must accept
+`Authorization: ApiKey`, which arrived in honua-server with
+[honua-server#8680](https://github.com/honua-io/honua-server/issues/8680). An
+older server answers 401.
+
 For a non-Operator Prometheus that discovers targets via annotations, use
 `metrics.serviceAnnotations.enabled: true` instead, which stamps
 `prometheus.io/scrape`, `prometheus.io/port`, and `prometheus.io/path` on the
-Service.
+Service. Annotations cannot carry a credential. The scrape job that reads them
+must send the key itself, for example with an `authorization` block
+(`type: ApiKey`, `credentials_file: /etc/prometheus/honua-api-key`) in the
+`kubernetes-service-endpoints` job.
 
 The `ServiceMonitor`/`PrometheusRule` resources require the Prometheus Operator
 CRDs and a server build that exposes a Prometheus endpoint at the configured
@@ -1272,6 +1296,8 @@ metrics:
 | `observability.otlpEndpoint` | `""` | OTLP collector endpoint; injected as `OTEL_EXPORTER_OTLP_ENDPOINT`. Required (with the scrape options) when observability is enabled. |
 | `observability.otlpProtocol` | `grpc` | OTLP protocol (`grpc` or `http/protobuf`). |
 | `metrics.serviceMonitor.enabled` | false | Render a Prometheus Operator `ServiceMonitor`. |
+| `metrics.serviceMonitor.credentials.secretName` | "" | Secret with the scrape API key, sent as `Authorization: ApiKey`. Required with the `ServiceMonitor`. |
+| `metrics.serviceMonitor.credentials.secretKey` | api-key | Key in that Secret. |
 | `metrics.serviceAnnotations.enabled` | false | Stamp `prometheus.io/*` scrape annotations on the Service. |
 | `metrics.prometheusRule.enabled` | false | Render the `PrometheusRule` (infra + SLO alerts). |
 | `metrics.prometheusRule.slo.enabled` | true | Emit the `honua.slo` group (availability / error-rate / burn-rate / in-band). Applies only when `prometheusRule.enabled`. |

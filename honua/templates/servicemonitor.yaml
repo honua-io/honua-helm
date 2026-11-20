@@ -17,4 +17,11 @@ spec:
       path: {{ .Values.metrics.serviceMonitor.path | quote }}
       interval: {{ .Values.metrics.serviceMonitor.interval | quote }}
       scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout | quote }}
+      {{- with .Values.metrics.serviceMonitor.credentials }}
+      authorization:
+        type: ApiKey
+        credentials:
+          name: {{ .secretName | quote }}
+          key: {{ .secretKey | quote }}
+      {{- end }}
 {{- end }}

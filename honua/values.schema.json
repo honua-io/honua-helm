@@ -752,7 +752,15 @@
             "path": { "type": "string" },
             "interval": { "type": "string" },
             "scrapeTimeout": { "type": "string" },
-            "labels": { "type": "object" }
+            "labels": { "type": "object" },
+            "credentials": {
+              "type": "object",
+              "description": "Secret holding the API key Prometheus sends as Authorization: ApiKey <key> (the server's /metrics requires an Admin credential).",
+              "properties": {
+                "secretName": { "type": "string" },
+                "secretKey": { "type": "string", "minLength": 1 }
+              }
+            }
           }
         },
         "serviceAnnotations": {

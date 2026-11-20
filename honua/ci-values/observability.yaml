@@ -17,6 +17,8 @@ metrics:
     interval: 15s
     labels:
       release: kube-prometheus-stack
+    credentials:
+      secretName: honua-metrics-scrape
   serviceAnnotations:
     enabled: true
   prometheusRule:
