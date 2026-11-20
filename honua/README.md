@@ -1160,21 +1160,24 @@ mint the key and store it:
 KEY=$(curl -sf -X POST "$HONUA_URL/api/v1/admin/api-keys" \
   -H "X-API-Key: $ADMIN_KEY" -H 'Content-Type: application/json' \
   -d '{"name":"prometheus-scrape","permissions":["admin:read"]}' | jq -r .data.key)
-kubectl -n honua create secret generic honua-metrics-scrape --from-literal=api-key="$KEY"
+[ -n "$KEY" ] && [ "$KEY" != null ] || { echo "API key creation failed" >&2; exit 1; }
+kubectl -n "$RELEASE_NAMESPACE" create secret generic honua-metrics-scrape --from-literal=api-key="$KEY"
 ```
 
-Until the Secret exists, the target shows as down. The server must accept
-`Authorization: ApiKey`, which arrived in honua-server with
-[honua-server#8680](https://github.com/honua-io/honua-server/issues/8680). An
-older server answers 401.
+Until the Secret exists, the Prometheus Operator skips this ServiceMonitor and
+logs why, so the target is missing rather than down. The server must accept
+`Authorization: ApiKey`; older server builds answer 401 (see
+[honua-server#8680](https://github.com/honua-io/honua-server/issues/8680)).
 
 For a non-Operator Prometheus that discovers targets via annotations, use
 `metrics.serviceAnnotations.enabled: true` instead, which stamps
 `prometheus.io/scrape`, `prometheus.io/port`, and `prometheus.io/path` on the
-Service. Annotations cannot carry a credential. The scrape job that reads them
-must send the key itself, for example with an `authorization` block
-(`type: ApiKey`, `credentials_file: /etc/prometheus/honua-api-key`) in the
-`kubernetes-service-endpoints` job.
+Service. Annotations cannot carry a credential. Do not add the key to the
+generic `kubernetes-service-endpoints` job: it scrapes every annotated Service,
+so every other workload would receive the key. Add a dedicated job that keeps
+only the Honua Service (a `keep` relabel on its
+`app.kubernetes.io/instance` label) and carries the `authorization` block
+(`type: ApiKey`, `credentials_file: /etc/prometheus/honua-api-key`).
 
 The `ServiceMonitor`/`PrometheusRule` resources require the Prometheus Operator
 CRDs and a server build that exposes a Prometheus endpoint at the configured
