@@ -26,19 +26,21 @@ replicaCount: 1
 #
 # Pin one of the following before deploying:
 #   * image.digest (strongest): set image.digest to "sha256:<64 hex>" and leave
-#     image.tag empty. pullPolicy must then be IfNotPresent or Never (enforced by
-#     the chart). See honua/ci-values/digest.yaml for the shape.
-#   * an immutable release tag: override image.tag with a concrete "vX.Y.Z-aot"
-#     release tag (the value release CI stamps into values.yaml).
+#     image.tag empty (the digest-pinned shape release CI stamps into values.yaml).
+#     pullPolicy must then be IfNotPresent or Never (enforced by the chart). See
+#     honua/ci-values/digest.yaml for the shape.
+#   * a concrete release tag: override image.tag with a concrete "vX.Y.Z-aot"
+#     release tag.
 #
 # This overlay intentionally clears image.tag so a from-checkout
 # "helm install -f values-prod.yaml" cannot silently inherit the mutable
 # "latest-aot" tag from values.yaml. With both image.tag and image.digest empty,
 # the chart's one-of-tag/digest guard fails render until an operator supplies an
 # immutable identity (digest preferred, or a concrete "vX.Y.Z-aot" release tag).
-# Release CI stamps the immutable tag into values.yaml on the packaged chart, so
-# published chart installs are pinned without further action. pullPolicy is
-# IfNotPresent so a pinned identity is not silently re-pulled.
+# Release CI stamps image.digest, clears image.tag, and sets pullPolicy to
+# IfNotPresent in values.yaml on the packaged chart, so published chart installs
+# are digest-pinned without further action. pullPolicy is IfNotPresent so a
+# pinned identity is not silently re-pulled.
 image:
   tag: ""
   pullPolicy: IfNotPresent
