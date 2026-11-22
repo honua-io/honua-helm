@@ -193,7 +193,8 @@ helm dependency build honua
 helm lint honua -f honua/ci-values/base.yaml
 helm lint honua -f honua/values-dev.yaml
 helm lint honua -f honua/values-stage.yaml
-helm lint honua -f honua/values-prod.yaml
+# values-prod.yaml clears image.tag to force an explicit pin; supply one (or --set image.digest=...) to lint/template it.
+helm lint honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot
 
 helm template honua ./honua -f honua/ci-values/base.yaml
 helm template honua ./honua -f honua/ci-values/digest.yaml
@@ -202,7 +203,7 @@ helm template honua ./honua -f honua/ci-values/postgresql.yaml
 helm template honua ./honua --is-upgrade -f honua/ci-values/postgresql.yaml
 helm template honua-dev ./honua -f honua/values-dev.yaml
 helm template honua-stage ./honua -f honua/values-stage.yaml
-helm template honua-prod ./honua -f honua/values-prod.yaml
+helm template honua-prod ./honua -f honua/values-prod.yaml --set image.tag=v0.0.0-aot
 helm template honua-stage ./honua -f honua/values-stage.yaml --is-upgrade
 ```
 
