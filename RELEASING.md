@@ -145,11 +145,12 @@ digest is recorded in the workflow step summary and in the GitHub Release notes
 (under "Server image digest"), so each published chart traces back to the exact
 server image bytes it was packaged against.
 
-Cluster-validated install/upgrade smoke ([honua-helm-2](https://github.com/honua-io/honua-helm/issues/2))
-is the next layer on top of this existence check. Until honua-helm-2 lands,
-end-to-end smoke evidence (e.g., a real `helm upgrade --install` against a
-test cluster) remains a manual step the operator attaches alongside the
-auto-generated digest line.
+Cluster-validated install/upgrade/rollback smoke (`install-upgrade-rollback-smoke`
+in `.github/workflows/ci.yml`, delivered in
+[honua-helm#2](https://github.com/honua-io/honua-helm/issues/2)) runs on kind in
+CI on top of this existence check. Operators validating a target environment can
+still attach cluster-specific smoke evidence alongside the auto-generated digest
+line.
 
 ## Subchart pinning
 

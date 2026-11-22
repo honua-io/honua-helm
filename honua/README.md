@@ -50,8 +50,8 @@ Value keys under `image`, `service`, `ingress`, `config.env`, `secret.env`,
 and `postgresql` are stable within a chart major version. Operators
 upgrading from in-monorepo deployments do not need value migrations within
 chart 0.x — see [`docs/MIGRATION.md`](https://github.com/honua-io/honua-helm/blob/trunk/docs/MIGRATION.md). The
-operator-ready values contract that formalizes this guarantee is tracked in
-[honua-helm#6](https://github.com/honua-io/honua-helm/issues/6).
+operator-ready values contract that formalizes this guarantee is documented in
+[`docs/values-contract.md`](https://github.com/honua-io/honua-helm/blob/trunk/docs/values-contract.md).
 
 ## Versioning
 
@@ -147,6 +147,8 @@ resources:
 config:
   env:
     Deployment__Mode: "MultiNode"
+    FileStorage__Provider: "AwsS3"   # or "AzureBlob"; "Local" is rejected in MultiNode
+    Public__BaseUrl: "https://gis.example.com"
 
 autoscaling:
   enabled: true
@@ -185,10 +187,6 @@ ingress:
     - secretName: honua-tls
       hosts:
         - gis.example.com
-
-config:
-  env:
-    Public__BaseUrl: "https://gis.example.com"
 
 secret:
   create: false
@@ -879,7 +877,7 @@ The honua-iac `aws-eks` module provides a Preview deployment path for GP on
 Kubernetes Job runners with a PostGIS datastore. This is not a required
 2026.1 rc.2 certification cell. It creates:
 
-- RDS PostGIS, ElastiCache and the Secrets Manager entries;
+- RDS PostGIS, the Secrets Manager entries, and optional ElastiCache (`redis_enabled` defaults to `false`);
 - two workload IAM roles, `server` and `gp-job`.
 
 It creates no Kubernetes objects. This chart owns the service accounts and the
@@ -1073,7 +1071,7 @@ characters.
 | `autoscaling.behavior` | scale up/down policies | autoscaling/v2 behavior policies and stabilization windows. |
 | `podDisruptionBudget.enabled` | `null` | Render a PodDisruptionBudget. `null` auto-enables it for multi-replica workloads (`autoscaling.enabled` or `replicaCount > 1`); set `true`/`false` to force. |
 | `podDisruptionBudget.minAvailable` | `null` | Minimum available pods during voluntary disruptions. Mutually exclusive with `maxUnavailable`. |
-| `podDisruptionBudget.maxUnavailable` | `null` | Maximum unavailable pods during voluntary disruptions. Defaults to `25%` when both fields are unset. |
+| `podDisruptionBudget.maxUnavailable` | `null` | Maximum unavailable pods during voluntary disruptions. Defaults to `1` when both fields are unset. |
 | `ingress.enabled` | false | Enable ingress. |
 | `config.env.*` | N/A | Non-secret environment variables stored in a ConfigMap. |
 | `secret.env.*` | N/A | Secret environment variables stored in a chart-managed Secret. |
