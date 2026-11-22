@@ -115,17 +115,19 @@ The workflow fails fast (`set -euo pipefail`) when:
   pin to a real honua-server release before tagging, or supply the value via
   dispatch.
 - `app_version` starts with `v` (e.g. `v1.2.3`) or ends with `-aot` (e.g.
-  `1.2.3-aot`). Supply the bare server SemVer; the workflow stamps the image
-  tag as `v${app_version}-aot`.
+  `1.2.3-aot`). Supply the bare server SemVer; the workflow resolves
+  `v${app_version}-aot` to its manifest digest and stamps `image.digest`
+  (clearing `image.tag`).
 - `app_version` is not bare SemVer (`X.Y.Z`, optional pre-release; no `+`
-  build metadata). Build metadata is rejected because the workflow stamps the
-  image tag as `v${app_version}-aot`, and Docker/OCI references do not allow
-  `+`.
+  build metadata). Build metadata is rejected because the workflow inspects
+  `v${app_version}-aot` before digest stamping, and Docker/OCI references do not
+  allow `+`.
 - The honua-server image at `ghcr.io/honua-io/honua-server:v${app_version}-aot`
   does not exist or is not readable. The workflow runs
-  `docker buildx imagetools inspect` against the stamped reference and
-  captures one resolved `sha256` digest before packaging, so a chart cannot be
-  published pinned to a non-existent server image or ambiguous manifest output.
+  `docker buildx imagetools inspect` against that reference and captures one
+  resolved `sha256` digest to stamp into `image.digest` before packaging, so a
+  chart cannot be published pinned to a non-existent server image or ambiguous
+  manifest output.
 - `helm package` does not produce the expected
   `dist/honua-${chart_version}.tgz`.
 - `helm push` succeeds without returning a single `sha256` OCI digest for the

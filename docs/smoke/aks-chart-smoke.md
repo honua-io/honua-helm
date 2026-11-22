@@ -2,7 +2,7 @@
 type: guide
 title: "Smoke-test the chart on AKS"
 description: "The AKS-specific install and verification path, including what differs from a generic Kubernetes target."
-resource: "https://github.com/honua-io/honua-helm/tree/trunk/charts/honua"
+resource: "https://github.com/honua-io/honua-helm/tree/trunk/honua"
 tags: [aks, azure, smoke-test]
 ---
 # AKS Chart Smoke Runbook (honua-helm#10)
@@ -63,7 +63,7 @@ listing-submission evidence.
 ## Prerequisites (operator)
 
 1. An AKS validation cluster matching the customer-operated path. Reuse the
-   `honua-terraform#2` validation cluster when it provisions AKS; otherwise
+   `honua-iac#2` validation cluster when it provisions AKS; otherwise
    record the temporary AKS setup in the evidence directory.
 2. `az aks get-credentials ...` so `kubectl config current-context` points at
    the AKS cluster.

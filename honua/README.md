@@ -34,8 +34,9 @@ be at least 32 characters. `ASPNETCORE_ENVIRONMENT=Development` keeps this a
 minimal evaluation install. For production, install from `values-prod.yaml` with
 a pinned image (see [Production example](#production-example)).
 
-Published chart cuts pin `image.tag` to a concrete `vX.Y.Z-aot` server release;
-the local repo default `latest-aot` is dev-only.
+Published chart cuts stamp `image.digest` from the verified `vX.Y.Z-aot` server
+release, clear `image.tag`, and set `image.pullPolicy` to `IfNotPresent`; the
+local repo default `latest-aot` is dev-only.
 
 ## Upgrade
 
@@ -1083,11 +1084,11 @@ characters.
 | `extraEnv` | `[]` | Additional env vars from external sources (e.g. `valueFrom`). |
 | `extraEnvFrom` | `[]` | Additional ConfigMap/Secret sources used by the app and preflight hook. Can satisfy required secret variables when `secret.create=false`. |
 | `postgresql.enabled` | false | Enable Bitnami PostgreSQL subchart (dev only). |
- | `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
- | `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
- | `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |
- | `controlPlane.deployTarget.environment` | `""` | Target environment label. Empty uses `config.env.ASPNETCORE_ENVIRONMENT`. |
- | `controlPlane.deployTarget.artifactReference` | `""` | Target artifact reference. Empty uses the rendered image reference. |
+| `controlPlane.deployTarget.enabled` | true | Register this Deployment as a control-plane deploy target. `false` opts out entirely. |
+| `controlPlane.deployTarget.backend` | `honua-gitops-kubernetes` | Deploy backend identifier. Only this truthful hand-off value (`SupportsRollback=false`) is accepted; render fails otherwise. |
+| `controlPlane.deployTarget.targetId` / `targetName` | `""` | Target identity. Empty uses the chart fullname for both. |
+| `controlPlane.deployTarget.environment` | `""` | Target environment label. Empty uses `config.env.ASPNETCORE_ENVIRONMENT`. |
+| `controlPlane.deployTarget.artifactReference` | `""` | Target artifact reference. Empty uses the rendered image reference. |
 | `controlPlane.deployTarget.telemetry.connection` | `""` | The target's `telemetry.connection` parameter. Must name a `controlPlane.telemetryConnections[].connectionId`. |
 | `controlPlane.deployTarget.telemetry.parameters` | `{}` | Other `telemetry.*` target parameters, rendered as `ParameterEntries`. |
 | `controlPlane.telemetryConnections` | `[]` | Prometheus connections for the deploy telemetry gate; see [Deploy telemetry connections](#deploy-telemetry-connections). Auth header values come only from `authHeaderSecretRef`. |

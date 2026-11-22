@@ -85,11 +85,13 @@ helm upgrade --install honua ./honua-helm/honua \
 > works as `helm upgrade --install honua oci://ghcr.io/honua-io/charts/honua
 > --version X.Y.Z` after `helm registry login ghcr.io`.
 
-No value-key changes are required within chart `0.x`. Pin `image.tag` to an
-immutable server image. No `v*` server release tag has been cut either, so
-`vX.Y.Z-aot` has no value to substitute yet - use a digest, or a dated
-`nightly-YYYYMMDD-aot` tag. Published chart packages stamp `image.tag` at package
-time; see [`../RELEASING.md`](../RELEASING.md).
+No value-key changes are required within chart `0.x`. Pin `image.digest` (or a
+dated `nightly-YYYYMMDD-aot` `image.tag`) to an immutable server image. No `v*`
+server release tag has been cut either, so `vX.Y.Z-aot` has no value to
+substitute yet - use a digest, or a dated `nightly-YYYYMMDD-aot` tag. Published
+chart packages stamp `image.digest`, clear `image.tag`, and set
+`image.pullPolicy: IfNotPresent` at package time; see
+[`../RELEASING.md`](../RELEASING.md).
 
 ## Redis removed
 

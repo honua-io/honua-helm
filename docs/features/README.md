@@ -26,7 +26,7 @@ This repository packages Honua Server for Kubernetes.
 - Documented values contract with Helm schema validation for dependency auth and HPA targets, plus template guards for required runtime secrets.
 - Dev, stage, and prod overlay values for release-lane and customer-operated installs.
 - Liveness, readiness, and startup probes on the server health endpoints.
-- Packaged release pipeline that publishes the chart to `oci://ghcr.io/honua-io/charts` on a `chart-vX.Y.Z` tag, stamps `Chart.yaml` `version`/`appVersion` and `values.yaml` `image.tag` at package time, and attaches the `.tgz` to a GitHub Release on tag-triggered runs. `workflow_dispatch` defaults to a real dry run (validate + package, no publish); operators opt into a publish-without-Release path via the `publish: true` input.
+- Packaged release pipeline that publishes the chart to `oci://ghcr.io/honua-io/charts` on a `chart-vX.Y.Z` tag, stamps `Chart.yaml` `version`/`appVersion` and `values.yaml` `image.digest` (clearing `image.tag` and setting `image.pullPolicy: IfNotPresent`) at package time, and attaches the `.tgz` to a GitHub Release on tag-triggered runs. `workflow_dispatch` is dry-run only (`chart_version` and `app_version` inputs: validate, stamp, lint, render, and package with no publish).
 
 ## Source Evidence
 
@@ -43,4 +43,4 @@ This repository packages Honua Server for Kubernetes.
 
 ## Boundary
 
-Reusable cloud infrastructure belongs in `honua-terraform`; this chart owns Kubernetes packaging and values.
+Reusable cloud infrastructure belongs in `honua-iac`; this chart owns Kubernetes packaging and values.
