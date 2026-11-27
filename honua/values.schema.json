@@ -64,6 +64,16 @@
           "type": "string",
           "maxLength": 63,
           "pattern": "^$|^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$"
+        },
+        "artifactDigest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$",
+          "description": "Explicit OCI artifact digest stamped into HONUA_ARTIFACT_DIGEST; falls back to image.digest when empty."
+        },
+        "platformLockDigest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$",
+          "description": "Optional signed platform-lock digest stamped into HONUA_PLATFORM_LOCK_DIGEST."
         }
       }
     },
@@ -739,6 +749,63 @@
           "type": "string"
         }
       }
+    },
+    "supportTelemetry": {
+      "type": "object",
+      "description": "Opt-in outbound support telemetry push (SupportTelemetry:*) to honua-support. Disabled by default; API key is projected only from an existing Secret via secretKeyRef.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "endpointUrl": {
+          "type": "string",
+          "pattern": "^$|^https?://[^\\s/@]+(/[^\\s]*)?$"
+        },
+        "allowHttp": { "type": "boolean" },
+        "existingSecret": { "type": "string" },
+        "existingSecretKey": { "type": "string", "minLength": 1 },
+        "instanceId": { "type": "string" },
+        "instanceUrl": {
+          "type": "string",
+          "pattern": "^$|^https?://[^\\s/@]+(/[^\\s]*)?$"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 3600
+        },
+        "includeOpsFindings": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "$comment": "When enabled, require endpointUrl and an existingSecret holding the API key (never plaintext in values).",
+          "if": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "endpointUrl": { "minLength": 1 },
+              "existingSecret": { "minLength": 1 },
+              "existingSecretKey": { "minLength": 1 }
+            },
+            "required": ["endpointUrl", "existingSecret", "existingSecretKey"]
+          }
+        },
+        {
+          "$comment": "Require https:// for endpointUrl when enabled unless allowHttp is explicitly true.",
+          "if": {
+            "allOf": [
+              { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+              { "not": { "properties": { "allowHttp": { "const": true } }, "required": ["allowHttp"] } }
+            ]
+          },
+          "then": {
+            "properties": {
+              "endpointUrl": { "pattern": "^https://[^\\s/@]+(/[^\\s]*)?$" }
+            }
+          }
+        }
+      ]
     },
     "metrics": {
       "type": "object",

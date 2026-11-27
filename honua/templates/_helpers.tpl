@@ -7,6 +7,23 @@
 {{- default .Chart.AppVersion (get $releaseValues "appVersion") -}}
 {{- end -}}
 
+{{- /* Effective OCI artifact digest stamped into HONUA_ARTIFACT_DIGEST:
+       explicit release.artifactDigest wins over image.digest. Empty when
+       neither is set. */ -}}
+{{- define "honua.artifactDigest" -}}
+{{- $releaseValues := .Values.release | default dict -}}
+{{- $explicit := trim (default "" (get $releaseValues "artifactDigest")) -}}
+{{- $imageDigest := trim (default "" (get (.Values.image | default dict) "digest")) -}}
+{{- default $imageDigest $explicit -}}
+{{- end -}}
+
+{{- /* Optional signed platform-lock digest stamped into
+       HONUA_PLATFORM_LOCK_DIGEST. Empty when unset. */ -}}
+{{- define "honua.platformLockDigest" -}}
+{{- $releaseValues := .Values.release | default dict -}}
+{{- trim (default "" (get $releaseValues "platformLockDigest")) -}}
+{{- end -}}
+
 {{- define "honua.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}

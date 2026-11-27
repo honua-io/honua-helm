@@ -1,0 +1,21 @@
+image:
+  tag: ""
+  digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  pullPolicy: IfNotPresent
+release:
+  id: honua-ci-support-telemetry
+  platformLockDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+supportTelemetry:
+  enabled: true
+  endpointUrl: "https://support.honua.io/api/v1/telemetry/ingest"
+  existingSecret: "honua-support-telemetry-api-key"
+  existingSecretKey: "api-key"
+  instanceId: "ci-cluster-west-1"
+  instanceUrl: "https://gis.example.com"
+  intervalSeconds: 120
+  includeOpsFindings: true
+secret:
+  env:
+    ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=honua;Username=honua;Password=ci-password"
+    HONUA_ADMIN_PASSWORD: "CiAdminPassword1!"
+    Security__ConnectionEncryption__MasterKey: "ci-connection-encryption-master-key-00000001"

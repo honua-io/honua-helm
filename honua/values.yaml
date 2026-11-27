@@ -27,6 +27,14 @@ release:
   manifest: ""
   digest: ""
   appVersion: ""
+  # Explicit OCI artifact digest (sha256:<64 lowercase hex>) stamped into
+  # HONUA_ARTIFACT_DIGEST on the server container. When empty, the chart derives
+  # HONUA_ARTIFACT_DIGEST from image.digest whenever image.digest is set.
+  artifactDigest: ""
+  # Optional signed platform-lock digest (sha256:<64 lowercase hex>) stamped
+  # into HONUA_PLATFORM_LOCK_DIGEST on the server container for admin version
+  # reporting and fleet CVE / compatibility matching.
+  platformLockDigest: ""
 
 # Optional name overrides for Kubernetes resources. Leave empty unless the
 # release name would exceed DNS label limits or a platform naming standard
@@ -502,6 +510,34 @@ observability:
   otlpEndpoint: ""
   # OTLP protocol: "grpc" (default, port 4317) or "http/protobuf" (port 4318).
   otlpProtocol: "grpc"
+
+# Opt-in outbound support telemetry push (honua-server SupportTelemetry:* ->
+# honua-support POST /api/v1/telemetry/ingest). Disabled by default so no
+# deployment sends outbound telemetry traffic unless explicitly configured.
+# The API key is always read from an existing Kubernetes Secret via
+# secretKeyRef; never put plaintext API keys in values.yaml.
+supportTelemetry:
+  enabled: false
+  # Absolute honua-support ingest URL, e.g.
+  # "https://support.honua.io/api/v1/telemetry/ingest". Must use https:// unless
+  # allowHttp is true (trusted in-cluster / local testing only).
+  endpointUrl: ""
+  # Allow plain http:// endpointUrl (trusted in-cluster / local testing only).
+  allowHttp: false
+  # Name of an existing Kubernetes Secret holding the honua-support API key.
+  # Required when enabled is true; projected as SupportTelemetry__ApiKey via
+  # secretKeyRef.
+  existingSecret: ""
+  # Key in existingSecret that holds the API key.
+  existingSecretKey: "api-key"
+  # Optional stable instance identifier. Empty lets honua-server derive one.
+  instanceId: ""
+  # Optional canonical instance URL reported in pushed telemetry snapshots.
+  instanceUrl: ""
+  # Push cadence in seconds (valid range: 10..3600).
+  intervalSeconds: 60
+  # Include sanitized operational findings in pushed telemetry snapshots.
+  includeOpsFindings: true
 
 # Prometheus metrics integration. These resources require the Prometheus Operator
 # CRDs (ServiceMonitor/PrometheusRule) and/or a Prometheus that honors scrape
