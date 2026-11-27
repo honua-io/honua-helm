@@ -1044,6 +1044,8 @@ characters.
 | `release.manifest` | `""` | URL, path, or commit for the release manifest. |
 | `release.digest` | `""` | `sha256:<64 lowercase hex characters>` digest of the release manifest or bundle. |
 | `release.appVersion` | `""` | Optional label-safe evidence override for `app.kubernetes.io/version`, Pod-template annotations, and release-info output. |
+| `release.artifactDigest` | `""` | Optional explicit `sha256:<64 lowercase hex>` OCI digest stamped into `HONUA_ARTIFACT_DIGEST`. When empty, `HONUA_ARTIFACT_DIGEST` is derived automatically from `image.digest` whenever `image.digest` is set. |
+| `release.platformLockDigest` | `""` | Optional signed platform-lock `sha256:<64 lowercase hex>` digest stamped into `HONUA_PLATFORM_LOCK_DIGEST` for `GET /api/v1/admin/version` and fleet CVE/compatibility reporting. |
 | `strategy.type` | `""` | Upgrade strategy. Empty lets the chart choose: `Recreate` for inline migrations, `RollingUpdate` when `migrations.job.enabled`. Set `Recreate` or `RollingUpdate` to override. Use `RollingUpdate` only for expand-only releases the previous version can read; see [Upgrades: expand/contract](#upgrades-expandcontract). |
 | `migrations.job.enabled` | `false` | Run migrations out of band in a pre-install/pre-upgrade hook Job (`HONUA_MIGRATE_ONLY=true`) and set `HONUA_SKIP_MIGRATIONS=true` on the Deployment. Needs a server image at or after the first release that ships `HONUA_MIGRATE_ONLY`. See [Out-of-band migration Job](#out-of-band-migration-job). |
 | `migrations.job.activeDeadlineSeconds` | `1800` | Upper bound for one migration run. Keep `helm --timeout` above it. |
@@ -1297,6 +1299,15 @@ metrics:
 |-------|---------|-------------|
 | `observability.otlpEndpoint` | `""` | OTLP collector endpoint; injected as `OTEL_EXPORTER_OTLP_ENDPOINT`. Required (with the scrape options) when observability is enabled. |
 | `observability.otlpProtocol` | `grpc` | OTLP protocol (`grpc` or `http/protobuf`). |
+| `supportTelemetry.enabled` | `false` | Opt-in outbound support telemetry push (`SupportTelemetry__*`) to `honua-support`. Renders no `SupportTelemetry__*` env vars when `false`. |
+| `supportTelemetry.endpointUrl` | `""` | Absolute `honua-support` ingest URL (must use `https://` unless `allowHttp` is `true`). Required when `supportTelemetry.enabled` is `true`. |
+| `supportTelemetry.allowHttp` | `false` | Allow plain `http://` for `supportTelemetry.endpointUrl` (trusted in-cluster / local testing only). |
+| `supportTelemetry.existingSecret` | `""` | Existing Kubernetes Secret holding the `honua-support` API key, projected as `SupportTelemetry__ApiKey` via `secretKeyRef`. Required when `supportTelemetry.enabled` is `true`. |
+| `supportTelemetry.existingSecretKey` | `api-key` | Key inside `supportTelemetry.existingSecret` holding the API key. |
+| `supportTelemetry.instanceId` | `""` | Optional stable instance identifier (`SupportTelemetry__InstanceId`). Empty lets the server derive one. |
+| `supportTelemetry.instanceUrl` | `""` | Optional canonical instance URL (`SupportTelemetry__InstanceUrl`). |
+| `supportTelemetry.intervalSeconds` | `60` | Telemetry push interval in seconds (`10`–`3600`). |
+| `supportTelemetry.includeOpsFindings` | `true` | Include sanitized operational findings in pushed telemetry snapshots (`SupportTelemetry__IncludeOpsFindings`). |
 | `metrics.serviceMonitor.enabled` | false | Render a Prometheus Operator `ServiceMonitor`. |
 | `metrics.serviceMonitor.credentials.secretName` | "" | Secret with the scrape API key, sent as `Authorization: ApiKey`. Required with the `ServiceMonitor`. |
 | `metrics.serviceMonitor.credentials.secretKey` | api-key | Key in that Secret. |

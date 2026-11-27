@@ -73,6 +73,10 @@ then remove it.
 Deploy telemetry connections: {{ range $i, $c := $telemetryConnections }}{{ if $i }}, {{ end }}{{ $c.connectionId }}{{ end }}
 {{- with .Values.controlPlane.deployTarget.telemetry }}{{ with .connection }} (target uses {{ . }}){{ end }}{{ end }}
 {{- end }}
+{{- $supportTelemetry := .Values.supportTelemetry | default dict }}
+{{- if eq (toString (default false (get $supportTelemetry "enabled"))) "true" }}
+Outbound support telemetry push: enabled -> {{ trim (toString (default "" (get $supportTelemetry "endpointUrl"))) }} (API key from Secret {{ trim (toString (default "" (get $supportTelemetry "existingSecret"))) }}/{{ trim (toString (default "api-key" (get $supportTelemetry "existingSecretKey"))) }})
+{{- end }}
 
 {{- if and (eq (include "honua.strategyType" .) "RollingUpdate") (ne (include "honua.migrationsJob.enabled" .) "true") }}
 WARNING: RollingUpdate is enabled with inline migrations. Use it only when the

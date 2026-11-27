@@ -186,6 +186,45 @@ spec:
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: {{ default "grpc" (dig "otlpProtocol" "grpc" (.Values.observability | default dict)) | quote }}
             {{- end }}
+            {{- $artifactDigest := include "honua.artifactDigest" . }}
+            {{- if $artifactDigest }}
+            - name: HONUA_ARTIFACT_DIGEST
+              value: {{ $artifactDigest | quote }}
+            {{- end }}
+            {{- $platformLockDigest := include "honua.platformLockDigest" . }}
+            {{- if $platformLockDigest }}
+            - name: HONUA_PLATFORM_LOCK_DIGEST
+              value: {{ $platformLockDigest | quote }}
+            {{- end }}
+            {{- /* Opt-in outbound support telemetry push (SupportTelemetry:*).
+                   Renders nothing when disabled; the API key is always
+                   projected from an existing Secret via secretKeyRef. */}}
+            {{- $supportTelemetry := .Values.supportTelemetry | default dict }}
+            {{- if eq (toString (default false (get $supportTelemetry "enabled"))) "true" }}
+            - name: SupportTelemetry__Enabled
+              value: "true"
+            - name: SupportTelemetry__EndpointUrl
+              value: {{ trim (toString (default "" (get $supportTelemetry "endpointUrl"))) | quote }}
+            - name: SupportTelemetry__AllowHttp
+              value: {{ ternary "true" "false" (eq (toString (default false (get $supportTelemetry "allowHttp"))) "true") | quote }}
+            - name: SupportTelemetry__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: {{ trim (toString (default "" (get $supportTelemetry "existingSecret"))) | quote }}
+                  key: {{ trim (toString (default "api-key" (get $supportTelemetry "existingSecretKey"))) | quote }}
+            {{- with trim (toString (default "" (get $supportTelemetry "instanceId"))) }}
+            - name: SupportTelemetry__InstanceId
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with trim (toString (default "" (get $supportTelemetry "instanceUrl"))) }}
+            - name: SupportTelemetry__InstanceUrl
+              value: {{ . | quote }}
+            {{- end }}
+            - name: SupportTelemetry__IntervalSeconds
+              value: {{ int (default 60 (get $supportTelemetry "intervalSeconds")) | toString | quote }}
+            - name: SupportTelemetry__IncludeOpsFindings
+              value: {{ ternary "true" "false" (eq (toString (ternary true (get $supportTelemetry "includeOpsFindings") (not (hasKey $supportTelemetry "includeOpsFindings")))) "true") | quote }}
+            {{- end }}
             {{- /* Database:MigrationSafety. Explicit env wins over every envFrom
                    source; validations.yaml rejects the same key in config.env,
                    secret.env or extraEnv so there is one source of truth. */}}

@@ -152,6 +152,11 @@ jobs:
       - name: Verify chart hardening rendering
         run: python3 scripts/test-chart-hardening.py
 
+      - name: Verify support telemetry push and artifact digest stamping
+        run: |
+          helm lint honua -f honua/ci-values/support-telemetry.yaml
+          python3 scripts/test-support-telemetry.py
+
       - name: Prove the chart neither requires nor deploys Redis
         run: |
           set -euo pipefail
